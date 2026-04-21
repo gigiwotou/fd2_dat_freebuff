@@ -11,7 +11,7 @@ This file gives Codebuff context about your project: goals, commands, convention
 
 ## Architecture
 
-FD2 is a **deterministic reimplementation** of Fatal Fury 2 (饿狼传说2), a 1993 DOS fighting game. The goal is NOT a modern remake — it must reproduce the DOS build's behavior exactly, then wrap that core in a platform layer (SDL2).
+FD2 is a **deterministic reimplementation** of Flame Dragon  2 (炎龙骑士团2), a 1993 DOS fighting game. The goal is NOT a modern remake — it must reproduce the DOS build's behavior exactly, then wrap that core in a platform layer (SDL2).
 
 ### Key directories
 - `src/` — C source: game engine, decoder, renderer, audio, input, AFM animation player

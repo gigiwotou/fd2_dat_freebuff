@@ -98,7 +98,7 @@ def main():
     dat_files = sorted(game_dir.glob("*.DAT"))
     
     resource_map = {
-        "game": "FD2 (Fatal Fury 2)",
+        "game": "FD2 (Flame Dragon 2)",
         "platform": "DOS (DOS4GW extender)",
         "resolution": "320x200",
         "dat_files": {},

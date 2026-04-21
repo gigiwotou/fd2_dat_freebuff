@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("Fatal Fury 2 - Starting (data: %s)\n", game.data_dir);
+    printf("炎龙骑士团 2 - Starting (data: %s)\n", game.data_dir);
     printf("Controls:\n");
     printf("  Arrows: Move    Z/A: Punch(L)  X/S: Kick(L)\n");
     printf("  C/D: Punch(H)/Kick(H)  Enter/Space: Start\n");

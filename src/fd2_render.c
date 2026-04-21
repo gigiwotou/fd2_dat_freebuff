@@ -51,7 +51,7 @@ int fd2_render_init(fd2_render_t* render, int scale) {
 
     /* Create window */
     SDL_Window* win = SDL_CreateWindow(
-        "Fatal Fury 2",
+        "Flame Dragon 2",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         render->window_w, render->window_h,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
