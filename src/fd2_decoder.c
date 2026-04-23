@@ -105,8 +105,8 @@ const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size) {
  * The algorithm uses bits 7,6 of each control byte to determine the mode:
  *   bit7=1, bit6=1: skip (transparent) - advance dst by count
  *   bit7=1, bit6=0: copy count bytes from src to dst
- *   bit7=0, bit6=1: fill count pixels with value from src
- *   bit7=0, bit6=0: sparse fill - write value at every 2nd position (odd indices)
+ *   bit7=0, bit6=1: sparse fill - write value at every 2nd position (odd offsets)
+ *   bit7=0, bit6=0: fill count pixels with value from src
  *
  * count = (value & 0x3F) + 1
  *
@@ -155,20 +155,10 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                     count--;
                 }
             } else if (!bit7 && bit6) {
-                /* 01: fill - with bounds checking */
-                if (p < src_end) {
-                    u8 fill = *p++;
-                    for (int i = 0; i < count_1 && count > 0; i++) {
-                        if (row_dst < dst_end) {
-                            *row_dst = fill;
-                        }
-                        row_dst++;
-                        count--;
-                    }
-                }
-            } else {
-                /* 00: sparse fill - write at positions 1, 3, 5, ...
-                 * count decreases by 2*count_1, handle last pixel if count == 1 */
+                /* 01: sparse fill - write at every 2nd position (odd offsets)
+                 * Original (IDA): count = count - count_1 - count_1
+                 * Writes to dst[1], then dst+=2, for count_1 iterations.
+                 * Each iteration consumes 2 pixels of width. */
                 if (p < src_end) {
                     u8 fill = *p++;
                     for (int i = 0; i < count_1 && count > 0; i++) {
@@ -179,13 +169,26 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                             row_dst += 2;
                             count -= 2;
                         } else {
-                            /* count == 1 */
+                            /* count == 1: last pixel in row */
                             if (row_dst < dst_end) {
                                 *row_dst = fill;
                             }
                             row_dst += 1;
                             count -= 1;
                         }
+                    }
+                }
+            } else {
+                /* 00: regular fill - write at every position
+                 * Original (IDA): memset(dst, value, count_1) */
+                if (p < src_end) {
+                    u8 fill = *p++;
+                    for (int i = 0; i < count_1 && count > 0; i++) {
+                        if (row_dst < dst_end) {
+                            *row_dst = fill;
+                        }
+                        row_dst++;
+                        count--;
                     }
                 }
             }
@@ -232,7 +235,8 @@ void fd2_palette_6bit_to_8bit(const u8* palette_6bit, u8* palette_8bit) {
 }
 
 void fd2_palette_set_brightness(u8* palette_8bit, int brightness) {
-    if (!palette_8bit || brightness < 0 || brightness > 63) return;
+    if (!palette_8bit || brightness < 0) return;
+    if (brightness > 63) brightness = 63;  /* sub_11D40 uses 64 for full, clamp to 63 */
 
     float factor = (float)brightness / 63.0f;
     for (int i = 0; i < FD2_PALETTE_BYTES; i++) {
@@ -255,6 +259,21 @@ void fd2_palette_fade(const u8* src, const u8* dst,
     float t = (float)current / (float)steps;
     for (int i = 0; i < FD2_PALETTE_BYTES; i++) {
         out[i] = (u8)(src[i] * (1.0f - t) + dst[i] * t);
+    }
+}
+
+void fd2_palette_add_6bit(u8* palette_8bit, int add_6bit) {
+    if (!palette_8bit || add_6bit <= 0) return;
+
+    for (int i = 0; i < FD2_PALETTE_COLORS; i++) {
+        for (int c = 0; c < 3; c++) {
+            /* Convert 8-bit back to 6-bit: v6 = v8 >> 2 */
+            int v6 = palette_8bit[i * 3 + c] >> 2;
+            v6 += add_6bit;
+            if (v6 > 63) v6 = 63;
+            /* Convert back to 8-bit */
+            palette_8bit[i * 3 + c] = (u8)((v6 << 2) | (v6 >> 4));
+        }
     }
 }
 

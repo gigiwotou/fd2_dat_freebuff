@@ -240,6 +240,78 @@ void fd2_render_fade_from_black(fd2_render_t* render, int steps, int step_ms) {
     }
 }
 
+void fd2_render_fade_to_color(fd2_render_t* render, int steps, int step_ms,
+                               int base_r6, int base_g6, int base_b6) {
+    if (!render) return;
+
+    /* Build base palette: every color = (base_r6, base_g6, base_b6) in 8-bit */
+    u8 base_pal[FD2_PALETTE_BYTES];
+    u8 src_pal[FD2_PALETTE_BYTES];
+    {
+        u8 r8 = (u8)((base_r6 << 2) | (base_r6 >> 4));
+        u8 g8 = (u8)((base_g6 << 2) | (base_g6 >> 4));
+        u8 b8 = (u8)((base_b6 << 2) | (base_b6 >> 4));
+        for (int i = 0; i < FD2_PALETTE_COLORS; i++) {
+            base_pal[i * 3 + 0] = r8;
+            base_pal[i * 3 + 1] = g8;
+            base_pal[i * 3 + 2] = b8;
+        }
+    }
+    memcpy(src_pal, render->palette, FD2_PALETTE_BYTES);
+
+    /* Fade from src to base: step goes 0→steps (sub_2DF01 descending counter) */
+    for (int s = 0; s <= steps; s++) {
+        fd2_render_fade_palette(render, src_pal, base_pal, steps, s);
+        fd2_render_present(render);
+
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) return;
+        }
+
+        SDL_Delay(step_ms);
+    }
+}
+
+void fd2_render_fade_from_color(fd2_render_t* render, int steps, int step_ms,
+                                 int base_r6, int base_g6, int base_b6) {
+    if (!render) return;
+
+    /* Build base palette: every color = (base_r6, base_g6, base_b6) in 8-bit */
+    u8 base_pal[FD2_PALETTE_BYTES];
+    u8 dst_pal[FD2_PALETTE_BYTES];
+    {
+        u8 r8 = (u8)((base_r6 << 2) | (base_r6 >> 4));
+        u8 g8 = (u8)((base_g6 << 2) | (base_g6 >> 4));
+        u8 b8 = (u8)((base_b6 << 2) | (base_b6 >> 4));
+        for (int i = 0; i < FD2_PALETTE_COLORS; i++) {
+            base_pal[i * 3 + 0] = r8;
+            base_pal[i * 3 + 1] = g8;
+            base_pal[i * 3 + 2] = b8;
+        }
+    }
+    memcpy(dst_pal, render->palette, FD2_PALETTE_BYTES);
+
+    /* Fade from base to dst: step goes 0→steps (sub_2DF01 ascending counter) */
+    for (int s = 0; s <= steps; s++) {
+        fd2_render_fade_palette(render, base_pal, dst_pal, steps, s);
+        fd2_render_present(render);
+
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) return;
+        }
+
+        SDL_Delay(step_ms);
+    }
+}
+
+void fd2_render_palette_add_6bit(fd2_render_t* render, int add_6bit) {
+    if (!render) return;
+    fd2_palette_add_6bit(render->palette, add_6bit);
+    update_argb_palette(render);
+}
+
 void fd2_render_blit_afm(fd2_render_t* render, const u8* afm_frame,
                          int transparent) {
     if (!render || !afm_frame) return;

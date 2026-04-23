@@ -333,13 +333,33 @@ static void state_init_exit(fd2_game_t* game) {
 /* ---- INTRO State ----
  * Opening animation sequence.
  * 1:1 match of sub_1F894 flow:
- *   Phase 0: Title screen (FDOTHER 74) → fade in from black → wait 30 frames
- *   Phase 1: ANI.DAT animation #3 (intro cinematic, 90ms per frame)
- *   Phase 2: Scroll animation (FDOTHER 69-73, scroll 535→25) with overlays
+ *   Phase 0: Title screen (FDOTHER 74) → fade in → wait 30 ticks → fade out
+ *   Phase 1: ANI#3 (intro cinematic, 90ms) → fade out
+ *   Phase 2: Scroll (FDOTHER 69-73, 535→0) with ANI/overlay at positions
+ *            330(ANI#4+5), 210(ANI#6+7), 110(skip), 450(overlay), 10(overlay), 25(ANI#0)
  *   Phase 3: Fade to black
- *   Phase 4: ANI.DAT animation #1 (menu intro, 15ms per frame)
- *   Phase 5: Fade in from black with menu background
+ *   Phase 4: ANI#1 (menu intro, 15ms)
+ *   Phase 5: Fade in menu background
  *   Phase 6: → transition to MENU state
+ *
+ * NOTE: ANI.DAT index mapping (from sub_20421 / sub_1F81E in sub_1F894):
+ *   Index 0: 51 frames (main logo — played at scroll pos 25)
+ *   Index 1: 26 frames (menu intro — played in Phase 4)
+ *   Index 2: 28 frames (character intro A)
+ *   Index 3: 12 frames (intro cinematic — played in Phase 1)
+ *   Index 4: 35 frames (character intro — scroll pos 330, 1st ANI)
+ *   Index 5: 12 frames (character name — scroll pos 330, 2nd ANI)
+ *   Index 6: 17 frames (character intro — scroll pos 210, 1st ANI)
+ *   Index 7: 12 frames (character name — scroll pos 210, 2nd ANI)
+ *   Index 8: OUT OF BOUNDS — original calls at scroll pos 110, skip
+ *
+ * Animation playback order from sub_1F894:
+ *   Phase 1:  sub_20421(3, 90, 1)  — ANI#3, FDOTHER[99] palette, 90ms
+ *   Scroll 330: sub_1F882 + sub_1F81E(4,90,99) + sub_1F81E(5,50,0)
+ *   Scroll 210: sub_1F882 + sub_1F81E(6,90,99) + sub_1F81E(7,50,0)
+ *   Scroll 110: sub_1F882 + sub_1F81E(8,90,99)  (ANI#8 OOB, skip)
+ *   Scroll 25:  sub_1F81E(0,15,0)  — ANI#0, FDOTHER[0] palette, 15ms
+ *   Phase 4:  sub_20421(1, 15, 1)  — ANI#1, 15ms
  */
 
 typedef struct {
@@ -361,8 +381,15 @@ typedef struct {
     int  scroll_ani_queue[3];/* Queue of ANI resource IDs to play */
     int  scroll_ani_queue_len;/* Number of ANIs in queue */
     int  scroll_ani_queue_idx;/* Current index in queue */
-    int  scroll_ani_delay;   /* ms per frame for current ANI */
-    int  scroll_ani_overlay; /* FDOTHER overlay resource (-1=none) */
+    int  scroll_ani_delay[3]; /* ms per frame for each ANI in queue */
+    int  scroll_ani_palette[3]; /* FDOTHER palette resource per ANI in queue (-1=none) */
+    bool scroll_ani_needs_fadeout; /* Whether to fade-out before ANI sequence */
+
+    /* Overlay sub-state (sub_1F73F at scroll positions 450 and 10) */
+    int  overlay_step;          /* 0=idle, 1=fadeout+draw, 2=wait, 3=fadeout+restore */
+    int  overlay_image_res;     /* FDOTHER image resource to display */
+    int  overlay_palette_res;   /* FDOTHER palette resource */
+    int  overlay_wait;          /* Tick counter for overlay step 2 wait */
 } state_intro_data_t;
 
 /* Helper: play one frame of an ANI.DAT AFM animation.
@@ -481,9 +508,9 @@ static void state_intro_enter(fd2_game_t* game) {
 
     /* ---- Phase 0: Show title screen (sub_1F894 start) ---- */
 
-    /* Load palette from FDOTHER resource 77 (original: sub_111BA(0,77)) */
+    /* Load palette from FDOTHER resource 76 (original: sub_111BA(FDOTHER_DAT,76)) */
     u32 pal_size;
-    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 77, &pal_size);
+    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 76, &pal_size);
     if (pal_res && pal_size == FD2_PALETTE_BYTES) {
         fd2_render_set_palette_6bit(&game->render, pal_res);
     }
@@ -519,7 +546,8 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
     }
 
     switch (data->phase) {
-        /* ---- Phase 0: Title screen fade-in + wait ---- */
+        /* ---- Phase 0: Title screen fade-in + wait + fade-out ----
+         * Original: sub_1F525 (fade in) → sub_17AA9(1) → sub_17AA9(30) → sub_1F882 (fade out) */
         case 0:
         {
             if (data->phase_frame == 0) {
@@ -527,126 +555,238 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 fd2_render_fade_from_black(&game->render, 64, 2);
             }
             data->phase_frame++;
-            /* Wait ~30 frames after fade-in (sub_17AA9(30)) */
+            /* Wait ~30 ticks after fade-in (sub_17AA9(1) + sub_17AA9(30)) */
             if (data->phase_frame >= 30 + 64) {
-                printf("intro: phase 0 done, starting ANI#3\n");
+                /* Fade out to black (sub_1F882: 64 steps, 2ms each) */
+                fd2_render_fade_to_black(&game->render, 64, 2);
+                printf("intro: phase 0 done (title faded out), starting Phase 1 (ANI#3)\n");
                 data->phase = 1;
                 data->phase_frame = 0;
             }
             break;
         }
 
-        /* ---- Phase 1: ANI.DAT animation #3 (intro cinematic) ----
-         * Original: sub_20421(3, 90, 1)
-         * ANI.DAT resource 3, 90ms delay, interruptible */
+        /* ---- Phase 1: ANI#3 intro cinematic ----
+         * Original: load FDOTHER[99] palette → clear screen → sub_20421(3, 90, 1)
+         *   → sub_1F882 (fade out) → clear → load FDOTHER[101] → brightness 0
+         * ANI#3 has 12 frames, 90ms delay, interruptible (a3=1). */
         case 1:
         {
             if (data->phase_frame == 0) {
-                /* Clear screen, set brightness to 0 */
+                /* Load FDOTHER[99] as palette (sub_111BA("FDOTHER.DAT", FDOTHER_DAT, 99)) */
+                u32 pal_size;
+                const u8* pal_res = fd2_resources_get(
+                    &game->resources, FD2_DAT_FDOTHER, 99, &pal_size);
+                if (pal_res && pal_size == FD2_PALETTE_BYTES) {
+                    fd2_render_set_palette_6bit(&game->render, pal_res);
+                }
+
+                /* Clear screen, set brightness to 0 (sub_11D40(0,255,0)).
+                 * Screen appears black even though palette is set, because
+                 * brightness=0 zeroes the palette. AFM playback will
+                 * override the palette each frame via set_palette_6bit. */
                 fd2_render_fill_screen(&game->render, 0);
                 fd2_render_set_brightness(&game->render, 0);
                 fd2_render_present(&game->render);
 
-                /* Load FDOTHER 99 overlay and start ANI playback */
+                /* Start ANI#3 playback (sub_20421(3, 90, 1)) */
                 intro_start_ani(game, data, 3, 90);
             }
 
             int result = intro_play_ani_frame(game, data);
-            if (result == -2) return FD2_STATE_QUIT;  /* SDL_QUIT during animation */
+            if (result == -2) return FD2_STATE_QUIT;
             if (result != 0) {
-                /* Animation finished or error — move to scroll phase.
-                 * MUST return here — phase_frame++ below would corrupt
-                 * the phase_frame=0 we just set, causing phase 2's
-                 * initialization block to be skipped. */
+                /* ANI#3 finished — fade out, then prepare scroll phase.
+                 * Original: sub_1F882 (fade out) after sub_20421 returns. */
                 if (data->afm) { free(data->afm); data->afm = NULL; }
-                printf("intro: ANI#3 done, starting scroll (phase 2)\n");
+                fd2_render_fade_to_black(&game->render, 64, 2);
+                printf("intro: ANI#3 done (faded out), starting scroll (phase 2)\n");
                 data->phase = 2;
                 data->phase_frame = 0;
                 return FD2_STATE_INTRO;
             }
 
-            /* Delay between frames */
             SDL_Delay(data->ani_frame_delay);
             data->phase_frame++;
             break;
         }
 
-        /* ---- Phase 2: Scroll animation (535→25) ----
-         * Original: for (n535 = 535; n535 >= 0; --n535) { ... if (n535==25) break; }
-         * With overlay display at positions 330, 210, 110, 450, 10 */
+        /* ---- Phase 2: Scroll animation (535→0) ----
+         * Original: for (n535 = 535; n535 >= 0; --n535) { ... if (n535==25) special }
+         * Scroll buffer from FDOTHER 69-73 (5 images × 147 rows = 735h)
+         * FDOTHER[101] palette, FDOTHER[7] used for scroll palette.
+         * ANI sub-state at positions 330, 210, 110, 25.
+         * Overlay sub-state (sub_1F73F) at positions 450, 10. */
         case 2:
         {
             if (data->phase_frame == 0) {
-                /* Show menu background (FDOTHER 101) at full brightness */
+                /* Original after ANI#3: memset(655360,0,64000) → sub_111BA(101) →
+                 * sub_11D40(0,255,64) → build scroll → sub_4E381 → malloc overlay */
+                fd2_render_fill_screen(&game->render, 0);
+
+                /* Load FDOTHER[101] as palette (original: FDOTHER_DAT = sub_111BA(101)) */
                 u32 pal_size;
-                const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &pal_size);
+                const u8* pal_res = fd2_resources_get(
+                    &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
                 if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, pal_res);
                 }
-                fd2_render_set_brightness(&game->render, 63);
 
-                u32 menu_size;
-                const u8* menu_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 101, &menu_size);
-                fd2_render_fill_screen(&game->render, 0);
-                if (menu_res) {
-                    fd2_render_blit_rle(&game->render, menu_res, menu_size, 0, 0);
-                }
-                fd2_render_present(&game->render);
+                /* Set brightness to 64 (sub_11D40(0, 255, 64)) */
+                fd2_render_set_brightness(&game->render, 64);
 
-                /* Build scroll buffer */
+                /* Build scroll buffer from FDOTHER 69-73 */
                 intro_build_scroll_buffer(game, data);
 
                 data->scroll_pos = 535;
                 data->phase_frame = 1;
+                data->scroll_ani_needs_fadeout = false;
+
+                /* Show first scroll frame and fade in (sub_1F525 at n535==535) */
+                if (data->scroll_buf) {
+                    int pos = data->scroll_pos;
+                    for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
+                        memcpy(game->render.screen + y * FD2_SCREEN_W,
+                               data->scroll_buf + (pos + y) * FD2_SCREEN_W,
+                               FD2_SCREEN_W);
+                    }
+                }
+                /* Don't call set_brightness(0)/present before fade_from_black —
+                 * fade_from_black saves the current palette as its target and
+                 * fades from black to that. If we zero the palette first, the
+                 * target is black and the fade is invisible. */
+                fd2_render_fade_from_black(&game->render, 64, 2);
+
                 printf("intro: scroll buffer built, starting scroll from pos 535\n");
                 break;
             }
 
-            /* ---- ANI sub-state processing (character intros at scroll positions) ----
-             * When scroll_ani_step != 0, we're playing an ANI animation
-             * instead of scrolling. The sub-states are:
-             *   1 = start_ani: clear screen, load overlay, init AFM, start playback
-             *   2 = play_ani: decode and present one AFM frame per tick
-             *   3 = restore_scroll: after all ANIs done, restore scroll + fade in
-             */
-            if (data->scroll_ani_step != 0) {
-                switch (data->scroll_ani_step) {
-                    case 1: /* Start ANI playback (sub_1F81E) */
+            /* ---- Overlay sub-state (sub_1F73F at scroll positions 450 and 10) ----
+             * sub_1F73F flow: fade out → draw image+palette → fade in → wait 6 ticks →
+             *                 fade out → restore scroll+palette → fade in */
+            if (data->overlay_step != 0) {
+                switch (data->overlay_step) {
+                    case 1: /* Fade out + draw overlay image */
                     {
-                        int ani_id = data->scroll_ani_queue[data->scroll_ani_queue_idx];
-
-                        /* First ANI in queue uses FDOTHER[99] overlay, second uses FDOTHER[0] */
-                        int overlay_res = (data->scroll_ani_queue_idx == 0) ? 99 : 0;
-                        int delay_ms = (data->scroll_ani_queue_idx == 0) ? 90 : 50;
-
-                        /* Clear screen to black (sub_1F81E: memset 655360, 0, 64000) */
+                        fd2_render_fade_to_black(&game->render, 64, 2);
                         fd2_render_fill_screen(&game->render, 0);
 
-                        /* Load overlay image + palette if specified */
-                        if (overlay_res >= 0) {
-                            /* Load palette from FDOTHER resource */
-                            u32 ov_size;
-                            const u8* ov_res = fd2_resources_get(
-                                &game->resources, FD2_DAT_FDOTHER, overlay_res, &ov_size);
-                            if (ov_res) {
-                                fd2_render_blit_rle(&game->render, ov_res, ov_size, 0, 0);
+                        /* Load overlay palette */
+                        u32 pal_size;
+                        const u8* pal_res = fd2_resources_get(
+                            &game->resources, FD2_DAT_FDOTHER,
+                            data->overlay_palette_res, &pal_size);
+                        if (pal_res && pal_size == FD2_PALETTE_BYTES) {
+                            fd2_render_set_palette_6bit(&game->render, pal_res);
+                        }
+
+                        /* Load overlay image */
+                        u32 ov_size;
+                        const u8* ov_res = fd2_resources_get(
+                            &game->resources, FD2_DAT_FDOTHER,
+                            data->overlay_image_res, &ov_size);
+                        if (ov_res) {
+                            fd2_render_blit_rle(&game->render, ov_res, ov_size, 0, 0);
+                        }
+
+                        fd2_render_fade_from_black(&game->render, 64, 2);
+                        data->overlay_step = 2;
+                        data->overlay_wait = 0;
+                        break;
+                    }
+                    case 2: /* Wait a few ticks (sub_17AA9(1) + sub_17AA9(6)) */
+                    {
+                        data->overlay_wait++;
+                        if (data->overlay_wait >= 7) {
+                            data->overlay_step = 3;
+                        }
+                        break;
+                    }
+                    case 3: /* Fade out + restore scroll + fade in */
+                    {
+                        fd2_render_fade_to_black(&game->render, 64, 2);
+
+                        /* Restore scroll buffer at current position */
+                        int pos = data->scroll_pos;
+                        if (data->scroll_buf) {
+                            fd2_render_fill_screen(&game->render, 0);
+                            for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
+                                memcpy(game->render.screen + y * FD2_SCREEN_W,
+                                       data->scroll_buf + (pos + y) * FD2_SCREEN_W,
+                                       FD2_SCREEN_W);
                             }
                         }
 
-                        /* Set brightness to 0 (sub_11D40: 0, 255, 0) */
+                        /* Restore FDOTHER[101] palette */
+                        u32 pal_size;
+                        const u8* pal_res = fd2_resources_get(
+                            &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                        if (pal_res && pal_size == FD2_PALETTE_BYTES) {
+                            fd2_render_set_palette_6bit(&game->render, pal_res);
+                        }
+
+                        fd2_render_fade_from_black(&game->render, 64, 2);
+                        data->overlay_step = 0;
+                        /* Don't decrement scroll_pos here — main loop does it */
+                        break;
+                    }
+                }
+                return FD2_STATE_INTRO;
+            }
+
+            /* ---- ANI sub-state (character intros at scroll positions 330/210/110/25) ----
+             * Original flow at pos 330/210:
+             *   sub_1F882 (fade out) → sub_1F81E(ani1, 90, 99) → sub_1F81E(ani2, 50, 0)
+             *   → restore scroll + fade in
+             * At pos 110: sub_1F882 → sub_1F81E(8,90,99) (ANI#8 OOB → skip)
+             * At pos 25: sub_1F81E(0, 15, 0) — then break loop
+             *
+             * sub_1F81E(ani_id, delay, palette_res):
+             *   if palette_res>=0: clear → load FDOTHER[palette_res] as palette → brightness 0
+             *   sub_20421(ani_id, delay, 0) → sub_1F882 (fade out)
+             */
+            if (data->scroll_ani_step != 0) {
+                switch (data->scroll_ani_step) {
+                    case 1: /* Fade out + start ANI playback (sub_1F882 + sub_1F81E) */
+                    {
+                        /* Fade out first (only at positions 330/210/110, not 25) */
+                        if (data->scroll_ani_needs_fadeout) {
+                            fd2_render_fade_to_black(&game->render, 64, 2);
+                            data->scroll_ani_needs_fadeout = false;
+                        }
+
+                        int ani_id = data->scroll_ani_queue[data->scroll_ani_queue_idx];
+                        int palette_res = data->scroll_ani_palette[data->scroll_ani_queue_idx];
+                        int delay_ms = data->scroll_ani_delay[data->scroll_ani_queue_idx];
+
+                        /* sub_1F81E: clear screen → set palette → brightness 0.
+                         * set_brightness(0) here matches sub_11D40(0,255,0) in original.
+                         * Unlike the fade_from_black cases, this is intentional: the
+                         * screen should be black until AFM starts writing frames,
+                         * and AFM's set_palette_6bit will override each frame. */
+                        fd2_render_fill_screen(&game->render, 0);
+
+                        if (palette_res >= 0) {
+                            u32 pal_size;
+                            const u8* pal_res = fd2_resources_get(
+                                &game->resources, FD2_DAT_FDOTHER, palette_res, &pal_size);
+                            if (pal_res && pal_size == FD2_PALETTE_BYTES) {
+                                fd2_render_set_palette_6bit(&game->render, pal_res);
+                            }
+                        }
+
                         fd2_render_set_brightness(&game->render, 0);
                         fd2_render_present(&game->render);
 
-                        /* Start the ANI animation */
+                        /* Start the ANI animation (sub_20421) */
                         if (intro_start_ani(game, data, ani_id, delay_ms) == 0) {
-                            data->scroll_ani_step = 2;  /* Proceed to frame playback */
+                            data->scroll_ani_step = 2;
                         } else {
-                            /* ANI not found or failed — skip to next in queue */
+                            /* ANI not found — skip to next in queue */
                             data->scroll_ani_queue_idx++;
                             if (data->scroll_ani_queue_idx >= data->scroll_ani_queue_len) {
-                                data->scroll_ani_step = 3;  /* All done, restore scroll */
+                                data->scroll_ani_step = 3;
                             }
-                            /* Otherwise stay in step 1 to try next ANI */
                         }
                         break;
                     }
@@ -657,14 +797,15 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                         if (result == -2) return FD2_STATE_QUIT;
 
                         if (result != 0) {
-                            /* ANI finished — free AFM context, advance queue */
+                            /* ANI finished — fade out (sub_1F882), advance queue */
                             if (data->afm) { free(data->afm); data->afm = NULL; }
+                            fd2_render_fade_to_black(&game->render, 64, 2);
                             data->scroll_ani_queue_idx++;
 
                             if (data->scroll_ani_queue_idx >= data->scroll_ani_queue_len) {
                                 data->scroll_ani_step = 3;  /* All ANIs done */
                             } else {
-                                data->scroll_ani_step = 1;  /* Start next ANI in queue */
+                                data->scroll_ani_step = 1;  /* Start next ANI */
                             }
                         } else {
                             SDL_Delay(data->ani_frame_delay);
@@ -674,9 +815,10 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
                     case 3: /* Restore scroll buffer + fade in (LABEL_13/LABEL_14) */
                     {
-                        /* Restore scroll buffer to screen at current scroll position */
+                        /* Restore scroll buffer to screen */
                         int pos = data->scroll_pos;
                         if (data->scroll_buf) {
+                            fd2_render_fill_screen(&game->render, 0);
                             for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
                                 memcpy(game->render.screen + y * FD2_SCREEN_W,
                                        data->scroll_buf + (pos + y) * FD2_SCREEN_W,
@@ -684,40 +826,33 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                             }
                         }
 
-                        /* Load FDOTHER[7] palette (standard scroll palette) */
+                        /* Load FDOTHER[101] palette (scroll palette) */
                         u32 pal_size;
                         const u8* pal_res = fd2_resources_get(
-                            &game->resources, FD2_DAT_FDOTHER, 7, &pal_size);
+                            &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
                         if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                             fd2_render_set_palette_6bit(&game->render, pal_res);
                         }
 
-                        /* Fade in from black (sub_1F525: restores brightness).
-                         * Original uses vsync per step (~16.7ms), so 64 steps
-                         * takes ~1s. We use 16ms per step to approximate. */
-                        fd2_render_set_brightness(&game->render, 0);
-                        fd2_render_present(&game->render);
-                        fd2_render_fade_from_black(&game->render, 64, 16);
+                        /* Fade in from black (sub_1F525).
+                         * Don't set_brightness(0) — fade_from_black needs the
+                         * current palette intact as its fade target. */
+                        fd2_render_fade_from_black(&game->render, 64, 2);
 
-                        /* Reset sub-state and continue scrolling.
-                         * MUST decrement scroll_pos here, otherwise the next
-                         * update tick will see pos==330/210/110 with step==0
-                         * and trigger the ANI again in an infinite loop. */
                         data->scroll_ani_step = 0;
                         data->scroll_ani_queue_len = 0;
                         data->scroll_ani_queue_idx = 0;
-                        data->scroll_pos--;  /* Advance past the ANI trigger position */
+                        data->scroll_pos--;  /* Advance past the trigger position */
                         break;
                     }
                 }
-                return FD2_STATE_INTRO;  /* Don't process normal scroll during ANI */
+                return FD2_STATE_INTRO;
             }
 
             /* ---- Normal scroll processing ---- */
 
-            /* Scroll: position decreases from 535 to 25 */
             int pos = data->scroll_pos;
-            if (pos < 25) {
+            if (pos < 0) {
                 /* Scroll done */
                 printf("intro: scroll done at pos %d, fading to black\n", pos);
                 data->phase = 3;
@@ -734,56 +869,77 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 }
             }
 
-            /* ---- Overlays at specific positions (sub_1F73F / sub_1F81E) ---- */
+            /* ---- Overlay triggers at positions 450 and 10 (sub_1F73F) ---- */
             if (pos == 450) {
-                /* Show overlay 100 (sub_1F73F(100, 99, scroll_buf, 450)) */
-                u32 ov_size;
-                const u8* ov_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 100, &ov_size);
-                if (ov_res) fd2_render_blit_rle(&game->render, ov_res, ov_size, 0, 0);
+                /* sub_1F73F(100, 99, n15_1, 450): overlay image 100, palette 99 */
+                data->overlay_image_res = 100;
+                data->overlay_palette_res = 99;
+                data->overlay_step = 1;
+                break;
             }
             if (pos == 10) {
-                /* Show overlay 75 (sub_1F73F(75, 76, scroll_buf, 10)) */
-                u32 ov_size;
-                const u8* ov_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 75, &ov_size);
-                if (ov_res) fd2_render_blit_rle(&game->render, ov_res, ov_size, 0, 0);
+                /* sub_1F73F(75, 76, n15_1, 10): overlay image 75, palette 76 */
+                data->overlay_image_res = 75;
+                data->overlay_palette_res = 76;
+                data->overlay_step = 1;
+                break;
             }
 
-            /* ---- Trigger ANI playback at positions 330/210/110 ----
+            /* ---- ANI triggers at positions 330, 210, 110, 25 ----
              * Original flow (sub_1F894 scroll loop):
-             *   pos 330: sub_1F81E(4,90,99) → sub_1F81E(5,50,0) → restore+fade
-             *   pos 210: sub_1F81E(6,90,99) → sub_1F81E(7,50,0) → restore+fade
-             *   pos 110: sub_1F81E(8,90,99) → restore+fade (no second ANI)
-             *
-             * sub_1F81E(ani_id, delay, overlay):
-             *   clear screen → load FDOTHER[overlay] → brightness 0 → play ANI
+             *   pos 330: sub_1F882 → sub_1F81E(4,90,99) → sub_1F81E(5,50,0) → restore
+             *   pos 210: sub_1F882 → sub_1F81E(6,90,99) → sub_1F81E(7,50,0) → restore
+             *   pos 110: sub_1F882 → sub_1F81E(8,90,99) → restore (ANI#8 OOB, skip)
+             *   pos 25:  sub_1F81E(0,15,0) → break (end of scroll loop)
              */
-            if ((pos == 330 || pos == 210 || pos == 110) && data->scroll_ani_step == 0) {
+            if ((pos == 330 || pos == 210 || pos == 110 || pos == 25)
+                && data->scroll_ani_step == 0) {
                 if (pos == 330) {
-                    data->scroll_ani_queue[0] = 4;  /* ANI #4 (character intro) */
-                    data->scroll_ani_queue[1] = 5;  /* ANI #5 (character name) */
+                    data->scroll_ani_queue[0] = 4;
+                    data->scroll_ani_queue[1] = 5;
                     data->scroll_ani_queue_len = 2;
+                    data->scroll_ani_palette[0] = 99;  /* FDOTHER[99] palette */
+                    data->scroll_ani_palette[1] = 0;   /* FDOTHER[0] palette */
+                    data->scroll_ani_delay[0] = 90;   /* First ANI: 90ms */
+                    data->scroll_ani_delay[1] = 50;   /* Second ANI: 50ms */
+                    data->scroll_ani_needs_fadeout = true;
                 } else if (pos == 210) {
-                    data->scroll_ani_queue[0] = 6;  /* ANI #6 (character intro) */
-                    data->scroll_ani_queue[1] = 7;  /* ANI #7 (character name) */
+                    data->scroll_ani_queue[0] = 6;
+                    data->scroll_ani_queue[1] = 7;
                     data->scroll_ani_queue_len = 2;
-                } else { /* pos == 110 */
-                    /* NOTE: ANI #8 may not exist (ANI.DAT only has 0-7 in this build).
-                     * intro_start_ani will return -1 and skip gracefully. */
+                    data->scroll_ani_palette[0] = 99;  /* FDOTHER[99] palette */
+                    data->scroll_ani_palette[1] = 0;   /* FDOTHER[0] palette */
+                    data->scroll_ani_delay[0] = 90;
+                    data->scroll_ani_delay[1] = 50;
+                    data->scroll_ani_needs_fadeout = true;
+                } else if (pos == 110) {
+                    /* Original: sub_1F882 (fade out) → sub_1F81E(8,90,99)
+                     * (ANI#8 OOB, fails immediately) → LABEL_14 (restore scroll
+                     * + fade in). Visual effect: brief fade-to-black pause.
+                     * Trigger ANI sub-state with ANI#8 (which will fail to load,
+                     * causing immediate step 3 = restore + fade in). */
                     data->scroll_ani_queue[0] = 8;
                     data->scroll_ani_queue_len = 1;
+                    data->scroll_ani_palette[0] = 99;
+                    data->scroll_ani_delay[0] = 90;
+                    data->scroll_ani_needs_fadeout = true;
+                } else { /* pos == 25 */
+                    /* sub_1F81E(0, 15, 0): ANI#0 with FDOTHER[0] palette, 15ms delay.
+                     * This is the LAST scroll position — after ANI#0, loop breaks. */
+                    data->scroll_ani_queue[0] = 0;
+                    data->scroll_ani_queue_len = 1;
+                    data->scroll_ani_palette[0] = 0;   /* FDOTHER[0] palette */
+                    data->scroll_ani_delay[0] = 15;
+                    data->scroll_ani_needs_fadeout = false;  /* No fade-out at pos 25 */
                 }
                 data->scroll_ani_queue_idx = 0;
                 data->scroll_ani_step = 1;
-                printf("intro: scroll pos %d — triggering ANI queue [%d,%d,%d] len=%d\n",
-                       pos, data->scroll_ani_queue[0],
-                       data->scroll_ani_queue_len > 1 ? data->scroll_ani_queue[1] : -1,
-                       data->scroll_ani_queue_len > 2 ? data->scroll_ani_queue[2] : -1,
-                       data->scroll_ani_queue_len);
+                printf("intro: scroll pos %d — triggering ANI queue[%d] len=%d\n",
+                       pos, data->scroll_ani_queue[0], data->scroll_ani_queue_len);
                 break;
             }
 
             fd2_render_present(&game->render);
-            data->scroll_pos--;  /* Scroll downward */
 
             /* Pump events during scroll */
             {
@@ -795,10 +951,17 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
             /* Delay 30ms per frame (original: j___delay(30)) */
             SDL_Delay(30);
+
+            /* 1-second pause at scroll pos 0 (original: if (!n535) j___delay(1000)) */
+            if (data->scroll_pos == 0) {
+                SDL_Delay(1000);
+            }
+
+            data->scroll_pos--;
             break;
         }
 
-        /* ---- Phase 3: Fade to black ---- */
+        /* ---- Phase 3: Fade to reddish-black (sub_2DF01 with base 0x3F,0,0) ---- */
         case 3:
         {
             if (data->scroll_buf) {
@@ -806,8 +969,10 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 data->scroll_buf = NULL;
             }
 
-            /* Fade to black over 40 steps, 8ms each (sub_2DF01 + delay(8)) */
-            fd2_render_fade_to_black(&game->render, 40, 8);
+            /* Fade to reddish-black over 40 steps, 8ms each.
+             * Original: sub_2DF01(0, 255, n40, 0x3F, 0, 0) — fades to a
+             * uniform (63,0,0) red instead of pure black, giving a warm tint. */
+            fd2_render_fade_to_color(&game->render, 40, 8, 0x3F, 0, 0);
 
             /* Wait 100ms */
             SDL_Delay(100);
@@ -818,34 +983,33 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
             break;
         }
 
-        /* ---- Phase 4: ANI.DAT animation #1 (menu intro) ----
-         * Original: sub_20421(1, 15, 1) — ANI.DAT resource 1, 15ms delay */
+        /* ---- Phase 4: ANI#1 menu intro ----
+         * Original: load FDOTHER[7] (image) + FDOTHER[8] (palette) →
+         *   clear screen → brightness 0 → sub_20421(1, 15, 1) */
         case 4:
         {
             if (data->phase_frame == 0) {
+                /* Load FDOTHER[8] as palette (original: FDOTHER_DAT = sub_111BA(8)) */
+                u32 pal_size;
+                const u8* pal_res = fd2_resources_get(
+                    &game->resources, FD2_DAT_FDOTHER, 8, &pal_size);
+                if (pal_res && pal_size == FD2_PALETTE_BYTES) {
+                    fd2_render_set_palette_6bit(&game->render, pal_res);
+                }
+
                 /* Clear screen, set brightness to 0 */
                 fd2_render_fill_screen(&game->render, 0);
                 fd2_render_set_brightness(&game->render, 0);
                 fd2_render_present(&game->render);
 
-                /* Load FDOTHER resources 7 and 8 for menu palette */
-                u32 pal_size;
-                const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &pal_size);
-                if (pal_res && pal_size == FD2_PALETTE_BYTES) {
-                    fd2_render_set_palette_6bit(&game->render, pal_res);
-                }
-
                 intro_start_ani(game, data, 1, 15);
             }
 
             int result = intro_play_ani_frame(game, data);
-            if (result == -2) return FD2_STATE_QUIT;  /* SDL_QUIT during animation */
+            if (result == -2) return FD2_STATE_QUIT;
             if (result != 0) {
-                /* Animation finished — proceed to menu fade-in.
-                 * MUST return here — phase_frame++ below would corrupt
-                 * the phase_frame=0 we just set. */
                 if (data->afm) { free(data->afm); data->afm = NULL; }
-                printf("intro: ANI#1 done, fading in menu\n");
+                printf("intro: ANI#1 (menu intro) done, fading in menu\n");
                 data->phase = 5;
                 data->phase_frame = 0;
                 return FD2_STATE_INTRO;
@@ -857,32 +1021,39 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
         }
 
         /* ---- Phase 5: Fade in menu background ----
-         * Original: after ANI#1, draws FDOTHER resource 0 + fades from
-         * brightness 0 to 56 over 40 steps, 8ms each.
-         * Also blits FDOTHER resource 101 (menu background). */
+         * Original after ANI#1: sub_11DF2(0,255,64) (add 64 to palette) →
+         *   sub_16886(FDOTHER[7]) (draw menu image) →
+         *   sub_2DF01 fade from (56,60,63) to full palette over 40 steps, 8ms each */
         case 5:
         {
-            /* Load menu palette (FDOTHER 7) and draw menu background */
-            u32 pal_size;
-            const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &pal_size);
-            if (pal_res && pal_size == FD2_PALETTE_BYTES) {
-                fd2_render_set_palette_6bit(&game->render, pal_res);
+            /* Load FDOTHER[8] as palette (original: FDOTHER_DAT = sub_111BA(8)) */
+            u32 pal5_size;
+            const u8* pal5_res = fd2_resources_get(
+                &game->resources, FD2_DAT_FDOTHER, 8, &pal5_size);
+            if (pal5_res && pal5_size == FD2_PALETTE_BYTES) {
+                fd2_render_set_palette_6bit(&game->render, pal5_res);
             }
 
-            /* Draw FDOTHER resource 0 (SNK logo or similar) */
-            u32 res0_size;
-            const u8* res0 = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 0, &res0_size);
+            /* sub_11DF2(0, 255, 64): add 64 to every palette entry in 6-bit space.
+             * Since 64 > 63, every entry clamps to 63 = max brightness.
+             * This creates a "whitened" palette as the fade target, so the
+             * menu background appears slightly brighter than normal. */
+            fd2_render_palette_add_6bit(&game->render, 64);
+
+            /* Draw FDOTHER[7] as menu background image
+             * (original: sub_16886(FDOTHER[7]) draws to screen) */
             fd2_render_fill_screen(&game->render, 0);
-            if (res0) {
-                fd2_render_blit_rle(&game->render, res0, res0_size, 0, 0);
+            u32 res7_size;
+            const u8* res7 = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &res7_size);
+            if (res7) {
+                fd2_render_blit_rle(&game->render, res7, res7_size, 0, 0);
             }
 
-            /* Set brightness to 0, then fade in */
-            fd2_render_set_brightness(&game->render, 0);
-            fd2_render_present(&game->render);
-
-            /* Fade from brightness 0 to 56 (0x38) over 40 steps, 8ms each */
-            fd2_render_fade_from_black(&game->render, 40, 8);
+            /* Fade from dim cool-blue (0x38,0x3C,0x3F) to full brightened palette
+             * over 40 steps, 8ms each (sub_2DF01 ascending: n40_1=0..40).
+             * The base color (56,60,63) in 6-bit is a dark cool blue-gray,
+             * giving the fade-in a characteristic cold tint instead of pure black. */
+            fd2_render_fade_from_color(&game->render, 40, 8, 0x38, 0x3C, 0x3F);
 
             data->phase = 6;
             data->phase_frame = 0;

@@ -296,8 +296,9 @@ int main(int argc, char** argv) {
     u32 title_size;
     const u8* title_res = fd2_dat_get_resource(&dat, 74, &title_size);
 
+    /* Title screen uses palette FDOTHER[76] (original: sub_111BA(76)) */
     u32 pal_size;
-    const u8* pal_res = fd2_dat_get_resource(&dat, 7, &pal_size);
+    const u8* pal_res = fd2_dat_get_resource(&dat, 76, &pal_size);
     if (pal_res && pal_size == FD2_PALETTE_BYTES) {
         fd2_palette_6bit_to_8bit(pal_res, g_palette);
     }
@@ -323,6 +324,11 @@ int main(int argc, char** argv) {
     u32 menu_size;
     const u8* menu_res = fd2_dat_get_resource(&dat, 101, &menu_size);
 
+    /* Scroll/menu section uses palette FDOTHER[101] (original: sub_111BA(101)) */
+    const u8* scroll_pal = fd2_dat_get_resource(&dat, 101, &pal_size);
+    if (scroll_pal && pal_size == FD2_PALETTE_BYTES) {
+        fd2_palette_6bit_to_8bit(scroll_pal, g_palette);
+    }
     fd2_palette_set_brightness(g_palette, 63);
     palette_to_argb(g_palette, g_argb + FD2_SCREEN_W * FD2_SCREEN_H);
 

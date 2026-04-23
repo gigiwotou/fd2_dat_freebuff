@@ -125,6 +125,16 @@ void fd2_palette_set_brightness(u8* palette_8bit, int brightness);
 void fd2_palette_fade(const u8* src, const u8* dst,
                       u8* out, int steps, int current);
 
+/*
+ * Add a 6-bit value to every palette entry (sub_11DF2).
+ *
+ * Operates in 6-bit space for accuracy: converts each 8-bit entry back to
+ * 6-bit, adds add_6bit, clamps to 63, converts back to 8-bit.
+ * When add_6bit >= 64, every entry becomes 63 (max white).
+ * Modifies palette_8bit in place.
+ */
+void fd2_palette_add_6bit(u8* palette_8bit, int add_6bit);
+
 /* ---- Image Dimensions ---- */
 
 /*

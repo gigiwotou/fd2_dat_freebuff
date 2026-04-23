@@ -138,6 +138,30 @@ void fd2_render_fade_to_black(fd2_render_t* render, int steps, int step_ms);
 void fd2_render_fade_from_black(fd2_render_t* render, int steps, int step_ms);
 
 /*
+ * Fade the current palette to a uniform color over the given number of steps.
+ * Matches sub_2DF01 with descending step counter (e.g. Phase 3 fade-out).
+ * base_r6/g6/b6: 6-bit VGA color values (0-63) to fade towards.
+ * Each step takes step_ms milliseconds.
+ */
+void fd2_render_fade_to_color(fd2_render_t* render, int steps, int step_ms,
+                               int base_r6, int base_g6, int base_b6);
+
+/*
+ * Fade from a uniform color to the current palette over the given number of steps.
+ * Matches sub_2DF01 with ascending step counter (e.g. Phase 5 fade-in).
+ * base_r6/g6/b6: 6-bit VGA color values (0-63) to fade from.
+ * Each step takes step_ms milliseconds.
+ */
+void fd2_render_fade_from_color(fd2_render_t* render, int steps, int step_ms,
+                                 int base_r6, int base_g6, int base_b6);
+
+/*
+ * Add a 6-bit value to every palette entry (sub_11DF2).
+ * Produces a brightened/whitened palette.
+ */
+void fd2_render_palette_add_6bit(fd2_render_t* render, int add_6bit);
+
+/*
  * Blit an AFM animation frame into the screen buffer.
  * Copies the AFM frame (320x200 indexed) directly to the screen.
  * transparent: color index to skip (0 = skip black, -1 = no transparency).
