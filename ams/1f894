@@ -1,0 +1,510 @@
+sub_1F894 (cseg01 @ 0x1f894):
+1f894  push    88h
+1f899  call    sub_3702F
+1f89e  push    ebx
+1f89f  push    esi
+1f8a0  push    edi
+1f8a1  push    ebp
+1f8a2  sub     esp, 5Ch
+1f8a5  mov     [esp+6Ch+var_1C], 1
+1f8ad  mov     [esp+6Ch+var_2C], 0
+1f8b5  xor     ebp, ebp
+1f8b7  mov     [esp+6Ch+var_24], ebp
+1f8bb  mov     [esp+6Ch+var_20], 0Ch
+1f8c3  mov     byte ptr [esp+6Ch+var_14], 0
+1f8c8  mov     ecx, 0Fh
+1f8cd  mov     edi, esp
+1f8cf  mov     esi, offset src_
+1f8d4  rep movsd
+1f8d6  push    4Dh ; 'M'
+1f8d8  push    ebp
+1f8d9  push    offset aFdotherDat; "FDOTHER.DAT"
+1f8de  call    sub_111BA
+1f8e3  add     esp, 0Ch
+1f8e6  mov     [esp+6Ch+var_18], eax
+1f8ea  push    0FA00h
+1f8ef  push    ebp
+1f8f0  push    0A0000h
+1f8f5  call    memset
+1f8fa  add     esp, 0Ch
+1f8fd  push    4Ch ; 'L'
+1f8ff  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1f905  push    offset aFdotherDat; "FDOTHER.DAT"
+1f90a  call    sub_111BA
+1f90f  add     esp, 0Ch
+1f912  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1f917  push    40h ; '@'
+1f919  push    0FFh
+1f91e  push    ebp
+1f91f  call    sub_11D40
+1f924  add     esp, 0Ch
+1f927  push    4Ah ; 'J'
+1f929  push    ebp
+1f92a  push    offset aFdotherDat; "FDOTHER.DAT"
+1f92f  call    sub_111BA
+1f934  add     esp, 0Ch
+1f937  mov     [esp+6Ch+var_28], eax
+1f93b  push    0FFFFFFFFh
+1f93d  push    140h
+1f942  push    0A0000h
+1f947  push    ebp
+1f948  push    ebp
+1f949  push    eax
+1f94a  call    sub_4E98D
+1f94f  add     esp, 18h
+1f952  call    sub_1F525
+1f957  push    1
+1f959  call    sub_17AA9
+1f95e  add     esp, 4
+1f961  push    1Eh
+1f963  call    sub_17AA9
+1f968  add     esp, 4
+1f96b  call    sub_1F882
+1f970  push    63h ; 'c'
+1f972  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1f978  push    offset aFdotherDat; "FDOTHER.DAT"
+1f97d  call    sub_111BA
+1f982  add     esp, 0Ch
+1f985  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1f98a  push    0FA00h
+1f98f  push    ebp
+1f990  push    0A0000h
+1f995  call    memset
+1f99a  add     esp, 0Ch
+1f99d  push    ebp
+1f99e  push    0FFh
+1f9a3  push    ebp
+1f9a4  call    sub_11D40
+1f9a9  add     esp, 0Ch
+1f9ac  push    1
+1f9ae  push    5Ah ; 'Z'
+1f9b0  push    3
+1f9b2  call    sub_20421
+1f9b7  add     esp, 0Ch
+1f9ba  call    sub_1F882
+1f9bf  push    0FA00h
+1f9c4  push    ebp
+1f9c5  push    0A0000h
+1f9ca  call    memset
+1f9cf  add     esp, 0Ch
+1f9d2  push    65h ; 'e'
+1f9d4  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1f9da  push    offset aFdotherDat; "FDOTHER.DAT"
+1f9df  call    sub_111BA
+1f9e4  add     esp, 0Ch
+1f9e7  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1f9ec  push    40h ; '@'
+1f9ee  push    0FFh
+1f9f3  push    ebp
+1f9f4  call    sub_11D40
+1f9f9  add     esp, 0Ch
+1fa01  call    malloc
+1fa06  add     esp, 4
+1fa09  mov     edi, eax
+1fa0b  push    offset loc_396C0
+1fa10  push    ebp
+1fa11  push    eax
+1fa12  call    memset
+1fa17  add     esp, 0Ch
+1fa1a  xor     esi, esi
+1fa1c  jmp     short loc_1FA52
+1fa1e  lea     eax, [esi+45h]
+1fa21  push    eax
+1fa22  push    [esp+70h+var_28]
+1fa26  push    offset aFdotherDat; "FDOTHER.DAT"
+1fa2b  call    sub_111BA
+1fa30  add     esp, 0Ch
+1fa33  mov     [esp+6Ch+var_28], eax
+1fa37  push    0FFFFFFFFh
+1fa39  push    140h
+1fa3e  push    edi
+1fa3f  imul    ebx, esi, 93h
+1fa45  push    ebx
+1fa46  push    0
+1fa48  push    eax
+1fa49  call    sub_4E98D
+1fa4e  add     esp, 18h
+1fa51  inc     esi
+1fa52  cmp     esi, 5
+1fa55  jl      short loc_1FA1E
+1fa57  call    sub_4E381
+1fa5c  cmp     dword_53A45, 0
+1fa63  jz      short loc_1FA73
+1fa65  push    dword_53A45
+1fa6b  call    free
+1fa70  add     esp, 4
+1fa73  push    0A0h
+1fa78  call    malloc
+1fa7d  add     esp, 4
+1fa80  mov     dword_53A45, eax
+1fa85  mov     esi, 217h
+1fa8a  jmp     short loc_1FA8D
+1fa8c  dec     esi
+1fa8d  test    esi, esi
+1fa8f  jl      loc_1FC66
+1fa95  push    0C8h
+1fa9a  push    140h
+1fa9f  push    140h
+1faa4  mov     eax, esi
+1faa6  shl     eax, 2
+1faa9  add     eax, esi
+1faab  shl     eax, 6
+1faae  add     eax, edi
+1fab0  push    eax
+1fab1  push    140h
+1fab6  push    0A0000h
+1fabb  call    sub_11EB0
+1fac0  add     esp, 18h
+1fac3  cmp     esi, 217h
+1fac9  jnz     short loc_1FAD0
+1facb  call    sub_1F525
+1fad0  mov     eax, esi
+1fad2  shl     eax, 2
+1fad5  add     eax, esi
+1fad7  shl     eax, 6; int
+1fada  lea     ebx, [edi+eax]; int
+1fadd  cmp     esi, 19h
+1fae0  jnz     short loc_1FB36
+1fae2  push    0; n99
+1fae4  push    0Fh; n15
+1fae6  push    0; n4
+1fae8  call    sub_1F81E
+1faed  add     esp, 0Ch
+1faf0  push    0C8h
+1faf5  push    140h
+1fafa  push    140h
+1faff  push    ebx
+1fb00  push    140h
+1fb05  push    0A0000h
+1fb0a  call    sub_11EB0
+1fb0f  add     esp, 18h
+1fb12  push    65h ; 'e'
+1fb14  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1fb1a  push    offset aFdotherDat; "FDOTHER.DAT"
+1fb1f  call    sub_111BA
+1fb24  add     esp, 0Ch
+1fb27  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1fb2c  call    sub_1F525
+1fb31  jmp     loc_1FBB7
+1fb36  cmp     esi, 14Ah
+1fb3c  jnz     short loc_1FB59
+1fb3e  call    sub_1F882
+1fb43  push    63h ; 'c'; n99
+1fb45  push    5Ah ; 'Z'; n15
+1fb47  push    4; n4
+1fb49  call    sub_1F81E
+1fb4e  add     esp, 0Ch
+1fb51  push    0
+1fb53  push    32h ; '2'
+1fb55  push    5
+1fb57  jmp     short loc_1FAE8
+1fb59  cmp     esi, 0D2h
+1fb5f  jnz     short loc_1FB7F
+1fb61  call    sub_1F882
+1fb66  push    63h ; 'c'; n99
+1fb68  push    5Ah ; 'Z'; n15
+1fb6a  push    6; n4
+1fb6c  call    sub_1F81E
+1fb71  add     esp, 0Ch
+1fb74  push    0
+1fb76  push    32h ; '2'
+1fb78  push    7
+1fb7a  jmp     loc_1FAE8
+1fb7f  cmp     esi, 6Eh ; 'n'
+1fb82  jnz     short loc_1FB94
+1fb84  call    sub_1F882
+1fb89  push    63h ; 'c'
+1fb8b  push    5Ah ; 'Z'
+1fb8d  push    8
+1fb8f  jmp     loc_1FAE8
+1fb94  cmp     esi, 1C2h
+1fb9a  jnz     short loc_1FBA4
+1fb9c  push    esi
+1fb9d  push    edi
+1fb9e  push    63h ; 'c'
+1fba0  push    64h ; 'd'
+1fba2  jmp     short loc_1FBAF
+1fba4  cmp     esi, 0Ah
+1fba7  jnz     short loc_1FBB7
+1fba9  push    esi; n99
+1fbaa  push    edi; n15
+1fbab  push    4Ch ; 'L'; n5
+1fbad  push    4Bh ; 'K'; n100
+1fbaf  call    sub_1F73F
+1fbb4  add     esp, 10h
+1fbb7  movzx   eax, byte ptr [esp+60h+var_8]
+1fbbc  cmp     esi, [esp+eax*4+60h+var_60]
+1fbbf  jnz     short loc_1FC08
+1fbc1  mov     [esp+60h+var_14], 0
+1fbc9  push    1
+1fbcb  push    0
+1fbcd  push    [esp+68h+var_C]
+1fbd1  call    sub_25A96
+1fbd6  add     esp, 0Ch
+1fbd9  push    66h ; 'f'
+1fbdb  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1fbe1  push    offset aFdotherDat; "FDOTHER.DAT"
+1fbe6  call    sub_111BA
+1fbeb  add     esp, 0Ch
+1fbee  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1fbf3  push    0
+1fbf5  push    0FFh
+1fbfa  push    0
+1fbfc  call    sub_11D40
+1fc01  add     esp, 0Ch
+1fc04  inc     byte ptr [esp+60h+var_8]
+1fc08  cmp     [esp+60h+var_14], 0Bh
+1fc0d  jnz     short loc_1FC3A
+1fc0f  push    65h ; 'e'
+1fc11  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1fc17  push    offset aFdotherDat; "FDOTHER.DAT"
+1fc1c  call    sub_111BA
+1fc21  add     esp, 0Ch
+1fc24  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1fc29  push    0
+1fc2b  push    0FFh
+1fc30  push    0
+1fc32  call    sub_11D40
+1fc37  add     esp, 0Ch
+1fc3a  push    1Eh
+1fc3c  inc     [esp+64h+var_14]
+1fc40  call    j___delay
+1fc45  add     esp, 4
+1fc48  test    esi, esi
+1fc4a  jnz     short loc_1FC59
+1fc4c  push    3E8h
+1fc51  call    j___delay
+1fc56  add     esp, 4
+1fc59  call    sub_10620
+1fc5e  test    eax, eax
+1fc60  jz      loc_1FA8C
+1fc66  mov     esi, 28h ; '('
+1fc6b  jmp     short loc_1FC8E
+1fc6d  push    0
+1fc6f  push    0
+1fc71  push    3Fh ; '?'
+1fc73  push    esi
+1fc74  push    0FFh
+1fc79  push    0
+1fc7b  call    sub_2DF01
+1fc80  add     esp, 18h
+1fc83  push    8
+1fc85  call    j___delay
+1fc8a  add     esp, 4
+1fc8d  dec     esi
+1fc8e  test    esi, esi
+1fc90  jge     short loc_1FC6D
+1fc92  push    64h ; 'd'
+1fc94  call    j___delay
+1fc99  add     esp, 4
+1fc9c  call    sub_4E381
+1fca1  push    edi
+1fca2  call    free
+1fca7  add     esp, 4
+1fcaa  push    [esp+60h+var_1C]
+1fcae  call    free
+1fcb3  add     esp, 4
+1fcb6  push    7
+1fcb8  push    [esp+64h+var_18]
+1fbbc  push    offset aFdotherDat; "FDOTHER.DAT"
+1fcc1  call    sub_111BA
+1fcc6  mov     ebx, eax
+1fcc8  add     esp, 0Ch
+1fccb  mov     [esp+60h+var_18], eax
+1fccf  push    8
+1fcd1  push    _FDOTHER_DAT_; "FDOTHER.DAT"
+1fcd7  push    offset aFdotherDat; "FDOTHER.DAT"
+1fcdc  call    sub_111BA
+1fce1  add     esp, 0Ch
+1fce4  mov     _FDOTHER_DAT_, eax; "FDOTHER.DAT"
+1fce9  push    0FA00h
+1fcee  push    0
+1fcf0  push    0A0000h
+1fcf5  call    memset
+1fcfa  add     esp, 0Ch
+1fcfd  push    0
+1fcff  push    0FFh
+1fd04  push    0
+1fd06  call    sub_11D40
+1fd0b  add     esp, 0Ch
+1fd0e  push    1
+1fd10  push    0Fh
+1fd12  push    1
+1fd14  call    sub_20421
+1fd19  add     esp, 0Ch
+1fd1c  push    1
+1fd1e  push    3
+1fd20  push    [esp+68h+var_C]
+1fd24  call    sub_25B45
+1fd29  add     esp, 0Ch
+1fd2c  push    40h ; '@'
+1fd2e  push    0FFh
+1fd33  push    0
+1fd35  call    sub_11DF2
+1fd3a  add     esp, 0Ch
+1fd3d  push    0
+1fd3f  push    ebx
+1fd40  push    140h
+1fd45  push    0A0000h
+1fd4a  call    sub_16886
+1fd4f  add     esp, 10h
+1fd52  xor     esi, esi
+1fd54  jmp     short loc_1FD77
+1fd56  push    3Fh ; '?'
+1fd58  push    3Ch ; '<'
+1fd5a  push    38h ; '8'
+1fd5c  push    esi
+1fd5d  push    0FFh
+1fd62  push    0
+1fd64  call    sub_2DF01
+1fd69  add     esp, 18h
+1fd6c  push    8
+1fd6e  call    j___delay
+1fd73  add     esp, 4
+1fd76  inc     esi
+1fd77  cmp     esi, 28h ; '('
+1fd7a  jle     short loc_1FD56
+1fd7c  call    sub_4E381
+1fd81  push    offset aRb_3; "rb"
+1fd86  push    offset aFd2Sav_3; "FD2.SAV"
+1fd8b  call    fopen
+1fd90  mov     ebx, eax
+1fd92  add     esp, 8
+1fd95  test    eax, eax
+1fd97  jz      loc_1FE1B
+1fd9d  push    59CBh
+1fda2  call    malloc
+1fda7  mov     esi, eax
+1fda9  add     esp, 4
+1fdac  mov     [esp+60h+var_24], eax
+1fdb0  push    ebx
+1fdb1  push    59CBh
+1fdb6  push    1
+1fdb8  push    eax
+1fdb9  call    sub_373CA
+1fdbe  add     esp, 10h
+1fdc1  push    ebx
+1fdc2  call    fclose
+1fdc7  add     esp, 4
+1fdca  push    59CBh
+1fdcf  push    esi
+1fdd0  call    sub_4DF28
+1fdd5  add     esp, 8
+1fdd8  lea     edi, [esi+30C3h]
+1fdde  push    59CBh; n22987
+1fde3  push    esi; int
+1fde4  call    sub_4DF09
+1fde9  add     esp, 8
+1fdec  cmp     eax, [esi+59C7h]
+1fdf2  jnz     short loc_1FE0F
+1fdf4  mov     [esp+60h+var_10], 2
+1fdfc  movzx   eax, byte ptr [edi+2]
+1fe00  cmp     eax, 0FFh
+1fe05  jz      short loc_1FE0F
+1fe07  mov     [esp+60h+var_10], 3
+1fe0f  push    [esp+60h+var_24]
+1fe13  call    free
+1fe18  add     esp, 4
+1fe1b  push    [esp+60h+var_10]; n2
+1fe1f  push    ebp; n3
+1fe20  push    [esp+68h+var_18]; _FDOTHER.DAT_
+1fe24  call    sub_1FF79
+1fe29  add     esp, 0Ch
+1fe2c  cmp     [esp+60h+var_20], 0
+1fe31  jnz     loc_1FEF0
+1fe37  push    [esp+60h+var_10]; n2
+1fe3b  push    ebp; n3
+1fe3c  push    [esp+68h+var_18]; _FDOTHER.DAT_
+1fe40  call    sub_1FF79
+1fe45  add     esp, 0Ch
+1fe48  mov     byte ptr n3+1, 10h
+1fe4f  push    offset n3
+1fe54  push    offset n3
+1fe59  push    16h
+1fe5b  call    int386
+1fe60  add     esp, 0Ch
+1fe63  movzx   eax, byte ptr n3+1
+1fe6a  mov     ebx, [esp+60h+var_10]
+1fe6e  dec     ebx
+1fe6f  cmp     eax, 48h ; 'H'
+1fe72  jnz     short loc_1FE8F
+1fe74  push    1
+1fe76  push    2
+1fe78  push    [esp+68h+var_C]
+1fe7c  call    sub_25A96
+1fe81  add     esp, 0Ch
+1fe84  test    ebp, ebp
+1fe86  jnz     short loc_1FE8C
+1fe88  mov     ebp, ebx
+1fe8a  jmp     short loc_1FE2C
+1fe8c  dec     ebp
+1fe8d  jmp     short loc_1FE2C
+1fe8f  cmp     eax, 50h ; 'P'
+1fe92  jnz     short loc_1FEB2
+1fe94  push    1
+1fe96  push    2
+1fe98  push    [esp+68h+var_C]
+1fe9c  call    sub_25A96
+1fea1  add     esp, 0Ch
+1fea4  cmp     ebp, ebx
+1fea6  jnz     short loc_1FEAC
+1fea8  xor     ebp, ebx
+1feaa  jmp     short loc_1FE2C
+1feac  inc     ebp
+1fead  jmp     loc_1FE2C
+1feb2  movzx   ebx, byte ptr n3
+1feb9  cmp     ebx, 0Dh
+1febc  jz      short loc_1FED3
+1febe  cmp     ebx, 20h ; ' '
+1fec1  jz      short loc_1FED3
+1fec3  cmp     eax, 0E0h
+1fec8  jz      short loc_1FED3
+1feca  cmp     eax, 52h ; 'R'
+1fecd  jnz     loc_1FE2C
+1fed3  push    1
+1fed5  push    1
+1fed7  push    [esp+68h+var_C]
+1fedb  call    sub_25A96
+1fee0  add     esp, 0Ch
+1fee3  mov     [esp+60h+var_20], 1
+1feeb  jmp     loc_1FE2C
+1fef0  xor     esi, esi
+1fef2  jmp     short loc_1FF2C
+1fef4  push    [esp+60h+var_10]; n2
+1fef8  push    0FFFFFFFFh; n3
+1fefa  push    [esp+68h+var_18]; _FDOTHER.DAT_
+1fefe  call    sub_1FF79
+1ff03  add     esp, 0Ch
+1ff06  push    50h ; 'P'
+1ff08  call    j___delay
+1ff0d  add     esp, 4
+1ff10  push    [esp+60h+var_10]; n2
+1ff14  push    ebp; n3
+1ff15  push    [esp+68h+var_18]; _FDOTHER.DAT_
+1ff19  call    sub_1FF79
+1ff1e  add     esp, 0Ch
+1ff21  push    50h ; 'P'
+1ff23  call    j___delay
+1ff28  add     esp, 4
+1ff2b  inc     esi
+1ff2c  cmp     esi, 4
+1ff2f  jl      short loc_1FEF4
+1ff31  call    sub_1F882
+1ff36  push    0FA00h
+1ff3b  push    0
+1ff3d  push    0A0000h
+1ff42  call    memset
+1ff47  add     esp, 0Ch
+1ff4a  push    [esp+60h+var_18]
+1ff4e  call    free
+1ff53  add     esp, 4
+1ff56  push    1
+1ff58  push    0FFFFFFFFh
+1ff5a  push    [esp+68h+var_C]
+1ff5e  call    sub_25A96
+1ff63  add     esp, 0Ch
+1ff66  push    [esp+60h+var_C]
+1ff6a  call    free
+1ff6f  add     esp, 4
+1ff72  mov     eax, ebp
+1ff74  jmp     loc_13994
