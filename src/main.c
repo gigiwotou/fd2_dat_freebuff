@@ -12,10 +12,10 @@
 
 int main(int argc, char** argv) {
     /* Determine data directory.
-     * Default: "game" (relative to CWD).
+     * Default: NULL (use executable directory).
      * Can be overridden via command line argument.
      */
-    const char* data_dir = "game";
+    const char* data_dir = NULL;
     if (argc > 1) {
         data_dir = argv[1];
     }

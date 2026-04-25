@@ -14,8 +14,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <limits.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 /* ---- Forward declarations for built-in states ---- */
 static void state_init_enter(fd2_game_t* game);
@@ -74,31 +79,35 @@ static const fd2_state_ops_t builtin_states[FD2_STATE_COUNT] = {
 static void find_data_dir(fd2_game_t* game, const char* argv0) {
     /* Try to find game data directory.
      * Search order:
-     *   1. Explicit path (if argv0 is a directory)
-     *   2. ./game/
-     *   3. EXE directory + /game/
+     *   1. Explicit path (if argv0 is provided and is a directory)
+     *   2. EXE directory (where the .exe file is located)
+     *   3. ./game/ (relative to CWD)
      */
+    
+    /* If an explicit data directory was passed, use it */
     if (argv0 && argv0[0]) {
-        /* If an explicit data directory was passed, use it */
+        /* Check if it's a directory path (not a filename) */
         snprintf(game->data_dir, sizeof(game->data_dir), "%s", argv0);
         return;
     }
 
-    /* Try ./game/ */
-    snprintf(game->data_dir, sizeof(game->data_dir), "game");
-
-    /* Try exe directory */
-    char exe_dir[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
-    if (len > 0) {
-        exe_dir[len] = '\0';
-        char* slash = strrchr(exe_dir, '/');
-        if (slash) {
-            *(slash + 1) = '\0';
-            snprintf(game->data_dir, sizeof(game->data_dir), "%sgame", exe_dir);
-            game->data_dir[sizeof(game->data_dir) - 1] = '\0';
+#ifdef _WIN32
+    /* Try exe directory using Windows API */
+    char exe_path[PATH_MAX];
+    DWORD len = GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+    if (len > 0 && len < sizeof(exe_path)) {
+        /* Remove the executable filename to get the directory */
+        char* backslash = strrchr(exe_path, '\\');
+        if (backslash) {
+            *(backslash + 1) = '\0';
+            snprintf(game->data_dir, sizeof(game->data_dir), "%s", exe_path);
+            return;
         }
     }
+#endif
+
+    /* Fallback: use current directory */
+    snprintf(game->data_dir, sizeof(game->data_dir), ".");
 }
 
 const char* fd2_game_data_path(fd2_game_t* game, const char* filename) {
@@ -368,6 +377,7 @@ typedef struct {
 
     /* AFM animation context for ANI.DAT playback */
     fd2_afm_t* afm;           /* Heap-allocated (64KB+ buffers inside) */
+    u8*        ani_data;      /* Raw AFM data (allocated separately, needs explicit free) */
     int        ani_resource;  /* Which ANI.DAT resource is playing */
     int        ani_frame_delay; /* ms per AFM frame */
 
@@ -384,6 +394,7 @@ typedef struct {
     int  scroll_ani_delay[3]; /* ms per frame for each ANI in queue */
     int  scroll_ani_palette[3]; /* FDOTHER palette resource per ANI in queue (-1=none) */
     bool scroll_ani_needs_fadeout; /* Whether to fade-out before ANI sequence */
+    bool scroll_ani_after_end;    /* True for pos 25: after ANI, continue to pos 10 overlay */
 
     /* Overlay sub-state (sub_1F73F at scroll positions 450 and 10) */
     int  overlay_step;          /* 0=idle, 1=fadeout+draw, 2=wait, 3=fadeout+restore */
@@ -419,51 +430,163 @@ static int intro_play_ani_frame(fd2_game_t* game, state_intro_data_t* data) {
     return 0;
 }
 
+/* ---- Helper: load ANI.DAT AFM data directly from file (with index lookup) ----
+ * ANI.DAT has a special index structure: after the LLLLLL magic (6 bytes),
+ * there are N 4-byte entries where each entry points to the actual AFM data.
+ * Index table starts at offset 0x06.
+ * To get ANI#N: read 4 bytes at offset (0x06 + N*4) to get the AFM offset,
+ *              then read from that offset (173 byte header + frames).
+ * This replicates sub_20421's fseek(4*a5 + 6, 0) and fseek(*(DWORD*)buf, 0).
+ */
+static int load_ani_afm_from_file(const char* ani_path, int ani_index,
+                                   u8** out_data, u32* out_size) {
+    if (!ani_path || !out_data || !out_size) return -1;
+    if (ani_index < 0) {
+        fprintf(stderr, "intro: invalid ANI index %d\n", ani_index);
+        return -1;
+    }
+    
+    FILE* f = fopen(ani_path, "rb");
+    if (!f) {
+        fprintf(stderr, "intro: cannot open ANI.DAT: %s\n", ani_path);
+        return -1;
+    }
+    
+    /* ANI.DAT index lookup: offset = 0x06 + index * 4 */
+    fseek(f, 0x06 + ani_index * 4, SEEK_SET);
+    u32 afm_offset = 0;
+    if (fread(&afm_offset, 4, 1, f) != 1) {
+        fprintf(stderr, "intro: cannot read ANI.DAT index %d\n", ani_index);
+        fclose(f);
+        return -1;
+    }
+    
+    /* Seek to the AFM data */
+    if (fseek(f, afm_offset, SEEK_SET) != 0) {
+        fprintf(stderr, "intro: cannot seek to AFM offset 0x%X\n", afm_offset);
+        fclose(f);
+        return -1;
+    }
+    
+    /* Read AFM header (173 bytes) */
+    u8 header[FD2_AFM_HEADER_SIZE];
+    if (fread(header, 1, FD2_AFM_HEADER_SIZE, f) != FD2_AFM_HEADER_SIZE) {
+        fprintf(stderr, "intro: cannot read AFM header for ANI#%d\n", ani_index);
+        fclose(f);
+        return -1;
+    }
+    
+    /* Verify AFM signature */
+    if (memcmp(header, "AFM", 3) != 0) {
+        fprintf(stderr, "intro: ANI#%d has invalid AFM signature\n", ani_index);
+        fclose(f);
+        return -1;
+    }
+    
+    /* Get frame count from header offset 0xA5 */
+    u16 frame_count = (u16)header[0xA5] | ((u16)header[0xA6] << 8);
+    
+    /* Calculate total size: header + all frames */
+    u8 frame_hdr[FD2_AFM_FRAME_HDR];
+    u32 total_size = FD2_AFM_HEADER_SIZE;
+    
+    for (u16 i = 0; i < frame_count; i++) {
+        if (fread(frame_hdr, FD2_AFM_FRAME_HDR, 1, f) != 1) {
+            fprintf(stderr, "intro: cannot read frame header %d\n", i);
+            fclose(f);
+            return -1;
+        }
+        u16 frame_size = (u16)frame_hdr[0] | ((u16)frame_hdr[1] << 8);
+        total_size += FD2_AFM_FRAME_HDR + frame_size;
+        
+        /* Seek past frame data */
+        if (fseek(f, frame_size, SEEK_CUR) != 0) {
+            fprintf(stderr, "intro: cannot seek past frame %d\n", i);
+            fclose(f);
+            return -1;
+        }
+    }
+    
+    /* Allocate buffer */
+    u8* afm_data = (u8*)malloc(total_size);
+    if (!afm_data) {
+        fprintf(stderr, "intro: cannot allocate AFM buffer (%u bytes)\n", total_size);
+        fclose(f);
+        return -1;
+    }
+    
+    /* Seek back and read all data */
+    fseek(f, afm_offset, SEEK_SET);
+    if (fread(afm_data, 1, total_size, f) != total_size) {
+        fprintf(stderr, "intro: cannot read full AFM data\n");
+        free(afm_data);
+        fclose(f);
+        return -1;
+    }
+    
+    fclose(f);
+    
+    *out_data = afm_data;
+    *out_size = total_size;
+    
+    printf("intro: loaded ANI#%d from file (offset=0x%X, %u frames, %u bytes)\n",
+           ani_index, afm_offset, frame_count, total_size);
+    return 0;
+}
+
 /* Helper: start playing an ANI.DAT AFM animation */
 static int intro_start_ani(fd2_game_t* game, state_intro_data_t* data,
                            int ani_index, int frame_delay_ms) {
-    /* Free previous AFM context */
+    /* Free previous AFM context and its data */
     if (data->afm) {
+        /* The AFM data was allocated separately, need to free it */
+        /* Check if there's stored pointer to free */
+        if (data->ani_data) {
+            free(data->ani_data);
+            data->ani_data = NULL;
+        }
         free(data->afm);
         data->afm = NULL;
     }
 
-    /* Make sure ANI.DAT is loaded */
-    if (!game->resources.loaded[FD2_DAT_ANI]) {
-        if (fd2_resources_load_dat(&game->resources, FD2_DAT_ANI) != 0) {
-            fprintf(stderr, "intro: cannot load ANI.DAT\n");
-            return -1;
-        }
+    /* Get ANI.DAT path from resource manager */
+    const char* ani_path = fd2_resources_dat_path(&game->resources, FD2_DAT_ANI);
+    if (!ani_path) {
+        fprintf(stderr, "intro: cannot get ANI.DAT path\n");
+        return -1;
     }
 
-    /* Get the AFM resource data */
-    u32 res_size;
-    const u8* res_data = fd2_resources_get(&game->resources, FD2_DAT_ANI, ani_index, &res_size);
-    if (!res_data) {
-        fprintf(stderr, "intro: ANI.DAT resource %d not found\n", ani_index);
+    /* Load AFM data directly from file (with proper index lookup) */
+    u8* afm_data = NULL;
+    u32 afm_size = 0;
+    
+    if (load_ani_afm_from_file(ani_path, ani_index, &afm_data, &afm_size) != 0) {
+        fprintf(stderr, "intro: failed to load ANI#%d from ANI.DAT\n", ani_index);
         return -1;
     }
 
     /* Allocate and initialize AFM context */
     data->afm = (fd2_afm_t*)calloc(1, sizeof(fd2_afm_t));
-    if (!data->afm) return -1;
+    if (!data->afm) {
+        free(afm_data);
+        return -1;
+    }
 
     fd2_afm_init(data->afm);
-    if (fd2_afm_open(data->afm, res_data, res_size) != 0) {
-        fprintf(stderr, "intro: failed to open AFM resource %d\n", ani_index);
+    if (fd2_afm_open(data->afm, afm_data, afm_size) != 0) {
+        fprintf(stderr, "intro: failed to open AFM for ANI#%d\n", ani_index);
+        free(afm_data);
         free(data->afm);
         data->afm = NULL;
         return -1;
     }
 
+    /* Store the allocated data pointer for later cleanup */
+    data->ani_data = afm_data;
     data->ani_resource = ani_index;
     data->ani_frame_delay = frame_delay_ms;
-    /* NOTE: Do NOT set phase_frame = 0 here. It would corrupt the
-     * phase 2 scroll state when called from the ANI sub-state machine
-     * (phase_frame == 0 is the init check for phase 2). Phases 1/4
-     * already have phase_frame set to 0 by the transition code. */
 
-    printf("intro: playing ANI.DAT #%d (%u frames, %dms delay)\n",
+    printf("intro: playing ANI#%d (%u frames, %dms delay)\n",
            ani_index, data->afm->total_frames, frame_delay_ms);
     return 0;
 }
@@ -504,6 +627,7 @@ static void state_intro_enter(fd2_game_t* game) {
     data->phase = 0;
     data->phase_frame = 0;
     data->afm = NULL;
+    data->ani_data = NULL;
     data->scroll_buf = NULL;
 
     /* ---- Phase 0: Show title screen (sub_1F894 start) ---- */
@@ -539,6 +663,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
     /* Any other key skips remaining intro phases (jumps to menu) */
     if (fd2_input_any_pressed(&game->input) && data->phase < 5) {
+        if (data->ani_data) { free(data->ani_data); data->ani_data = NULL; }
         if (data->afm) { free(data->afm); data->afm = NULL; }
         if (data->scroll_buf) { free(data->scroll_buf); data->scroll_buf = NULL; }
         data->scroll_ani_step = 0;
@@ -598,6 +723,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
             if (result != 0) {
                 /* ANI#3 finished — fade out, then prepare scroll phase.
                  * Original: sub_1F882 (fade out) after sub_20421 returns. */
+                if (data->ani_data) { free(data->ani_data); data->ani_data = NULL; }
                 if (data->afm) { free(data->afm); data->afm = NULL; }
                 fd2_render_fade_to_black(&game->render, 64, 2);
                 printf("intro: ANI#3 done (faded out), starting scroll (phase 2)\n");
@@ -619,7 +745,10 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
          * Overlay sub-state (sub_1F73F) at positions 450, 10. */
         case 2:
         {
+            /* Initialization: only run once (phase_frame == 0 means first entry) */
             if (data->phase_frame == 0) {
+                printf("intro: phase 2 init (scroll buffer setup)\n");
+                
                 /* Original after ANI#3: memset(655360,0,64000) → sub_111BA(101) →
                  * sub_11D40(0,255,64) → build scroll → sub_4E381 → malloc overlay */
                 fd2_render_fill_screen(&game->render, 0);
@@ -638,36 +767,45 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 /* Build scroll buffer from FDOTHER 69-73 */
                 intro_build_scroll_buffer(game, data);
 
+                if (!data->scroll_buf) {
+                    fprintf(stderr, "intro ERROR: scroll buffer allocation failed!\n");
+                    data->phase = 3;
+                    data->phase_frame = 0;
+                    break;
+                }
+                printf("intro: scroll buffer built, size %dx%d\n",
+                       FD2_SCREEN_W, data->scroll_total_h);
+
+                /* Set initial state */
                 data->scroll_pos = 535;
-                data->phase_frame = 1;
+                data->phase_frame = 1;  /* Mark init complete */
                 data->scroll_ani_needs_fadeout = false;
+                data->scroll_ani_after_end = false;
+                data->overlay_step = 0;
+                data->scroll_ani_step = 0;
 
                 /* Show first scroll frame and fade in (sub_1F525 at n535==535) */
-                if (data->scroll_buf) {
-                    int pos = data->scroll_pos;
-                    for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
-                        memcpy(game->render.screen + y * FD2_SCREEN_W,
-                               data->scroll_buf + (pos + y) * FD2_SCREEN_W,
-                               FD2_SCREEN_W);
-                    }
+                int pos = data->scroll_pos;
+                for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
+                    memcpy(game->render.screen + y * FD2_SCREEN_W,
+                           data->scroll_buf + (pos + y) * FD2_SCREEN_W,
+                           FD2_SCREEN_W);
                 }
-                /* Don't call set_brightness(0)/present before fade_from_black —
-                 * fade_from_black saves the current palette as its target and
-                 * fades from black to that. If we zero the palette first, the
-                 * target is black and the fade is invisible. */
                 fd2_render_fade_from_black(&game->render, 64, 2);
 
-                printf("intro: scroll buffer built, starting scroll from pos 535\n");
-                break;
+                printf("intro: scroll started from pos 535, entering main loop\n");
+                /* Don't break - continue to scroll processing */
             }
 
             /* ---- Overlay sub-state (sub_1F73F at scroll positions 450 and 10) ----
              * sub_1F73F flow: fade out → draw image+palette → fade in → wait 6 ticks →
              *                 fade out → restore scroll+palette → fade in */
             if (data->overlay_step != 0) {
+                printf("intro: overlay_step=%d (image=%d)\n", data->overlay_step, data->overlay_image_res);
                 switch (data->overlay_step) {
                     case 1: /* Fade out + draw overlay image */
                     {
+                        printf("intro: overlay step 1 - fade out and draw\n");
                         fd2_render_fade_to_black(&game->render, 64, 2);
                         fd2_render_fill_screen(&game->render, 0);
 
@@ -727,7 +865,18 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
                         fd2_render_fade_from_black(&game->render, 64, 2);
                         data->overlay_step = 0;
-                        /* Don't decrement scroll_pos here — main loop does it */
+                        data->scroll_pos--;  /* Advance past the overlay trigger position */
+                        
+                        /* If this was the overlay at pos 10 (after ANI#0), transition to phase 3 */
+                        if (data->scroll_ani_after_end && data->scroll_pos == 9) {
+                            printf("intro: final overlay done, going to phase 3\n");
+                            if (data->scroll_buf) {
+                                free(data->scroll_buf);
+                                data->scroll_buf = NULL;
+                            }
+                            data->phase = 3;
+                            data->phase_frame = 0;
+                        }
                         break;
                     }
                 }
@@ -798,6 +947,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
                         if (result != 0) {
                             /* ANI finished — fade out (sub_1F882), advance queue */
+                            if (data->ani_data) { free(data->ani_data); data->ani_data = NULL; }
                             if (data->afm) { free(data->afm); data->afm = NULL; }
                             fd2_render_fade_to_black(&game->render, 64, 2);
                             data->scroll_ani_queue_idx++;
@@ -815,7 +965,20 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
                     case 3: /* Restore scroll buffer + fade in (LABEL_13/LABEL_14) */
                     {
-                        /* Restore scroll buffer to screen */
+                        /* Check if this was the final ANI (pos 25) */
+                        if (data->scroll_ani_after_end) {
+                            /* After ANI#0 at pos 25, continue scrolling to pos 10.
+                             * Original flow: pos 25 → ... → pos 10 overlay → then phase 3.
+                             * Don't end yet — let the scroll loop continue. */
+                            data->scroll_ani_step = 0;
+                            data->scroll_ani_queue_len = 0;
+                            data->scroll_ani_queue_idx = 0;
+                            printf("intro: ANI#0 done (pos 25), continuing to pos 10 overlay\n");
+                            data->scroll_pos--;  /* Advance to pos 24 */
+                            break;
+                        }
+
+                        /* Normal case (pos 330/210/110): restore scroll buffer */
                         int pos = data->scroll_pos;
                         if (data->scroll_buf) {
                             fd2_render_fill_screen(&game->render, 0);
@@ -860,18 +1023,31 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 break;
             }
 
+            /* Check if scroll_buf is valid */
+            if (!data->scroll_buf) {
+                fprintf(stderr, "intro ERROR: scroll_buf is NULL at pos %d\n", pos);
+                data->phase = 3;
+                data->phase_frame = 0;
+                break;
+            }
+
             /* Copy 320x200 from scroll buffer at offset pos */
-            if (data->scroll_buf) {
-                for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
-                    memcpy(game->render.screen + y * FD2_SCREEN_W,
-                           data->scroll_buf + (pos + y) * FD2_SCREEN_W,
-                           FD2_SCREEN_W);
-                }
+            for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
+                memcpy(game->render.screen + y * FD2_SCREEN_W,
+                       data->scroll_buf + (pos + y) * FD2_SCREEN_W,
+                       FD2_SCREEN_W);
+            }
+
+            /* ---- Debug: report scroll position periodically ---- */
+            if ((pos % 25) == 0) {
+                printf("intro: scroll pos %d (overlay_step=%d, scroll_ani_step=%d)\n",
+                       pos, data->overlay_step, data->scroll_ani_step);
             }
 
             /* ---- Overlay triggers at positions 450 and 10 (sub_1F73F) ---- */
             if (pos == 450) {
                 /* sub_1F73F(100, 99, n15_1, 450): overlay image 100, palette 99 */
+                printf("intro: TRIGGERING OVERLAY at pos 450 (image=%d, palette=%d)\n", 100, 99);
                 data->overlay_image_res = 100;
                 data->overlay_palette_res = 99;
                 data->overlay_step = 1;
@@ -882,6 +1058,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 data->overlay_image_res = 75;
                 data->overlay_palette_res = 76;
                 data->overlay_step = 1;
+                /* Don't decrement scroll_pos here - overlay_step 3 will do it */
                 break;
             }
 
@@ -890,7 +1067,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
              *   pos 330: sub_1F882 → sub_1F81E(4,90,99) → sub_1F81E(5,50,0) → restore
              *   pos 210: sub_1F882 → sub_1F81E(6,90,99) → sub_1F81E(7,50,0) → restore
              *   pos 110: sub_1F882 → sub_1F81E(8,90,99) → restore (ANI#8 OOB, skip)
-             *   pos 25:  sub_1F81E(0,15,0) → break (end of scroll loop)
+             *   pos 25:  sub_1F81E(0,15,0) → break (end of scroll loop, go to Phase 3)
              */
             if ((pos == 330 || pos == 210 || pos == 110 || pos == 25)
                 && data->scroll_ani_step == 0) {
@@ -903,6 +1080,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                     data->scroll_ani_delay[0] = 90;   /* First ANI: 90ms */
                     data->scroll_ani_delay[1] = 50;   /* Second ANI: 50ms */
                     data->scroll_ani_needs_fadeout = true;
+                    data->scroll_ani_after_end = false;  /* Normal: continue scroll */
                 } else if (pos == 210) {
                     data->scroll_ani_queue[0] = 6;
                     data->scroll_ani_queue[1] = 7;
@@ -912,6 +1090,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                     data->scroll_ani_delay[0] = 90;
                     data->scroll_ani_delay[1] = 50;
                     data->scroll_ani_needs_fadeout = true;
+                    data->scroll_ani_after_end = false;  /* Normal: continue scroll */
                 } else if (pos == 110) {
                     /* Original: sub_1F882 (fade out) → sub_1F81E(8,90,99)
                      * (ANI#8 OOB, fails immediately) → LABEL_14 (restore scroll
@@ -923,19 +1102,23 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                     data->scroll_ani_palette[0] = 99;
                     data->scroll_ani_delay[0] = 90;
                     data->scroll_ani_needs_fadeout = true;
+                    data->scroll_ani_after_end = false;  /* Normal: continue scroll */
                 } else { /* pos == 25 */
                     /* sub_1F81E(0, 15, 0): ANI#0 with FDOTHER[0] palette, 15ms delay.
-                     * This is the LAST scroll position — after ANI#0, loop breaks. */
+                     * After ANI#0 finishes, continue scrolling to pos 10 overlay,
+                     * then transition to phase 3. */
                     data->scroll_ani_queue[0] = 0;
                     data->scroll_ani_queue_len = 1;
                     data->scroll_ani_palette[0] = 0;   /* FDOTHER[0] palette */
                     data->scroll_ani_delay[0] = 15;
                     data->scroll_ani_needs_fadeout = false;  /* No fade-out at pos 25 */
+                    data->scroll_ani_after_end = true;   /* Continue to pos 10 overlay */
                 }
                 data->scroll_ani_queue_idx = 0;
                 data->scroll_ani_step = 1;
-                printf("intro: scroll pos %d — triggering ANI queue[%d] len=%d\n",
-                       pos, data->scroll_ani_queue[0], data->scroll_ani_queue_len);
+                printf("intro: scroll pos %d — triggering ANI queue[%d] len=%d%s\n",
+                       pos, data->scroll_ani_queue[0], data->scroll_ani_queue_len,
+                       data->scroll_ani_after_end ? " (END SCROLL)" : "");
                 break;
             }
 
@@ -1008,6 +1191,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
             int result = intro_play_ani_frame(game, data);
             if (result == -2) return FD2_STATE_QUIT;
             if (result != 0) {
+                if (data->ani_data) { free(data->ani_data); data->ani_data = NULL; }
                 if (data->afm) { free(data->afm); data->afm = NULL; }
                 printf("intro: ANI#1 (menu intro) done, fading in menu\n");
                 data->phase = 5;
@@ -1074,6 +1258,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 static void state_intro_exit(fd2_game_t* game) {
     state_intro_data_t* data = (state_intro_data_t*)game->state_data;
     if (data) {
+        if (data->ani_data) free(data->ani_data);
         if (data->afm) free(data->afm);
         if (data->scroll_buf) free(data->scroll_buf);
         free(data);

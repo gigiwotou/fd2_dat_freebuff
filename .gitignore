@@ -19,7 +19,7 @@ thirdparty/
 
 # Data
 game/
-
+dosbox-x/
 # IDE
 .vscode/
 .idea/

@@ -5,19 +5,38 @@
  * Uses SDL2 for rendering.
  */
 
-#define _GNU_SOURCE
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#endif
+
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <unistd.h>
-#include <limits.h>
 #include "fd2_decoder.h"
 
 static char g_exe_dir[PATH_MAX];
 
 static void init_exe_dir(void) {
+#ifdef _WIN32
+    char exe_path[PATH_MAX];
+    DWORD len = GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+    if (len > 0 && len < sizeof(exe_path)) {
+        char* last_backslash = strrchr(exe_path, '\\');
+        if (last_backslash) {
+            *(last_backslash + 1) = '\0';
+            strcpy(g_exe_dir, exe_path);
+        } else {
+            strcpy(g_exe_dir, "./");
+        }
+    } else {
+        strcpy(g_exe_dir, "./");
+    }
+#else
     ssize_t len = readlink("/proc/self/exe", g_exe_dir, sizeof(g_exe_dir) - 1);
     if (len > 0) {
         g_exe_dir[len] = '\0';
@@ -26,6 +45,7 @@ static void init_exe_dir(void) {
     } else {
         strcpy(g_exe_dir, "./");
     }
+#endif
 }
 
 static char* exe_path(const char* filename) {
