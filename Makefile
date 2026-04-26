@@ -1,14 +1,18 @@
 # Makefile for FD2 reimplementation (Windows/MSYS2)
 
+# Set temp directory to avoid C:\WINDOWS\ permission issues
+export TMPDIR = /tmp
+
 # MSYS2 tool paths
-GCC = C:/msys64/ucrt64/bin/gcc
-AR = C:/msys64/ucrt64/bin/ar
-RM = C:/msys64/usr/bin/rm
-MKDIR = C:/msys64/usr/bin/mkdir
+GCC = C:/msys64/ucrt64/bin/gcc.exe
+AR = C:/msys64/ucrt64/bin/ar.exe
+RM = C:/msys64/usr/bin/rm.exe
+MKDIR = C:/msys64/usr/bin/mkdir.exe
+MAKE = C:/msys64/ucrt64/bin/mingw32-make.exe
 
 # Compiler flags
-CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2
-LDFLAGS = -LC:/msys64/ucrt64/lib -lSDL2 -lm
+CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -mconsole -static-libgcc
+LDFLAGS = -LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
 
 SRC_DIR = src
 OBJ_DIR = obj
@@ -37,6 +41,9 @@ TARGET_INTRO  = $(BIN_DIR)/fd2_intro.exe
 .PHONY: all clean test decoder intro game
 
 all: $(TARGET_GAME) $(TARGET_TEST) $(TARGET_INTRO)
+	@echo Copying required DLLs...
+	@cp C:/msys64/ucrt64/bin/libwinpthread-1.dll $(BIN_DIR)/ 2>/dev/null || true
+	@cp C:/msys64/ucrt64/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null || true
 
 game: $(TARGET_GAME)
 
@@ -60,11 +67,12 @@ $(TARGET_TEST): $(DECODER_OBJS) $(TEST_OBJS) | $(BIN_DIR)
 # ---- Legacy intro player ----
 
 $(TARGET_INTRO): $(INTRO_OBJS) | $(BIN_DIR)
-	$(GCC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(GCC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lmingw32 -lSDL2main -lSDL2
 
 # ---- Compilation rules ----
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+	@echo Compiling $<
 	$(GCC) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR):

@@ -119,7 +119,7 @@ const char* fd2_resources_dat_path(const fd2_resources_t* res, fd2_dat_id_t id) 
     if (!res || id < 0 || id >= FD2_DAT_COUNT) return NULL;
 
     /* Thread-local static buffer for path result */
-    static __thread char path_buf[768];
+    static char path_buf[768];
     snprintf(path_buf, sizeof(path_buf), "%s/%s",
              res->data_dir, fd2_dat_filenames[id]);
     return path_buf;

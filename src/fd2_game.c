@@ -113,7 +113,7 @@ static void find_data_dir(fd2_game_t* game, const char* argv0) {
 const char* fd2_game_data_path(fd2_game_t* game, const char* filename) {
     if (!game || !filename) return NULL;
 
-    static __thread char path_buf[768];
+    static char path_buf[768];
     snprintf(path_buf, sizeof(path_buf), "%s/%s", game->data_dir, filename);
     return path_buf;
 }

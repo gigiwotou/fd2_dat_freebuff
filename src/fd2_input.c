@@ -9,6 +9,7 @@
 #include "fd2_input.h"
 #include <SDL2/SDL.h>
 #include <string.h>
+#include <stdbool.h>
 
 /* ---- Key Mapping ----
  *
