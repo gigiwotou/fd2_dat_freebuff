@@ -14,6 +14,10 @@ MAKE = C:/msys64/ucrt64/bin/mingw32-make.exe
 CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -mconsole -static-libgcc
 LDFLAGS = -LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
 
+# Release flags (no console window, no debug output)
+RELEASE_CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -DNDEBUG -mwindows -static-libgcc
+RELEASE_LDFLAGS = -LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
+
 SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = bin
@@ -38,7 +42,7 @@ TARGET_GAME   = $(BIN_DIR)/fd2.exe
 TARGET_TEST   = $(BIN_DIR)/fd2_decoder_test.exe
 TARGET_INTRO  = $(BIN_DIR)/fd2_intro.exe
 
-.PHONY: all clean test decoder intro game
+.PHONY: all clean test decoder intro game release
 
 all: $(TARGET_GAME) $(TARGET_TEST) $(TARGET_INTRO)
 	@echo Copying required DLLs...
@@ -47,12 +51,23 @@ all: $(TARGET_GAME) $(TARGET_TEST) $(TARGET_INTRO)
 
 game: $(TARGET_GAME)
 
+release: $(BIN_DIR)/fd2_release.exe
+	@echo Copying required DLLs...
+	@cp C:/msys64/ucrt64/bin/libwinpthread-1.dll $(BIN_DIR)/ 2>/dev/null || true
+	@cp C:/msys64/ucrt64/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null || true
+	@echo Release build complete: $(BIN_DIR)/fd2_release.exe
+
 decoder: $(TARGET_TEST)
 
 test: $(TARGET_TEST)
 	./$(TARGET_TEST)
 
 intro: $(TARGET_INTRO)
+
+# ---- Release build (no console, no debug output) ----
+
+$(BIN_DIR)/fd2_release.exe: $(GAME_OBJS) $(DECODER_OBJS) | $(BIN_DIR)
+	$(GCC) $(RELEASE_CFLAGS) -o $@ $^ $(RELEASE_LDFLAGS)
 
 # ---- Main game ----
 

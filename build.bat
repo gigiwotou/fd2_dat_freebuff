@@ -10,6 +10,10 @@ set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -mc
 set LDFLAGS=-LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
 set SDL_LDFLAGS=-lmingw32 -lSDL2main -lSDL2
 
+:: Release flags (no console window, no debug output)
+set RELEASE_CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -DNDEBUG -mwindows -static-libgcc
+set RELEASE_LDFLAGS=-LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
+
 set SRC_DIR=src
 set OBJ_DIR=obj
 set BIN_DIR=bin
@@ -22,12 +26,20 @@ set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2.exe
+set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release.exe
 set TARGET_TEST=%BIN_DIR%\fd2_decoder_test.exe
 set TARGET_INTRO=%BIN_DIR%\fd2_intro.exe
 
 :: Default target
 if "%~1"=="" set TARGET=all
 if not "%~1"=="" set TARGET=%~1
+
+:: Release target
+set RELEASE=0
+if /I "%~1"=="release" (
+    set TARGET=game
+    set RELEASE=1
+)
 
 :: Clean
 if "%TARGET%"=="clean" (
@@ -127,10 +139,18 @@ call :compile %SRC_DIR%\fd2_game.c %OBJ_DIR%\fd2_game.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
 if errorlevel 1 goto :error
-echo Linking %TARGET_GAME% ...
-%GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
-if errorlevel 1 goto :error
-echo [OK] %TARGET_GAME%
+
+if "%RELEASE%"=="1" (
+    echo Linking %TARGET_GAME_RELEASE% (Release Mode)
+    %GCC% %RELEASE_CFLAGS% -o %TARGET_GAME_RELEASE% %GAME_OBJS% %DECODER_OBJ% %RELEASE_LDFLAGS%
+    if errorlevel 1 goto :error
+    echo [OK] %TARGET_GAME_RELEASE%
+) else (
+    echo Linking %TARGET_GAME%
+    %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
+    if errorlevel 1 goto :error
+    echo [OK] %TARGET_GAME%
+)
 goto :end
 
 :build_test
