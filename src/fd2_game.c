@@ -593,14 +593,21 @@ static int intro_start_ani(fd2_game_t* game, state_intro_data_t* data,
 
 /* Helper: build scroll buffer from FDOTHER resources 69-73 */
 static void intro_build_scroll_buffer(fd2_game_t* game, state_intro_data_t* data) {
-    /* 5 frames of 147 pixels each = 735 total height */
+    /* IDA sub_1F894: loc_396C0 = 235200 = 320 * 735.
+     * All 5 frames use fixed stride of 147 pixels (147 * 5 = 735).
+     * Each frame is loaded via sub_4E98D(res, 0, 147*n5, buf, 320, -1)
+     * where dst_y = 147 * n5 and the RLE image is fully decompressed.
+     * IMPORTANT: Original game resources 69-73 are all 147px high.
+     * If a resource has different height, clamp to 147 to match original behavior.
+     * The scroll loop copies 200 rows from buf[n535*320] to screen,
+     * with n535 ranging from 535 down to 0.
+     * At n535=535: shows rows 535..734 (the bottom portion of frames 4-5). */
     const int frame_h = 147;
     const int num_frames = 5;
-    data->scroll_total_h = frame_h * num_frames;
+    data->scroll_total_h = frame_h * num_frames;  /* 735 */
     data->scroll_buf = (u8*)calloc(FD2_SCREEN_W * data->scroll_total_h, sizeof(u8));
     if (!data->scroll_buf) return;
 
-    int row_offset = 0;
     for (int i = 0; i < num_frames; i++) {
         u32 fsize;
         const u8* fres = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 69 + i, &fsize);
@@ -608,17 +615,28 @@ static void intro_build_scroll_buffer(fd2_game_t* game, state_intro_data_t* data
             int fw, fh;
             u8* fpixels = NULL;
             if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh) == 0) {
+                int dst_y = frame_h * i;
+                /* Clamp to 147px to match original game behavior.
+                 * If resource height differs from 147, only copy 147 rows. */
                 int copy_h = fh < frame_h ? fh : frame_h;
                 int copy_w = fw < FD2_SCREEN_W ? fw : FD2_SCREEN_W;
+                fprintf(stderr, "[intro] Frame %d (res %d): RLE size=%u, dim=%dx%d, dst_y=%d, copy_h=%d\n",
+                        i, 69 + i, fsize, fw, fh, dst_y, copy_h);
                 for (int y = 0; y < copy_h; y++) {
-                    memcpy(data->scroll_buf + (row_offset + y) * FD2_SCREEN_W,
+                    memcpy(data->scroll_buf + (dst_y + y) * FD2_SCREEN_W,
                            fpixels + y * fw, copy_w);
                 }
+                /* Print first and last byte of this frame for debugging */
+                fprintf(stderr, "[intro] Frame %d: first_byte=%d, last_byte=%d\n",
+                        i, data->scroll_buf[dst_y * FD2_SCREEN_W],
+                        data->scroll_buf[(dst_y + copy_h - 1) * FD2_SCREEN_W]);
                 free(fpixels);
             }
+        } else {
+            fprintf(stderr, "[intro] Frame %d (res %d): NOT FOUND\n", i, 69 + i);
         }
-        row_offset += frame_h;
     }
+    fprintf(stderr, "[intro] Total buffer height: %d (expected: 735)\n", data->scroll_total_h);
 }
 
 static void state_intro_enter(fd2_game_t* game) {
@@ -965,20 +983,12 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
                     case 3: /* Restore scroll buffer + fade in (LABEL_13/LABEL_14) */
                     {
-                        /* Check if this was the final ANI (pos 25) */
-                        if (data->scroll_ani_after_end) {
-                            /* After ANI#0 at pos 25, continue scrolling to pos 10.
-                             * Original flow: pos 25 → ... → pos 10 overlay → then phase 3.
-                             * Don't end yet — let the scroll loop continue. */
-                            data->scroll_ani_step = 0;
-                            data->scroll_ani_queue_len = 0;
-                            data->scroll_ani_queue_idx = 0;
-                            printf("intro: ANI#0 done (pos 25), continuing to pos 10 overlay\n");
-                            data->scroll_pos--;  /* Advance to pos 24 */
-                            break;
-                        }
-
-                        /* Normal case (pos 330/210/110): restore scroll buffer */
+                        /* LABEL_13/LABEL_14: After any ANI finishes.
+                         * Original: sub_11EB0(...) → sub_111BA(101) →
+                         *           sub_1F525() → goto LABEL_25.
+                         * LABEL_25 ends with --n535, so we must decrement
+                         * scroll_pos here to avoid re-triggering the same
+                         * ANI position on the next frame. */
                         int pos = data->scroll_pos;
                         if (data->scroll_buf) {
                             fd2_render_fill_screen(&game->render, 0);
@@ -997,15 +1007,18 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                             fd2_render_set_palette_6bit(&game->render, pal_res);
                         }
 
-                        /* Fade in from black (sub_1F525).
-                         * Don't set_brightness(0) — fade_from_black needs the
-                         * current palette intact as its fade target. */
+                        /* Fade in from black (sub_1F525). */
                         fd2_render_fade_from_black(&game->render, 64, 2);
 
                         data->scroll_ani_step = 0;
                         data->scroll_ani_queue_len = 0;
                         data->scroll_ani_queue_idx = 0;
-                        data->scroll_pos--;  /* Advance past the trigger position */
+                        /* Decrement scroll_pos to match original's --n535
+                         * after LABEL_25. This prevents re-triggering ANI
+                         * at the same position on next frame. */
+                        data->scroll_pos--;
+                        printf("intro: ANI at pos %d done, resuming scroll at pos %d\n",
+                               pos, data->scroll_pos);
                         break;
                     }
                 }

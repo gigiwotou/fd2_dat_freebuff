@@ -205,7 +205,10 @@ int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
     int w, h;
     if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return -1;
 
-    u8* pixels = (u8*)malloc((size_t)(w * h));
+    /* Use calloc instead of malloc: RLE data contains skip (transparent)
+     * operations that leave dst pixels untouched. These must be black (0).
+     * Original sub_4E98D writes into a calloc-initialized scroll buffer. */
+    u8* pixels = (u8*)calloc(1, (size_t)(w * h));
     if (!pixels) return -1;
 
     if (fd2_rle_decompress(res_data + 4, res_size - 4, pixels, w, h) != 0) {

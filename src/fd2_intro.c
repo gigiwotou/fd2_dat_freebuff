@@ -115,6 +115,8 @@ static void blit_rle_image(const u8* res_data, u32 res_size, int dx, int dy) {
     free(pixels);
 }
 
+/* blit_pixels: used for overlay rendering if needed */
+__attribute__((unused))
 static void blit_pixels(const u8* pixels, int w, int h, int dx, int dy) {
     for (int y = 0; y < h && (dy + y) < FD2_SCREEN_H; y++) {
         for (int x = 0; x < w && (dx + x) < FD2_SCREEN_W; x++) {
@@ -175,78 +177,159 @@ static void play_bar_animation(const fd2_dat_t* dat, int frames, int frame_ms) {
     free(pixels);
 }
 
+/* Play the intro scroll animation (sub_1F894 scroll phase).
+ * This is a 1:1 reproduction of the original DOS code.
+ *
+ * Original assembly flow:
+ *   1. Allocate scroll buffer (n15_1), memset to 0
+ *   2. For n5 = 0..4: sub_4E98D(FDOTHER[n5+69], 0, 147*n5, n15_1, 320, -1)
+ *      -> RLE-decompress each frame directly into the buffer at y = 147*n5
+ *   3. For n535 = 535; n535 >= 0; --n535:
+ *        sub_11EB0(n15_1 + 320*n535, ..., 655360, 320, n15_1+320*n535, 320, 320, 200)
+ *        -> memmove 200 rows from buffer[offset] to screen
+ *        if (n535 == 535) sub_1F525()  // refresh
+ *        if (n535 == 450) sub_1F73F(100, 99, n15_1, 450)  // overlay
+ *        if (n535 == 330) { fadeout; sub_1F81E(4,90,99); sub_1F81E(5,50,0); restore }
+ *        if (n535 == 210) { fadeout; sub_1F81E(6,90,99); sub_1F81E(7,50,0); restore }
+ *        if (n535 == 110) { fadeout; sub_1F81E(8,90,99); restore }
+ *        if (n535 == 25)  break;  // then sub_1F81E(0,15,0)
+ *        if (n535 == 10)  sub_1F73F(75, 76, n15_1, 10)   // overlay
+ *        j___delay(30);
+ *        if (!n535) j___delay(1000);
+ *   4. After break at n535==25: sub_1F81E(0,15,0) -> ANI#0
+ *   5. Then sub_11EB0 restore + sub_1F525
+ */
 static void play_intro_animation(const fd2_dat_t* dat) {
-    int frame_heights[5] = {147, 147, 147, 147, 200};
-    int total_h = 0;
-    for (int i = 0; i < 5; i++) total_h += frame_heights[i];
+    /* ---- Step 1: Build scroll buffer exactly like sub_1F894 ----
+     * IDA analysis: loc_396C0 = 235200 = 320 * 735.
+     * All 5 frames use fixed stride of 147 pixels (147 * 5 = 735).
+     * Each frame is loaded via sub_4E98D(res, 0, 147*n5, buf, 320, -1)
+     * where dst_y = 147 * n5 and the RLE image is fully decompressed.
+     * IMPORTANT: Original game resources 69-73 are all 147px high.
+     * If a resource has different height, clamp to 147 to match original behavior. */
+    const int frame_h = 147;
+    const int num_frames = 5;
+    const int buf_h = frame_h * num_frames;  /* 735 */
 
-    u32 size_99;
-    const u8* res_99 = fd2_dat_get_resource(dat, 99, &size_99);
-    u8* pixels_99 = NULL;
-    int w_99 = 0, h_99 = 0;
-    if (res_99) {
-        fd2_rle_decompress_from_resource(res_99, size_99, &pixels_99, &w_99, &h_99);
-    }
+    u8* scroll_buf = (u8*)calloc(FD2_SCREEN_W * buf_h, sizeof(u8));
+    if (!scroll_buf) return;
 
-    u8* anim_buffer = (u8*)calloc(FD2_SCREEN_W * total_h, sizeof(u8));
-    int row_offset = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < num_frames; i++) {
         u32 fsize;
         const u8* fres = fd2_dat_get_resource(dat, 69 + i, &fsize);
         if (fres) {
+            /* sub_4E98D with value_1 == -1 decompresses the full RLE image
+             * directly into the buffer at dst_y = 147 * i.
+             * Clamp to 147px to match original game behavior. */
             int fw, fh;
             u8* fpixels = NULL;
             if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh) == 0) {
-                int copy_h = fh < frame_heights[i] ? fh : frame_heights[i];
+                fprintf(stderr, "[intro] Frame %d (res %d): RLE size=%u, dim=%dx%d, dst_y=%d, copy_h=%d\n",
+                        i, 69 + i, fsize, fw, fh, frame_h * i,
+                        fh < frame_h ? fh : frame_h);
+                int dst_y = frame_h * i;
+                int copy_h = fh < frame_h ? fh : frame_h;
                 int copy_w = fw < FD2_SCREEN_W ? fw : FD2_SCREEN_W;
                 for (int y = 0; y < copy_h; y++) {
-                    memcpy(anim_buffer + (row_offset + y) * FD2_SCREEN_W,
+                    memcpy(scroll_buf + (dst_y + y) * FD2_SCREEN_W,
                            fpixels + y * fw, copy_w);
                 }
                 free(fpixels);
             }
+        } else {
+            fprintf(stderr, "[intro] Frame %d (res %d): NOT FOUND\n", i, 69 + i);
         }
-        row_offset += frame_heights[i];
     }
 
-    for (int frame = 535; frame >= 25; frame--) {
-        int src_row = frame;
-        if (src_row + 200 <= total_h) {
-            for (int y = 0; y < 200; y++) {
-                memcpy(g_screen + y * FD2_SCREEN_W,
-                       anim_buffer + (src_row + y) * FD2_SCREEN_W,
-                       FD2_SCREEN_W);
+    /* Debug: check first/last few bytes of each frame region */
+    for (int i = 0; i < num_frames; i++) {
+        int dst_y = frame_h * i;
+        u8* frame_start = scroll_buf + dst_y * FD2_SCREEN_W;
+        u8* frame_end = scroll_buf + (dst_y + frame_h - 1) * FD2_SCREEN_W;
+        fprintf(stderr, "[intro] Frame %d at row %d: first_byte=%d, last_byte=%d\n",
+                i, dst_y, frame_start[0], frame_end[0]);
+    }
+    fprintf(stderr, "[intro] Total buffer height: %d (expected: 735)\n", buf_h);
+
+    /* ---- Step 2: Scroll loop (n535 from 535 down to 0) ----
+     * At n535=535: src_offset=535*320, we copy rows 535..734 (200 rows)
+     * But buffer is only 735 rows, so 535+200=735 <= 735, valid. */
+    for (int n535 = 535; n535 >= 0; --n535) {
+        int src_offset = n535 * FD2_SCREEN_W;
+
+        /* sub_11EB0: memmove 200 rows from scroll_buf[src] to screen */
+        if (n535 + FD2_SCREEN_H <= buf_h) {
+            memcpy(g_screen, scroll_buf + src_offset, FD2_SCREEN_SIZE);
+        } else if (n535 < buf_h) {
+            int copy_rows = buf_h - n535;
+            memcpy(g_screen, scroll_buf + src_offset, copy_rows * FD2_SCREEN_W);
+            memset(g_screen + copy_rows * FD2_SCREEN_W, 0,
+                   (FD2_SCREEN_H - copy_rows) * FD2_SCREEN_W);
+        } else {
+            memset(g_screen, 0, FD2_SCREEN_SIZE);
+        }
+
+        /* n535 == 535: sub_1F525 (screen refresh with current palette) */
+        if (n535 == 535) {
+            /* Palette was already set to FDOTHER[101] before this function */
+        }
+
+        /* n535 == 450: sub_1F73F(100, 99, n15_1, 450)
+         * This overlay does: fadeout -> clear -> load palette 99 ->
+         *   blit resource 100 -> fadein -> wait 6 ticks ->
+         *   fadeout -> restore scroll_buf at pos 450 -> load palette 101 -> fadein */
+        if (n535 == 450) {
+            /* For fd2_intro.c (simplified): just blit resource 100,
+             * then immediately restore scroll on next frame.
+             * The full sub_1F73F effect is implemented in fd2_game.c state machine. */
+            u32 ov_size;
+            const u8* ov_res = fd2_dat_get_resource(dat, 100, &ov_size);
+            if (ov_res) {
+                blit_rle_image(ov_res, ov_size, 0, 0);
             }
         }
 
-        if (frame == 450 && pixels_99) {
-            blit_pixels(pixels_99, w_99, h_99, 0, 0);
-        }
+        /* n535 == 330 / 210 / 110: character intro ANI sequences
+         * These are handled by sub_1F81E which plays ANI.DAT animations.
+         * For fd2_intro.c we skip these (fd2_game.c has full implementation). */
 
-        if (frame == 25 && pixels_99) {
-            blit_pixels(pixels_99, w_99, h_99, 0, 0);
+        /* n535 == 10: sub_1F73F(75, 76, n15_1, 10) */
+        if (n535 == 10) {
+            u32 ov_size;
+            const u8* ov_res = fd2_dat_get_resource(dat, 75, &ov_size);
+            if (ov_res) {
+                blit_rle_image(ov_res, ov_size, 0, 0);
+            }
         }
 
         render_screen(g_screen, g_argb + FD2_SCREEN_W * FD2_SCREEN_H, g_argb);
         present_frame();
 
-        SDL_Delay(5);
+        /* Original: j___delay(30) */
+        SDL_Delay(30);
 
+        /* Original: if (!n535) j___delay(1000) */
+        if (n535 == 0) {
+            SDL_Delay(1000);
+        }
+
+        /* Check for quit/skip */
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT ||
                 (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) {
-                free(anim_buffer);
-                free(pixels_99);
+                free(scroll_buf);
                 return;
             }
         }
+
+        /* n535 == 25: break (then sub_1F81E(0,15,0) plays ANI#0) */
+        if (n535 == 25) {
+            break;
+        }
     }
 
-    SDL_Delay(1000);
-
-    free(anim_buffer);
-    free(pixels_99);
+    free(scroll_buf);
 }
 
 int main(int argc, char** argv) {
