@@ -42,14 +42,10 @@ if "%TARGET%"=="clean" (
 if not exist %OBJ_DIR% mkdir %OBJ_DIR%
 if not exist %BIN_DIR% mkdir %BIN_DIR%
 
-:: Compile decoder (no SDL dependency)
+:: Compile all source files
 if "%TARGET%"=="all" (
     call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
     if errorlevel 1 goto :error
-)
-
-:: Compile game framework (requires SDL2)
-if "%TARGET%"=="all" (
     call :compile %SRC_DIR%\fd2_input.c %OBJ_DIR%\fd2_input.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_render.c %OBJ_DIR%\fd2_render.o
@@ -64,30 +60,21 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
     if errorlevel 1 goto :error
-)
+    call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
+    if errorlevel 1 goto :error
 
-:: Link main game
-if "%TARGET%"=="all" (
     echo Linking %TARGET_GAME% ...
     %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
     if errorlevel 1 goto :error
     echo [OK] %TARGET_GAME%
-)
 
-:: Compile and link decoder test (no SDL)
-if "%TARGET%"=="all" (
-    call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
-    if errorlevel 1 goto :error
     echo Linking %TARGET_TEST% ...
     %GCC% %CFLAGS% -o %TARGET_TEST% %DECODER_OBJ% %TEST_OBJ% -lm
     if errorlevel 1 goto :error
     echo [OK] %TARGET_TEST%
-)
 
-:: Compile and link intro player
-if "%TARGET%"=="all" (
-    call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
-    if errorlevel 1 goto :error
     echo Linking %TARGET_INTRO% ...
     %GCC% %CFLAGS% -o %TARGET_INTRO% %INTRO_OBJ% %DECODER_OBJ% %LDFLAGS% %SDL_LDFLAGS%
     if errorlevel 1 goto :error
@@ -104,6 +91,17 @@ if "%TARGET%"=="all" (
     echo Copying required DLLs...
     copy /Y "C:\msys64\ucrt64\bin\libwinpthread-1.dll" "%BIN_DIR%\" >nul 2>&1
     copy /Y "C:\msys64\ucrt64\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+    echo Copying game data files...
+    if exist game\ (
+        for %%F in (game\*) do (
+            set "ext=%%~xF"
+            if /I not "!ext!"==".exe" (
+                if /I not "!ext!"==".i64" (
+                    copy /Y "%%F" "%BIN_DIR%\" >nul 2>&1
+                )
+            )
+        )
+    )
     echo Build complete! All targets generated in %BIN_DIR%\.
     goto :end
 )
