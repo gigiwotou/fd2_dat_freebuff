@@ -610,14 +610,16 @@ static void intro_build_scroll_buffer(fd2_game_t* game, state_intro_data_t* data
 
     for (int i = 0; i < num_frames; i++) {
         u32 fsize;
-        const u8* fres = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 69 + i, &fsize);
+        const u8* fres = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 68 + i, &fsize);
         if (fres) {
+            /* Original: sub_4E98D(res, 0, 147*n5, n15_1, 320, -1)
+             * But we must handle images with width != 320 correctly.
+             * Decompress to temp buffer, then copy row by row with proper stride. */
             int fw, fh;
             u8* fpixels = NULL;
             if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh) == 0) {
                 int dst_y = frame_h * i;
-                /* Clamp to 147px to match original game behavior.
-                 * If resource height differs from 147, only copy 147 rows. */
+                /* Clamp to 147px to match original game behavior. */
                 int copy_h = fh < frame_h ? fh : frame_h;
                 int copy_w = fw < FD2_SCREEN_W ? fw : FD2_SCREEN_W;
                 fprintf(stderr, "[intro] Frame %d (res %d): RLE size=%u, dim=%dx%d, dst_y=%d, copy_h=%d\n",
@@ -626,10 +628,9 @@ static void intro_build_scroll_buffer(fd2_game_t* game, state_intro_data_t* data
                     memcpy(data->scroll_buf + (dst_y + y) * FD2_SCREEN_W,
                            fpixels + y * fw, copy_w);
                 }
-                /* Print first and last byte of this frame for debugging */
                 fprintf(stderr, "[intro] Frame %d: first_byte=%d, last_byte=%d\n",
                         i, data->scroll_buf[dst_y * FD2_SCREEN_W],
-                        data->scroll_buf[(dst_y + copy_h - 1) * FD2_SCREEN_W]);
+                        data->scroll_buf[(dst_y + copy_h - 1) * FD2_SCREEN_W + copy_w - 1]);
                 free(fpixels);
             }
         } else {
@@ -650,23 +651,23 @@ static void state_intro_enter(fd2_game_t* game) {
 
     /* ---- Phase 0: Show title screen (sub_1F894 start) ---- */
 
-    /* Load palette from FDOTHER resource 76 (original: sub_111BA(FDOTHER_DAT,76)) */
+    /* Load palette from FDOTHER resource 75 (original: sub_111BA(FDOTHER_DAT,76)) */
     u32 pal_size;
-    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 76, &pal_size);
+    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 75, &pal_size);
     if (pal_res && pal_size == FD2_PALETTE_BYTES) {
         fd2_render_set_palette_6bit(&game->render, pal_res);
     }
 
-    /* Decompress title image (FDOTHER resource 74) and blit to screen */
+    /* Decompress title image (FDOTHER resource 73) and blit to screen */
     u32 title_size;
-    const u8* title_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 74, &title_size);
+    const u8* title_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 73, &title_size);
     fd2_render_fill_screen(&game->render, 0);
     if (title_res) {
         fd2_render_blit_rle(&game->render, title_res, title_size, 0, 0);
     }
 
-    /* Start with brightness 0 (black) — will fade in on first update */
-    fd2_render_set_brightness(&game->render, 0);
+    /* Set brightness to 64 (sub_11D40(0, 255, 64)) — title image visible */
+    fd2_render_set_brightness(&game->render, 64);
     fd2_render_present(&game->render);
 }
 
@@ -716,10 +717,10 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
         case 1:
         {
             if (data->phase_frame == 0) {
-                /* Load FDOTHER[99] as palette (sub_111BA("FDOTHER.DAT", FDOTHER_DAT, 99)) */
+                /* Load FDOTHER[98] as palette (sub_111BA("FDOTHER.DAT", FDOTHER_DAT, 99)) */
                 u32 pal_size;
                 const u8* pal_res = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 99, &pal_size);
+                    &game->resources, FD2_DAT_FDOTHER, 98, &pal_size);
                 if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, pal_res);
                 }
@@ -771,10 +772,10 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                  * sub_11D40(0,255,64) → build scroll → sub_4E381 → malloc overlay */
                 fd2_render_fill_screen(&game->render, 0);
 
-                /* Load FDOTHER[101] as palette (original: FDOTHER_DAT = sub_111BA(101)) */
+                /* Load FDOTHER[99] as palette (original: FDOTHER_DAT = sub_111BA(100)) */
                 u32 pal_size;
                 const u8* pal_res = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                    &game->resources, FD2_DAT_FDOTHER, 99, &pal_size);
                 if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, pal_res);
                 }
@@ -1059,17 +1060,19 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
             /* ---- Overlay triggers at positions 450 and 10 (sub_1F73F) ---- */
             if (pos == 450) {
-                /* sub_1F73F(100, 99, n15_1, 450): overlay image 100, palette 99 */
-                printf("intro: TRIGGERING OVERLAY at pos 450 (image=%d, palette=%d)\n", 100, 99);
-                data->overlay_image_res = 100;
-                data->overlay_palette_res = 99;
+                /* sub_1F73F(100, 99, n15_1, 450): overlay image 100, palette 99
+                 * Our indices are 0-based: image=99, palette=98 */
+                printf("intro: TRIGGERING OVERLAY at pos 450 (image=%d, palette=%d)\n", 99, 98);
+                data->overlay_image_res = 99;
+                data->overlay_palette_res = 98;
                 data->overlay_step = 1;
                 break;
             }
             if (pos == 10) {
-                /* sub_1F73F(75, 76, n15_1, 10): overlay image 75, palette 76 */
-                data->overlay_image_res = 75;
-                data->overlay_palette_res = 76;
+                /* sub_1F73F(75, 76, n15_1, 10): overlay image 75, palette 76
+                 * Our indices are 0-based: image=74, palette=75 */
+                data->overlay_image_res = 74;
+                data->overlay_palette_res = 75;
                 data->overlay_step = 1;
                 /* Don't decrement scroll_pos here - overlay_step 3 will do it */
                 break;

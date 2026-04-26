@@ -92,6 +92,18 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
 int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
                                      u8** out_pixels, int* out_w, int* out_h);
 
+/*
+ * Convenience: decompress RLE data directly into a buffer with given stride.
+ * Matches original sub_4E98D behavior for scroll buffer construction.
+ * 
+ * dst_buf: destination buffer (must be pre-allocated and zero-initialized)
+ * dst_y: Y offset in destination buffer (dst_buf + stride * dst_y)
+ * stride: bytes per row in destination buffer (typically 320)
+ * Returns 0 on success, -1 on error.
+ */
+int fd2_rle_decompress_to_buffer(const u8* res_data, u32 res_size,
+                                  u8* dst_buf, int dst_y, int stride);
+
 /* ---- Palette ---- */
 
 /*

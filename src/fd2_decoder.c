@@ -198,6 +198,75 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
     return 0;
 }
 
+/* ========================================================================
+ * RLE Decompression with stride (for scroll buffer)
+ * Decompresses RLE data directly into a buffer with given stride.
+ * Matches original sub_4E98D behavior.
+ * ======================================================================== */
+
+int fd2_rle_decompress_to_buffer(const u8* res_data, u32 res_size,
+                                  u8* dst_buf, int dst_y, int stride) {
+    if (!res_data || res_size < 4 || !dst_buf || stride <= 0) return -1;
+
+    int w, h;
+    if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return -1;
+
+    /* Start writing at dst_buf + stride * dst_y */
+    u8* dst = dst_buf + stride * dst_y;
+    const u8* src = res_data + 4;  /* Skip 4-byte header */
+    const u8* src_end = res_data + res_size;
+
+    for (int row = 0; row < h; row++) {
+        u8* row_dst = dst + row * stride;
+        int count = w;  /* Pixels remaining in this row */
+
+        while (count > 0 && src < src_end) {
+            u8 value = *src++;
+            int run_len = (value & 0x3F) + 1;
+            int bit7 = (value >> 7) & 1;
+            int bit6 = (value >> 6) & 1;
+
+            if (bit7 && bit6) {
+                /* 11: skip (transparent) - advance dst by count */
+                row_dst += run_len;
+                count -= (count >= run_len) ? run_len : count;
+            } else if (bit7 && !bit6) {
+                /* 10: copy from source */
+                for (int i = 0; i < run_len && count > 0 && src < src_end; i++) {
+                    *row_dst++ = *src++;
+                    count--;
+                }
+            } else if (!bit7 && bit6) {
+                /* 01: sparse fill - write at every 2nd position */
+                if (src < src_end) {
+                    u8 fill = *src++;
+                    for (int i = 0; i < run_len && count > 0; i++) {
+                        if (count >= 2) {
+                            row_dst[1] = fill;
+                            row_dst += 2;
+                            count -= 2;
+                        } else {
+                            *row_dst++ = fill;
+                            count -= 1;
+                        }
+                    }
+                }
+            } else {
+                /* 00: regular fill */
+                if (src < src_end) {
+                    u8 fill = *src++;
+                    for (int i = 0; i < run_len && count > 0; i++) {
+                        *row_dst++ = fill;
+                        count--;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
 int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
                                      u8** out_pixels, int* out_w, int* out_h) {
     if (!res_data || res_size < 4 || !out_pixels || !out_w || !out_h) return -1;
