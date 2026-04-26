@@ -401,6 +401,11 @@ typedef struct {
     int  overlay_image_res;     /* FDOTHER image resource to display */
     int  overlay_palette_res;   /* FDOTHER palette resource */
     int  overlay_wait;          /* Tick counter for overlay step 2 wait */
+
+    /* Palette flash effect (IDA sub_1F894 LABEL_25: n15/n11 counters) */
+    int  palette_flash_trigger_idx;  /* Index into dst_ array for next trigger position */
+    int  palette_flash_frame_count;  /* n11 counter: counts frames since last trigger */
+    bool palette_flash_active;       /* True when dark palette (FDOTHER#102) is active */
 } state_intro_data_t;
 
 /* Helper: play one frame of an ANI.DAT AFM animation.
@@ -1056,6 +1061,47 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
             if ((pos % 25) == 0) {
                 printf("intro: scroll pos %d (overlay_step=%d, scroll_ani_step=%d)\n",
                        pos, data->overlay_step, data->scroll_ani_step);
+            }
+
+            /* ---- Palette flash effect (IDA sub_1F894 LABEL_24) ----
+             * src__14 array at 0x5204e: 15 DWORDs (60 bytes) copied to dst_[15]
+             * Each trigger: switch to FDOTHER#102 (dark palette) for 11 frames,
+             * then restore FDOTHER#101 (normal palette). Creates brightness flash.
+             * Trigger positions are evenly spaced from 520 down to 100 (step -30). */
+            static const int flash_triggers[] = {
+                520, 490, 460, 430, 400, 370, 340, 310, 280, 250, 220, 190, 160, 130, 100
+            };
+            static const int num_flash_triggers = sizeof(flash_triggers) / sizeof(flash_triggers[0]);
+            
+            data->palette_flash_frame_count++;
+
+            /* Check if we hit a palette flash trigger position */
+            if (!data->palette_flash_active && 
+                data->palette_flash_trigger_idx < num_flash_triggers) {
+                if (pos == flash_triggers[data->palette_flash_trigger_idx]) {
+                    /* Trigger palette switch to dark (FDOTHER#102, original index) */
+                    u32 pal_size;
+                    const u8* dark_pal = fd2_resources_get(
+                        &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                    if (dark_pal && pal_size == FD2_PALETTE_BYTES) {
+                        fd2_render_set_palette_6bit(&game->render, dark_pal);
+                        data->palette_flash_active = true;
+                        data->palette_flash_frame_count = 0;
+                        data->palette_flash_trigger_idx++;
+                    }
+                }
+            }
+
+            /* After 11 frames, restore normal palette (FDOTHER#101, original index) */
+            if (data->palette_flash_active && data->palette_flash_frame_count >= 11) {
+                u32 pal_size;
+                const u8* normal_pal = fd2_resources_get(
+                    &game->resources, FD2_DAT_FDOTHER, 100, &pal_size);
+                if (normal_pal && pal_size == FD2_PALETTE_BYTES) {
+                    fd2_render_set_palette_6bit(&game->render, normal_pal);
+                    data->palette_flash_active = false;
+                    data->palette_flash_frame_count = 0;
+                }
             }
 
             /* ---- Overlay triggers at positions 450 and 10 (sub_1F73F) ---- */
