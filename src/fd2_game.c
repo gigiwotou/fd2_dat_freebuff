@@ -907,6 +907,77 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                 return FD2_STATE_INTRO;
             }
 
+            /* ---- Palette flash effect (IDA sub_1F894 LABEL_25) ----
+             * src array at data segment: 15 DWORDs (60 bytes) copied to dst_[15]
+             * Each trigger: switch to FDOTHER#102 (dark palette) for 11 frames,
+             * then restore FDOTHER#101 (normal palette). Creates brightness flash.
+             * 
+             * Original code: n12 starts at 12, reset to 0 on trigger, restore at 11.
+             * The ++n11 is at the END of the loop, so trigger->0, then 11 increments,
+             * then restore on the 11th check (before increment).
+             * 
+             * CRITICAL: Trigger access uses dst_[n15 + 3] where n15 is counter.
+             * src has 15 values in dst_[0..14], so valid triggers are:
+             *   n15=0: dst_[3], n15=1: dst_[4], ..., n15=11: dst_[14]
+             * After n15=11, dst_[15+] are uninitialized, so only 12 triggers.
+             * 
+             * Based on user observation, there are palette flashes near the end
+             * of scrolling (pos < 100). So we need triggers extending down to ~10.
+             * Let's use 15 triggers from 520 down to 100, plus 5 more below 100. */
+            static const int flash_triggers[] = {
+                520, 490, 460, 430, 400, 370, 340, 310, 280, 250, 220, 190,
+                160, 130, 100, 80, 60, 40, 20, 10
+            };
+            static const int num_flash_triggers = sizeof(flash_triggers) / sizeof(flash_triggers[0]);
+            
+            /* Use current scroll position for trigger checks */
+            int pos = data->scroll_pos;
+            
+            /* Check trigger - match original logic exactly: no "active" guard */
+            if (data->palette_flash_trigger_idx < num_flash_triggers) {
+                int next_trigger = flash_triggers[data->palette_flash_trigger_idx];
+                /* Debug: print when approaching a trigger */
+                if (pos <= next_trigger + 5 && pos >= next_trigger - 5) {
+                    printf("intro: palette check - pos=%d, next_trigger=%d (idx %d/%d), active=%d, count=%d\n",
+                           pos, next_trigger, data->palette_flash_trigger_idx + 1, num_flash_triggers,
+                           data->palette_flash_active, data->palette_flash_frame_count);
+                }
+                if (pos == next_trigger) {
+                    /* Trigger palette switch to dark (FDOTHER#102, original index) */
+                    u32 pal_size;
+                    const u8* dark_pal = fd2_resources_get(
+                        &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                    if (dark_pal && pal_size == FD2_PALETTE_BYTES) {
+                        fd2_render_set_palette_6bit(&game->render, dark_pal);
+                        printf("intro: >>> palette flash TRIGGER at pos %d (trigger %d/%d) <<<\n", 
+                               pos, data->palette_flash_trigger_idx + 1, num_flash_triggers);
+                        data->palette_flash_active = true;
+                        data->palette_flash_frame_count = 0;
+                        data->palette_flash_trigger_idx++;
+                    } else {
+                        printf("intro: WARNING - dark palette resource not found or wrong size!\n");
+                        /* Still advance trigger index to avoid getting stuck */
+                        data->palette_flash_trigger_idx++;
+                    }
+                }
+            }
+
+            /* After 11 frames, restore normal palette (FDOTHER#101, original index) */
+            if (data->palette_flash_active && data->palette_flash_frame_count >= 11) {
+                u32 pal_size;
+                const u8* normal_pal = fd2_resources_get(
+                    &game->resources, FD2_DAT_FDOTHER, 100, &pal_size);
+                if (normal_pal && pal_size == FD2_PALETTE_BYTES) {
+                    fd2_render_set_palette_6bit(&game->render, normal_pal);
+                    printf("intro: palette flash RESTORE after %d frames\n", data->palette_flash_frame_count);
+                    data->palette_flash_active = false;
+                    data->palette_flash_frame_count = 0;
+                }
+            }
+
+            /* Increment frame counter at the end (matches original ++n12) */
+            data->palette_flash_frame_count++;
+
             /* ---- ANI sub-state (character intros at scroll positions 330/210/110/25) ----
              * Original flow at pos 330/210:
              *   sub_1F882 (fade out) → sub_1F81E(ani1, 90, 99) → sub_1F81E(ani2, 50, 0)
@@ -995,7 +1066,6 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                          * LABEL_25 ends with --n535, so we must decrement
                          * scroll_pos here to avoid re-triggering the same
                          * ANI position on the next frame. */
-                        int pos = data->scroll_pos;
                         if (data->scroll_buf) {
                             fd2_render_fill_screen(&game->render, 0);
                             for (int y = 0; y < FD2_SCREEN_H && (pos + y) < data->scroll_total_h; y++) {
@@ -1033,7 +1103,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
 
             /* ---- Normal scroll processing ---- */
 
-            int pos = data->scroll_pos;
+            pos = data->scroll_pos;
             if (pos < 0) {
                 /* Scroll done */
                 printf("intro: scroll done at pos %d, fading to black\n", pos);
@@ -1061,47 +1131,6 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
             if ((pos % 25) == 0) {
                 printf("intro: scroll pos %d (overlay_step=%d, scroll_ani_step=%d)\n",
                        pos, data->overlay_step, data->scroll_ani_step);
-            }
-
-            /* ---- Palette flash effect (IDA sub_1F894 LABEL_24) ----
-             * src__14 array at 0x5204e: 15 DWORDs (60 bytes) copied to dst_[15]
-             * Each trigger: switch to FDOTHER#102 (dark palette) for 11 frames,
-             * then restore FDOTHER#101 (normal palette). Creates brightness flash.
-             * Trigger positions are evenly spaced from 520 down to 100 (step -30). */
-            static const int flash_triggers[] = {
-                520, 490, 460, 430, 400, 370, 340, 310, 280, 250, 220, 190, 160, 130, 100
-            };
-            static const int num_flash_triggers = sizeof(flash_triggers) / sizeof(flash_triggers[0]);
-            
-            data->palette_flash_frame_count++;
-
-            /* Check if we hit a palette flash trigger position */
-            if (!data->palette_flash_active && 
-                data->palette_flash_trigger_idx < num_flash_triggers) {
-                if (pos == flash_triggers[data->palette_flash_trigger_idx]) {
-                    /* Trigger palette switch to dark (FDOTHER#102, original index) */
-                    u32 pal_size;
-                    const u8* dark_pal = fd2_resources_get(
-                        &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
-                    if (dark_pal && pal_size == FD2_PALETTE_BYTES) {
-                        fd2_render_set_palette_6bit(&game->render, dark_pal);
-                        data->palette_flash_active = true;
-                        data->palette_flash_frame_count = 0;
-                        data->palette_flash_trigger_idx++;
-                    }
-                }
-            }
-
-            /* After 11 frames, restore normal palette (FDOTHER#101, original index) */
-            if (data->palette_flash_active && data->palette_flash_frame_count >= 11) {
-                u32 pal_size;
-                const u8* normal_pal = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 100, &pal_size);
-                if (normal_pal && pal_size == FD2_PALETTE_BYTES) {
-                    fd2_render_set_palette_6bit(&game->render, normal_pal);
-                    data->palette_flash_active = false;
-                    data->palette_flash_frame_count = 0;
-                }
             }
 
             /* ---- Overlay triggers at positions 450 and 10 (sub_1F73F) ---- */
