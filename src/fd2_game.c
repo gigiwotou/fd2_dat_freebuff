@@ -352,23 +352,23 @@ static void state_init_exit(fd2_game_t* game) {
  *   Phase 6: → transition to MENU state
  *
  * NOTE: ANI.DAT index mapping (from sub_20421 / sub_1F81E in sub_1F894):
- *   Index 0: 51 frames (main logo — played at scroll pos 25)
- *   Index 1: 26 frames (menu intro — played in Phase 4)
- *   Index 2: 28 frames (character intro A)
- *   Index 3: 12 frames (intro cinematic — played in Phase 1)
- *   Index 4: 35 frames (character intro — scroll pos 330, 1st ANI)
- *   Index 5: 12 frames (character name — scroll pos 330, 2nd ANI)
- *   Index 6: 17 frames (character intro — scroll pos 210, 1st ANI)
- *   Index 7: 12 frames (character name — scroll pos 210, 2nd ANI)
- *   Index 8: OUT OF BOUNDS — original calls at scroll pos 110, skip
+ *   Index 0: 51 frames (星盘动画 — played at scroll pos 25)
+ *   Index 1: 26 frames (游戏标题 — played in Phase 4)
+ *   Index 2: 28 frames (结尾动画 — not used in intro)
+ *   Index 3: 12 frames (角色盖亚 — played in Phase 1)
+ *   Index 4: 35 frames (角色索尔 — scroll pos 330, 1st ANI)
+ *   Index 5: 12 frames (索尔战斗 — scroll pos 330, 2nd ANI)
+ *   Index 6: 17 frames (角色莱汀 — scroll pos 210, 1st ANI)
+ *   Index 7: 12 frames (莱汀战斗 — scroll pos 210, 2nd ANI)
+ *   Index 8: 35 frames (索尔和莱汀 — played at scroll pos 110)
  *
  * Animation playback order from sub_1F894:
- *   Phase 1:  sub_20421(3, 90, 1)  — ANI#3, FDOTHER[99] palette, 90ms
- *   Scroll 330: sub_1F882 + sub_1F81E(4,90,99) + sub_1F81E(5,50,0)
- *   Scroll 210: sub_1F882 + sub_1F81E(6,90,99) + sub_1F81E(7,50,0)
- *   Scroll 110: sub_1F882 + sub_1F81E(8,90,99)  (ANI#8 OOB, skip)
- *   Scroll 25:  sub_1F81E(0,15,0)  — ANI#0, FDOTHER[0] palette, 15ms
- *   Phase 4:  sub_20421(1, 15, 1)  — ANI#1, 15ms
+ *   Phase 1:  sub_20421(3, 90, 1)  — ANI#3 角色盖亚, FDOTHER[99] palette, 90ms
+ *   Scroll 330: sub_1F882 + sub_1F81E(4,90,99) + sub_1F81E(5,50,0) — 角色索尔+索尔战斗
+ *   Scroll 210: sub_1F882 + sub_1F81E(6,90,99) + sub_1F81E(7,50,0) — 角色莱汀+莱汀战斗
+ *   Scroll 110: sub_1F882 + sub_1F81E(8,90,99)  — 索尔和莱汀
+ *   Scroll 25:  sub_1F81E(0,15,0)  — 星盘动画, FDOTHER[0] palette, 15ms
+ *   Phase 4:  sub_20421(1, 15, 1)  — 游戏标题, 15ms
  */
 
 typedef struct {
@@ -982,7 +982,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
              * Original flow at pos 330/210:
              *   sub_1F882 (fade out) → sub_1F81E(ani1, 90, 99) → sub_1F81E(ani2, 50, 0)
              *   → restore scroll + fade in
-             * At pos 110: sub_1F882 → sub_1F81E(8,90,99) (ANI#8 OOB → skip)
+             * At pos 110: sub_1F882 → sub_1F81E(8,90,99) → restore
              * At pos 25: sub_1F81E(0, 15, 0) — then break loop
              *
              * sub_1F81E(ani_id, delay, palette_res):
@@ -1157,7 +1157,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
              * Original flow (sub_1F894 scroll loop):
              *   pos 330: sub_1F882 → sub_1F81E(4,90,99) → sub_1F81E(5,50,0) → restore
              *   pos 210: sub_1F882 → sub_1F81E(6,90,99) → sub_1F81E(7,50,0) → restore
-             *   pos 110: sub_1F882 → sub_1F81E(8,90,99) → restore (ANI#8 OOB, skip)
+             *   pos 110: sub_1F882 → sub_1F81E(8,90,99) → restore
              *   pos 25:  sub_1F81E(0,15,0) → break (end of scroll loop, go to Phase 3)
              */
             if ((pos == 330 || pos == 210 || pos == 110 || pos == 25)
@@ -1184,10 +1184,8 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                     data->scroll_ani_after_end = false;  /* Normal: continue scroll */
                 } else if (pos == 110) {
                     /* Original: sub_1F882 (fade out) → sub_1F81E(8,90,99)
-                     * (ANI#8 OOB, fails immediately) → LABEL_14 (restore scroll
-                     * + fade in). Visual effect: brief fade-to-black pause.
-                     * Trigger ANI sub-state with ANI#8 (which will fail to load,
-                     * causing immediate step 3 = restore + fade in). */
+                     * ANI#8 角色介绍动画 → LABEL_14 (restore scroll + fade in).
+                     * Visual effect: fade-to-black, play ANI#8, fade back to scroll. */
                     data->scroll_ani_queue[0] = 8;
                     data->scroll_ani_queue_len = 1;
                     data->scroll_ani_palette[0] = 99;
@@ -1195,7 +1193,7 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
                     data->scroll_ani_needs_fadeout = true;
                     data->scroll_ani_after_end = false;  /* Normal: continue scroll */
                 } else { /* pos == 25 */
-                    /* sub_1F81E(0, 15, 0): ANI#0 with FDOTHER[0] palette, 15ms delay.
+                    /* sub_1F81E(0, 15, 0): ANI#0 星盘动画 with FDOTHER[0] palette, 15ms delay.
                      * After ANI#0 finishes, continue scrolling to pos 10 overlay,
                      * then transition to phase 3. */
                     data->scroll_ani_queue[0] = 0;

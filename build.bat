@@ -2,17 +2,28 @@
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
-:: FD2 Build Script for Windows (MSYS2 UCRT64)
-:: Usage: build.bat [all|game|test|intro|clean]
+:: FD2 Build Script for Windows (MSYS2)
+:: Supports both UCRT64 and MINGW64 environments
+:: Usage: build.bat [all|game|test|intro|clean|release] [mingw64]
+::        build.bat all          (uses UCRT64 by default)
+::        build.bat all mingw64  (uses MINGW64)
 
-set GCC=C:\msys64\ucrt64\bin\gcc.exe
-set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -mconsole -static-libgcc
-set LDFLAGS=-LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
+:: Detect environment
+set MSYS2_PREFIX=C:\msys64\ucrt64
+if /I "%~2"=="mingw64" set MSYS2_PREFIX=C:\msys64\mingw64
+if /I "%~1"=="mingw64" (
+    set MSYS2_PREFIX=C:\msys64\mingw64
+    set TARGET=all
+)
+
+set GCC=%MSYS2_PREFIX%\bin\gcc.exe
+set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -mconsole -static-libgcc
+set LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
 set SDL_LDFLAGS=-lmingw32 -lSDL2main -lSDL2
 
 :: Release flags (no console window, no debug output)
-set RELEASE_CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -DNDEBUG -mwindows -static-libgcc
-set RELEASE_LDFLAGS=-LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
+set RELEASE_CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -DNDEBUG -mwindows -static-libgcc
+set RELEASE_LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
 
 set SRC_DIR=src
 set OBJ_DIR=obj
@@ -101,8 +112,7 @@ if "%TARGET%"=="intro" goto :build_intro
 if "%TARGET%"=="all" (
     echo.
     echo Copying required DLLs...
-    copy /Y "C:\msys64\ucrt64\bin\libwinpthread-1.dll" "%BIN_DIR%\" >nul 2>&1
-    copy /Y "C:\msys64\ucrt64\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+    copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
     echo Copying game data files...
     if exist game\ (
         for %%F in (game\*) do (
@@ -119,7 +129,7 @@ if "%TARGET%"=="all" (
 )
 
 echo Unknown target: %TARGET%
-echo Usage: build.bat [all^|game^|test^|intro^|clean]
+echo Usage: build.bat [all^|game^|test^|intro^|clean^|release] [mingw64]
 goto :end
 
 :build_game

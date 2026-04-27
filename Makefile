@@ -1,22 +1,32 @@
 # Makefile for FD2 reimplementation (Windows/MSYS2)
+# Supports both UCRT64 and MINGW64 environments
+# Usage: make all          (uses UCRT64 by default)
+#        make MINGW64=1 all (uses MINGW64)
 
 # Set temp directory to avoid C:\WINDOWS\ permission issues
 export TMPDIR = /tmp
 
+# Detect environment: MINGW64=1 to use mingw64, otherwise ucrt64
+ifeq ($(MINGW64),1)
+  MSYS2_PREFIX = C:/msys64/mingw64
+else
+  MSYS2_PREFIX = C:/msys64/ucrt64
+endif
+
 # MSYS2 tool paths
-GCC = C:/msys64/ucrt64/bin/gcc.exe
-AR = C:/msys64/ucrt64/bin/ar.exe
+GCC = $(MSYS2_PREFIX)/bin/gcc.exe
+AR = $(MSYS2_PREFIX)/bin/ar.exe
 RM = C:/msys64/usr/bin/rm.exe
 MKDIR = C:/msys64/usr/bin/mkdir.exe
-MAKE = C:/msys64/ucrt64/bin/mingw32-make.exe
+MAKE = $(MSYS2_PREFIX)/bin/mingw32-make.exe
 
 # Compiler flags
-CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -mconsole -static-libgcc
-LDFLAGS = -LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
+CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -I$(MSYS2_PREFIX)/include -O2 -mconsole -static-libgcc
+LDFLAGS = -L$(MSYS2_PREFIX)/lib -lSDL2 -lm -static-libgcc
 
 # Release flags (no console window, no debug output)
-RELEASE_CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -IC:/msys64/ucrt64/include -O2 -DNDEBUG -mwindows -static-libgcc
-RELEASE_LDFLAGS = -LC:/msys64/ucrt64/lib -lSDL2 -lm -static-libgcc
+RELEASE_CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -I$(MSYS2_PREFIX)/include -O2 -DNDEBUG -mwindows -static-libgcc
+RELEASE_LDFLAGS = -L$(MSYS2_PREFIX)/lib -lSDL2 -lm -static-libgcc
 
 SRC_DIR = src
 OBJ_DIR = obj
@@ -46,15 +56,16 @@ TARGET_INTRO  = $(BIN_DIR)/fd2_intro.exe
 
 all: $(TARGET_GAME) $(TARGET_TEST) $(TARGET_INTRO)
 	@echo Copying required DLLs...
-	@cp C:/msys64/ucrt64/bin/libwinpthread-1.dll $(BIN_DIR)/ 2>/dev/null || true
-	@cp C:/msys64/ucrt64/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null || true
+	-cp $(MSYS2_PREFIX)/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null
+	@echo Copying game data files...
+	-cp game/* $(BIN_DIR)/ 2>/dev/null
+	-$(RM) -f $(BIN_DIR)/*.exe $(BIN_DIR)/*.i64 2>/dev/null
 
 game: $(TARGET_GAME)
 
 release: $(BIN_DIR)/fd2_release.exe
 	@echo Copying required DLLs...
-	@cp C:/msys64/ucrt64/bin/libwinpthread-1.dll $(BIN_DIR)/ 2>/dev/null || true
-	@cp C:/msys64/ucrt64/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null || true
+	@cp $(MSYS2_PREFIX)/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null || true
 	@echo Release build complete: $(BIN_DIR)/fd2_release.exe
 
 decoder: $(TARGET_TEST)
