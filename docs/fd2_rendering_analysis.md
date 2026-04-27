@@ -314,7 +314,7 @@ void __fastcall sub_1F73F(
 
 **地址**: 0x1FF79
 
-**功能**: 绘制游戏主菜单项 (1P/VS/Demo)
+**功能**: 绘制游戏主菜单项 (Start/Load/Continue)
 
 **函数签名**:
 ```c
@@ -324,7 +324,7 @@ char __fastcall sub_1FF79(
     int a3,
     int a4,
     int FDOTHER_DAT,  // FDOTHER内存指针
-    int n3,           // 当前选中项 (-1=无高亮, 0=1P, 1=VS, 2=Demo)
+    int n3,           // 当前选中项 (-1=无高亮, 0=Start, 1=Load, 2=Continue)
     int n2            // 可见项数量 (2-4)
 );
 ```
@@ -334,17 +334,17 @@ char __fastcall sub_1FF79(
 char __fastcall sub_1FF79(..., int FDOTHER_DAT, int n3, int n2) {
     sub_3702F(..., 20);
     
-    // Item 0 (1P)
+    // Item 0 (Start)
     n2_1 = (n3 == 0) ? 2 : 1;  // 2=选中, 1=未选中
     sub_16886(n2_1, ..., 707969, 320, FDOTHER_DAT, n2_1);
     
-    // Item 1 (VS) - 仅当n2>1时显示
+    // Item 1 (Load) - 仅当n2>1时显示
     if (n2 > 1) {
         n3_1 = (n3 == 1) ? 4 : 3;
         sub_16886(n3_1, ..., 710849, 320, FDOTHER_DAT, n3_1);
     }
     
-    // Item 2 (Demo) - 仅当n2>2时显示
+    // Item 2 (Continue) - 仅当n2>2时显示
     if (n2 > 2) {
         n5 = (n3 == 2) ? 6 : 5;
         sub_16886(n5, ..., 713729, 320, FDOTHER_DAT, n5);
@@ -352,28 +352,31 @@ char __fastcall sub_1FF79(..., int FDOTHER_DAT, int n3, int n2) {
 }
 ```
 
-**菜单资源映射**:
+**菜单资源映射** (FDOTHER #7资源集):
+
+FDOTHER #7是一个资源集，包含7张图片：
 
 | 资源索引 | 用途 | 状态 |
 |---------|------|------|
-| FDOTHER #1 | 1P | 未选中 |
-| FDOTHER #2 | 1P | 选中 |
-| FDOTHER #3 | VS | 未选中 |
-| FDOTHER #4 | VS | 选中 |
-| FDOTHER #5 | Demo | 未选中 |
-| FDOTHER #6 | Demo | 选中 |
+| FDOTHER #7[0] | Start | 菜单背景 |
+| FDOTHER #7[1] | Start | 未选中 |
+| FDOTHER #7[2] | Start | 选中 |
+| FDOTHER #7[3] | Load | 未选中 |
+| FDOTHER #7[4] | Load | 选中 |
+| FDOTHER #7[5] | Continue | 未选中 |
+| FDOTHER #7[6] | Continue | 选中 |
 
 **菜单项屏幕位置**:
 
 | 项目 | 帧缓冲偏移 | 计算方式 | 屏幕坐标 |
 |------|-----------|---------|---------|
-| 1P | 707969 | 707969-655360=52609 | x=49, y=164 |
-| VS | 710849 | 710849-655360=55489 | x=49, y=173 |
-| Demo | 713729 | 713729-655360=58369 | x=49, y=182 |
+| Start | 707969 | 707969-655360=52609 | x=49, y=164 |
+| Load | 710849 | 710849-655360=55489 | x=49, y=173 |
+| Continue | 713729 | 713729-655360=58369 | x=49, y=182 |
 
 **菜单可见性控制**:
-- n2=2: 仅显示1P
-- n2=3: 显示1P和VS
+- n2=2: 仅显示Start
+- n2=3: 显示Start和Load
 - n2=4: 显示全部3项
 
 **菜单交互逻辑** (在sub_1F894中):
@@ -590,10 +593,10 @@ for (n535 = 535; n535 >= 0; --n535) {
 **淡出到菜单** (Phase 3-6):
 1. 淡出到红色(63,0,0) 40步
 2. 播放ANI #1 (菜单介绍)
-3. 加载FDOTHER #8, 亮度叠加64
-4. 绘制菜单背景 (FDOTHER #7)
+3. 加载FDOTHER #8调色板，亮度叠加64
+4. 绘制菜单背景 (FDOTHER #7[0])
 5. 从(56,60,63)淡入 40步
-6. 显示菜单项并等待输入
+6. 显示菜单项并等待输入 (FDOTHER #7[1-6])
 
 ## 现代实现映射
 

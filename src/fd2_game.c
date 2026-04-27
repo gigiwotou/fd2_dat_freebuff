@@ -1359,19 +1359,24 @@ static void state_intro_exit(fd2_game_t* game) {
  * Main menu. Based on sub_1FF79 (draws menu items) and the input loop
  * in sub_1F894 (up/down/select with blink animation).
  *
- * Menu items use FDOTHER resources 1-6:
- *   Resources 1,3,5 = unselected items (1P, VS, Demo)
- *   Resources 2,4,6 = selected items (1P, VS, Demo)
+ * Menu resources are stored in FDOTHER #7 resource set (7 images):
+ *   FDOTHER #7[0]: Menu background
+ *   FDOTHER #7[1]: Start unselected
+ *   FDOTHER #7[2]: Start selected
+ *   FDOTHER #7[3]: Load unselected
+ *   FDOTHER #7[4]: Load selected
+ *   FDOTHER #7[5]: Continue unselected
+ *   FDOTHER #7[6]: Continue selected
  *
  * The number of visible items depends on game mode (n100):
- *   n100=2 → 1 item only (1P)
- *   n100=3 → 2 items (1P, VS)
- *   n100=4 → 3 items (1P, VS, Demo)
+ *   n100=2 → 1 item only (Start)
+ *   n100=3 → 2 items (Start, Load)
+ *   n100=4 → 3 items (Start, Load, Continue)
  *
  * Menu items are drawn at fixed screen positions:
- *   Item 0 (1P):  y_offset = 707969  → row ~1105 * 320 / ... → pixel offset
- *   Item 1 (VS):  y_offset = 710849
- *   Item 2 (Demo): y_offset = 713729
+ *   Item 0 (Start):     y_offset = 707969
+ *   Item 1 (Load):      y_offset = 710849
+ *   Item 2 (Continue):  y_offset = 713729
  *
  * Selected item blinks 4 times (80ms on/off) before confirming.
  */
@@ -1390,30 +1395,14 @@ typedef struct {
  *   num_items: how many items to show (2-4)
  */
 static void menu_draw(fd2_game_t* game, int selection, int num_items) {
-    /* Draw menu background (FDOTHER 101) */
-    u32 menu_size;
-    const u8* menu_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 101, &menu_size);
-    fd2_render_fill_screen(&game->render, 0);
-    if (menu_res) {
-        fd2_render_blit_rle(&game->render, menu_res, menu_size, 0, 0);
-    }
-
-    /* Draw menu items.
-     * sub_1FF79 uses sub_16886 to decompress resources at specific Y offsets.
-     * The resources are:
-     *   FDOTHER[1] = 1P unselected,  FDOTHER[2] = 1P selected
-     *   FDOTHER[3] = VS unselected,  FDOTHER[4] = VS selected
-     *   FDOTHER[5] = Demo unselected, FDOTHER[6] = Demo selected
+    /* Draw menu items from FDOTHER #7 resource set.
+     * FDOTHER #7 contains 7 images:
+     *   [0]: Menu background (already drawn in Phase 5)
+     *   [1]: Start unselected    [2]: Start selected
+     *   [3]: Load unselected     [4]: Load selected
+     *   [5]: Continue unselected [6]: Continue selected
      *
-     * Y offsets (from sub_1FF79 / sub_16886):
-     *   Item 0: 707969 = 320*2212 + 49 → row 2212 is out of screen range...
-     *   Actually these are memory addresses. 707969 / 320 = 2212.4 — that's the
-     *   resource offset, not screen position. sub_16886 decompresses RLE data
-     *   from the DAT file directly to the video buffer at a given Y offset.
-     *   For now, we blit each item at estimated screen positions.
-     */
-
-    /* Menu item positions from original sub_1FF79 / sub_16886.
+     * Menu item positions from original sub_1FF79 / sub_16886.
      * Video buffer offsets: 707969, 710849, 713729
      * Minus 655360 (video base) = 52609, 55489, 58369
      * 52609 / 320 = 164 remainder 49  → y=164, x=49
@@ -1427,13 +1416,12 @@ static void menu_draw(fd2_game_t* game, int selection, int num_items) {
     for (int i = 0; i < num_items && i < 3; i++) {
         int unselected_res = 1 + i * 2;  /* 1, 3, 5 */
         int selected_res   = 2 + i * 2;  /* 2, 4, 6 */
-
         int res_idx = (i == selection) ? selected_res : unselected_res;
 
+        /* Get resource from FDOTHER #7 set */
         u32 item_size;
         const u8* item_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, res_idx, &item_size);
         if (item_res) {
-            /* Center the item horizontally */
             u8* pixels = NULL;
             int w, h;
             if (fd2_rle_decompress_from_resource(item_res, item_size, &pixels, &w, &h) == 0) {
