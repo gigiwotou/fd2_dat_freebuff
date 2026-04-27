@@ -1313,14 +1313,25 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
              * menu background appears slightly brighter than normal. */
             fd2_render_palette_add_6bit(&game->render, 64);
 
-            /* Draw FDOTHER[7] as menu background image
-             * (original: sub_16886(FDOTHER[7]) draws to screen) */
+            /* Draw menu background image from FDOTHER #8 sub-resource [0].
+             * FDOTHER #8 is an LMI1 resource set.
+             * Sub-resource boundaries from offset table:
+             *   [0]: offset 12-58   -> offset table continuation, NOT an image
+             *   [1]: offset 58-132  (Start unselected, 42x24)
+             *   [2]: offset 132-246 (Start selected, 44x24)
+             *   [3]: offset 246-378 (Load unselected, 45x24)
+             *   [4]: offset 378-728 (Load selected, 46x24)
+             *   [5]: offset 728-1314 (Continue unselected, 46x24)
+             *   [6]: offset 1314-2209 (Continue selected, 66x24)
+             *
+             * Actual format: width(1) + height(1) + pixel_data
+             * Sub-resource [0] is offset table data, skip it.
+             * Menu background should be a separate full-screen image. */
             fd2_render_fill_screen(&game->render, 0);
-            u32 res7_size;
-            const u8* res7 = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &res7_size);
-            if (res7) {
-                fd2_render_blit_rle(&game->render, res7, res7_size, 0, 0);
-            }
+            
+            /* For now, skip drawing background from #8[0] since it's offset data.
+             * The menu items will be drawn on a black background.
+             * TODO: Find the actual menu background resource. */
 
             /* Fade from dim cool-blue (0x38,0x3C,0x3F) to full brightened palette
              * over 40 steps, 8ms each (sub_2DF01 ascending: n40_1=0..40).
@@ -1359,14 +1370,13 @@ static void state_intro_exit(fd2_game_t* game) {
  * Main menu. Based on sub_1FF79 (draws menu items) and the input loop
  * in sub_1F894 (up/down/select with blink animation).
  *
- * Menu resources are stored in FDOTHER #7 resource set (7 images):
- *   FDOTHER #7[0]: Menu background
- *   FDOTHER #7[1]: Start unselected
- *   FDOTHER #7[2]: Start selected
- *   FDOTHER #7[3]: Load unselected
- *   FDOTHER #7[4]: Load selected
- *   FDOTHER #7[5]: Continue unselected
- *   FDOTHER #7[6]: Continue selected
+ * Menu resources (from FDOTHER.DAT):
+ *   #7:   Menu palette (768 bytes, red gradient for fade effects)
+ *   #8:   Menu resource set (LMI1 format, 3999 bytes, 7 sub-resources):
+ *     [0]: Menu background
+ *     [1]: Start unselected    [2]: Start selected
+ *     [3]: Load unselected     [4]: Load selected
+ *     [5]: Continue unselected [6]: Continue selected
  *
  * The number of visible items depends on game mode (n100):
  *   n100=2 → 1 item only (Start)
@@ -1395,39 +1405,76 @@ typedef struct {
  *   num_items: how many items to show (2-4)
  */
 static void menu_draw(fd2_game_t* game, int selection, int num_items) {
-    /* Draw menu items from FDOTHER #7 resource set.
-     * FDOTHER #7 contains 7 images:
-     *   [0]: Menu background (already drawn in Phase 5)
-     *   [1]: Start unselected    [2]: Start selected
-     *   [3]: Load unselected     [4]: Load selected
-     *   [5]: Continue unselected [6]: Continue selected
+    /* Draw menu items from FDOTHER #8 LMI1 resource set.
+     * LMI1 format:
+     *   Bytes 0-3:   "LMI1" magic
+     *   Bytes 4-31:  14 x 2-byte LE offsets (7 pairs defining sub-resource boundaries)
+     *   Bytes 32+:   Sub-resource data
      *
-     * Menu item positions from original sub_1FF79 / sub_16886.
-     * Video buffer offsets: 707969, 710849, 713729
-     * Minus 655360 (video base) = 52609, 55489, 58369
-     * 52609 / 320 = 164 remainder 49  → y=164, x=49
-     * 55489 / 320 = 173 remainder 49  → y=173, x=49
-     * 58369 / 320 = 182 remainder 49  → y=182, x=49
+     * Sub-resource format: width(2 LE) + height(2 LE) + trans_color(2 LE) + RLE_data
+     *
+     * Sub-resource boundaries (from offset table):
+     *   [0]: offset 12-58   (offset table data, NOT an image - SKIP)
+     *   [1]: offset 58-132  (Start unselected, 42x24)
+     *   [2]: offset 132-246 (Start selected, 44x24)
+     *   [3]: offset 246-378 (Load unselected, 45x24)
+     *   [4]: offset 378-728 (Load selected, 46x24)
+     *   [5]: offset 728-1314 (Continue unselected, 46x24)
+     *   [6]: offset 1314-2209 (Continue selected, 66x24)
+     *
+     * Menu item positions:
+     *   Item 0 (Start):    y=164, x=49
+     *   Item 1 (Load):     y=173, x=49
+     *   Item 2 (Continue): y=182, x=49
      */
     static const int item_x = 49;
     static const int item_y[3] = { 164, 173, 182 };
 
-    /* Draw each visible item */
-    for (int i = 0; i < num_items && i < 3; i++) {
-        int unselected_res = 1 + i * 2;  /* 1, 3, 5 */
-        int selected_res   = 2 + i * 2;  /* 2, 4, 6 */
-        int res_idx = (i == selection) ? selected_res : unselected_res;
+    /* Sub-resource boundary offsets within FDOTHER #8 */
+    static const u16 sub_starts[7] = { 12, 58, 132, 246, 378, 728, 1314 };
+    static const u16 sub_ends[7]   = { 58, 132, 246, 378, 728, 1314, 2209 };
 
-        /* Get resource from FDOTHER #7 set */
-        u32 item_size;
-        const u8* item_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, res_idx, &item_size);
-        if (item_res) {
-            u8* pixels = NULL;
-            int w, h;
-            if (fd2_rle_decompress_from_resource(item_res, item_size, &pixels, &w, &h) == 0) {
-                fd2_render_blit(&game->render, pixels, w, h, item_x, item_y[i]);
-                free(pixels);
-            }
+    /* Get the FDOTHER #8 LMI1 resource set */
+    u32 res8_size;
+    const u8* res8 = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 8, &res8_size);
+    if (!res8 || res8_size < 2209) {
+        printf("menu_draw: FDOTHER #8 not available or too small (%u bytes)\n", res8_size);
+        return;
+    }
+
+    /* Draw each visible menu item */
+    for (int i = 0; i < num_items && i < 3; i++) {
+        int item_idx = (i == selection) ? (2 + i * 2) : (1 + i * 2);
+
+        if (item_idx >= 7 || item_idx == 0) continue;
+
+        u16 img_start = sub_starts[item_idx];
+        u16 img_end = sub_ends[item_idx];
+        u16 img_size = img_end - img_start;
+
+        if (img_start >= res8_size || img_end > res8_size || img_size < 6) continue;
+
+        /* LMI1 sub-resource format: width(2) + height(2) + trans_color(2) + RLE_data */
+        const u8* img_data = res8 + img_start;
+        int w = img_data[0] | (img_data[1] << 8);
+        int h = img_data[2] | (img_data[3] << 8);
+        int trans_color = img_data[4] | (img_data[5] << 8);
+        const u8* rle_data = img_data + 6;
+        u32 rle_size = img_size - 6;
+
+        printf("menu_draw: item %d (idx %d) at (%d,%d), %dx%d, trans=%d, rle_size=%u\n",
+               i, item_idx, item_x, item_y[i], w, h, trans_color, rle_size);
+
+        /* Decompress RLE data */
+        u8* pixels = NULL;
+        int out_w, out_h;
+        int ret = fd2_rle_decompress_from_resource(rle_data, rle_size, &pixels, &out_w, &out_h);
+        if (ret == 0) {
+            printf("  -> decompressed to %dx%d\n", out_w, out_h);
+            fd2_render_blit(&game->render, pixels, out_w, out_h, item_x, item_y[i]);
+            free(pixels);
+        } else {
+            printf("  -> RLE decompression FAILED (ret=%d)\n", ret);
         }
     }
 
