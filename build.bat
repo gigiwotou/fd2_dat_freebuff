@@ -27,14 +27,19 @@ set RELEASE_LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
 
 set SRC_DIR=src
 set OBJ_DIR=obj
+set OBJ_RELEASE_DIR=obj_release
 set BIN_DIR=bin
 set EXE_EXT=.exe
 
-:: Object files
+:: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
 set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\main.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
+
+:: Object files (release)
+set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
+set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_game.o %OBJ_RELEASE_DIR%\main.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
@@ -42,21 +47,33 @@ set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
 set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
 set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
 
-:: Default target
-if "%~1"=="" set TARGET=all
-if not "%~1"=="" set TARGET=%~1
-
-:: Release target
+:: Parse arguments (order-independent)
+set TARGET=all
 set RELEASE=0
-if /I "%~1"=="release" (
-    set TARGET=game
-    set RELEASE=1
+
+:arg_loop
+if "%~1"=="" goto :arg_done
+if /I "%~1"=="all" set TARGET=all
+if /I "%~1"=="game" set TARGET=game
+if /I "%~1"=="test" set TARGET=test
+if /I "%~1"=="intro" set TARGET=intro
+if /I "%~1"=="clean" set TARGET=clean
+if /I "%~1"=="release" set RELEASE=1
+if /I "%~1"=="mingw64" set MSYS2_PREFIX=C:\msys64\mingw64
+shift
+goto :arg_loop
+:arg_done
+
+:: If release mode, set target to release
+if "%RELEASE%"=="1" (
+    if "%TARGET%"=="game" set TARGET=release
 )
 
 :: Clean
 if "%TARGET%"=="clean" (
     echo Cleaning build artifacts...
     if exist %OBJ_DIR% rmdir /S /Q %OBJ_DIR%
+    if exist %OBJ_RELEASE_DIR% rmdir /S /Q %OBJ_RELEASE_DIR%
     if exist %BIN_DIR% rmdir /S /Q %BIN_DIR%
     echo Clean complete.
     goto :end
@@ -64,6 +81,7 @@ if "%TARGET%"=="clean" (
 
 :: Create directories
 if not exist %OBJ_DIR% mkdir %OBJ_DIR%
+if not exist %OBJ_RELEASE_DIR% mkdir %OBJ_RELEASE_DIR%
 if not exist %BIN_DIR% mkdir %BIN_DIR%
 
 :: Compile all source files
@@ -109,6 +127,7 @@ if "%TARGET%"=="all" (
 if "%TARGET%"=="game" goto :build_game
 if "%TARGET%"=="test" goto :build_test
 if "%TARGET%"=="intro" goto :build_intro
+if "%TARGET%"=="release" goto :build_release
 
 if "%TARGET%"=="all" (
     echo.
@@ -151,17 +170,34 @@ if errorlevel 1 goto :error
 call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
 if errorlevel 1 goto :error
 
-if "%RELEASE%"=="1" (
-    echo Linking %TARGET_GAME_RELEASE% (Release Mode)
-    %GCC% %RELEASE_CFLAGS% -o %TARGET_GAME_RELEASE% %GAME_OBJS% %DECODER_OBJ% %RELEASE_LDFLAGS%
-    if errorlevel 1 goto :error
-    echo [OK] %TARGET_GAME_RELEASE%
-) else (
-    echo Linking %TARGET_GAME%
-    %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
-    if errorlevel 1 goto :error
-    echo [OK] %TARGET_GAME%
-)
+echo Linking %TARGET_GAME%
+%GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_GAME%
+goto :end
+
+:build_release
+call :compile_release %SRC_DIR%\fd2_decoder.c %DECODER_RELEASE_OBJ%
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_input.c %OBJ_RELEASE_DIR%\fd2_input.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_render.c %OBJ_RELEASE_DIR%\fd2_render.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_audio.c %OBJ_RELEASE_DIR%\fd2_audio.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_resources.c %OBJ_RELEASE_DIR%\fd2_resources.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_afm.c %OBJ_RELEASE_DIR%\fd2_afm.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_game.c %OBJ_RELEASE_DIR%\fd2_game.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\main.c %OBJ_RELEASE_DIR%\main.o
+if errorlevel 1 goto :error
+
+echo Linking %TARGET_GAME_RELEASE% (Release Mode)
+%GCC% %RELEASE_CFLAGS% -o %TARGET_GAME_RELEASE% %GAME_RELEASE_OBJS% %DECODER_RELEASE_OBJ% %RELEASE_LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_GAME_RELEASE%
 goto :end
 
 :build_test
@@ -189,6 +225,15 @@ goto :end
 :compile
 echo Compiling %~1
 %GCC% %CFLAGS% -c %~1 -o %~2
+if errorlevel 1 (
+    echo ERROR: Failed to compile %~1
+    exit /b 1
+)
+exit /b 0
+
+:compile_release
+echo Compiling %~1 (release)
+%GCC% %RELEASE_CFLAGS% -c %~1 -o %~2
 if errorlevel 1 (
     echo ERROR: Failed to compile %~1
     exit /b 1

@@ -78,14 +78,17 @@ endif
 
 SRC_DIR = src
 OBJ_DIR = obj
+OBJ_RELEASE_DIR = obj_release
 BIN_DIR = bin
 
 # Source files
 DECODER_SRCS = $(SRC_DIR)/fd2_decoder.c
 DECODER_OBJS = $(OBJ_DIR)/fd2_decoder.o
+DECODER_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_decoder.o
 
 GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_game.c $(SRC_DIR)/main.c
 GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_game.o $(OBJ_DIR)/main.o
+GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_game.o $(OBJ_RELEASE_DIR)/main.o
 
 TEST_OBJS = $(OBJ_DIR)/fd2_decoder_test.o
 INTRO_OBJS = $(OBJ_DIR)/fd2_intro.o $(DECODER_OBJS)
@@ -120,8 +123,8 @@ test: $(TARGET_TEST)
 
 intro: $(TARGET_INTRO)
 
-# Release build (no console, no debug output)
-$(TARGET_RELEASE): $(GAME_OBJS) $(DECODER_OBJS) | $(BIN_DIR)
+# Release build (no console, no debug output) - separate obj dir
+$(TARGET_RELEASE): $(GAME_RELEASE_OBJS) $(DECODER_RELEASE_OBJS) | $(BIN_DIR)
 	$(CC) $(RELEASE_CFLAGS) -o $@ $^ $(RELEASE_LDFLAGS)
 
 # Main game
@@ -136,10 +139,15 @@ $(TARGET_TEST): $(DECODER_OBJS) $(TEST_OBJS) | $(BIN_DIR)
 $(TARGET_INTRO): $(INTRO_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Compilation rules
+# Compilation rules (debug)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	@echo Compiling $<
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compilation rules (release)
+$(OBJ_RELEASE_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_RELEASE_DIR)
+	@echo Compiling $< (release)
+	$(CC) $(RELEASE_CFLAGS) -c $< -o $@
 
 $(BIN_DIR):
 	$(MKDIR) -p $@
@@ -147,5 +155,8 @@ $(BIN_DIR):
 $(OBJ_DIR):
 	$(MKDIR) -p $@
 
+$(OBJ_RELEASE_DIR):
+	$(MKDIR) -p $@
+
 clean:
-	$(RM) -rf $(OBJ_DIR) $(BIN_DIR)
+	$(RM) -rf $(OBJ_DIR) $(OBJ_RELEASE_DIR) $(BIN_DIR)

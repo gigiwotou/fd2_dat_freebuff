@@ -15,14 +15,19 @@ RELEASE_LDFLAGS="-lSDL2 -lm"
 
 SRC_DIR=src
 OBJ_DIR=obj
+OBJ_RELEASE_DIR=obj_release
 BIN_DIR=bin
 EXE_EXT=""
 
-# Object files
+# Object files (debug)
 DECODER_OBJ="${OBJ_DIR}/fd2_decoder.o"
 GAME_OBJS="${OBJ_DIR}/fd2_input.o ${OBJ_DIR}/fd2_render.o ${OBJ_DIR}/fd2_audio.o ${OBJ_DIR}/fd2_resources.o ${OBJ_DIR}/fd2_afm.o ${OBJ_DIR}/fd2_game.o ${OBJ_DIR}/main.o"
 TEST_OBJ="${OBJ_DIR}/fd2_decoder_test.o"
 INTRO_OBJ="${OBJ_DIR}/fd2_intro.o"
+
+# Object files (release)
+DECODER_RELEASE_OBJ="${OBJ_RELEASE_DIR}/fd2_decoder.o"
+GAME_RELEASE_OBJS="${OBJ_RELEASE_DIR}/fd2_input.o ${OBJ_RELEASE_DIR}/fd2_render.o ${OBJ_RELEASE_DIR}/fd2_audio.o ${OBJ_RELEASE_DIR}/fd2_resources.o ${OBJ_RELEASE_DIR}/fd2_afm.o ${OBJ_RELEASE_DIR}/fd2_game.o ${OBJ_RELEASE_DIR}/main.o"
 
 # Targets
 TARGET_GAME="${BIN_DIR}/fd2${EXE_EXT}"
@@ -34,15 +39,15 @@ TARGET_INTRO="${BIN_DIR}/fd2_intro${EXE_EXT}"
 TARGET=${1:-all}
 RELEASE=0
 
-if [ "$TARGET" = "release" ]; then
-    TARGET="game"
-    RELEASE=1
-fi
-
 # Functions
 compile() {
     echo "Compiling $1"
     $CC $CFLAGS -c "$1" -o "$2"
+}
+
+compile_release() {
+    echo "Compiling $1 (release)"
+    $CC $RELEASE_CFLAGS -c "$1" -o "$2"
 }
 
 build_game() {
@@ -55,13 +60,22 @@ build_game() {
     compile "${SRC_DIR}/fd2_game.c" "${OBJ_DIR}/fd2_game.o"
     compile "${SRC_DIR}/main.c" "${OBJ_DIR}/main.o"
 
-    if [ "$RELEASE" = "1" ]; then
-        echo "Linking ${TARGET_GAME_RELEASE} (Release Mode)"
-        $CC $RELEASE_CFLAGS -o "${TARGET_GAME_RELEASE}" ${GAME_OBJS} ${DECODER_OBJ} ${RELEASE_LDFLAGS}
-    else
-        echo "Linking ${TARGET_GAME}"
-        $CC $CFLAGS -o "${TARGET_GAME}" ${GAME_OBJS} ${DECODER_OBJ} ${LDFLAGS}
-    fi
+    echo "Linking ${TARGET_GAME}"
+    $CC $CFLAGS -o "${TARGET_GAME}" ${GAME_OBJS} ${DECODER_OBJ} ${LDFLAGS}
+}
+
+build_release() {
+    compile_release "${SRC_DIR}/fd2_decoder.c" "${DECODER_RELEASE_OBJ}"
+    compile_release "${SRC_DIR}/fd2_input.c" "${OBJ_RELEASE_DIR}/fd2_input.o"
+    compile_release "${SRC_DIR}/fd2_render.c" "${OBJ_RELEASE_DIR}/fd2_render.o"
+    compile_release "${SRC_DIR}/fd2_audio.c" "${OBJ_RELEASE_DIR}/fd2_audio.o"
+    compile_release "${SRC_DIR}/fd2_resources.c" "${OBJ_RELEASE_DIR}/fd2_resources.o"
+    compile_release "${SRC_DIR}/fd2_afm.c" "${OBJ_RELEASE_DIR}/fd2_afm.o"
+    compile_release "${SRC_DIR}/fd2_game.c" "${OBJ_RELEASE_DIR}/fd2_game.o"
+    compile_release "${SRC_DIR}/main.c" "${OBJ_RELEASE_DIR}/main.o"
+
+    echo "Linking ${TARGET_GAME_RELEASE} (Release Mode)"
+    $CC $RELEASE_CFLAGS -o "${TARGET_GAME_RELEASE}" ${GAME_RELEASE_OBJS} ${DECODER_RELEASE_OBJ} ${RELEASE_LDFLAGS}
 }
 
 build_test() {
@@ -80,12 +94,12 @@ build_intro() {
 
 clean() {
     echo "Cleaning build artifacts..."
-    rm -rf "${OBJ_DIR}" "${BIN_DIR}"
+    rm -rf "${OBJ_DIR}" "${OBJ_RELEASE_DIR}" "${BIN_DIR}"
     echo "Clean complete."
 }
 
 # Create directories
-mkdir -p "${OBJ_DIR}" "${BIN_DIR}"
+mkdir -p "${OBJ_DIR}" "${OBJ_RELEASE_DIR}" "${BIN_DIR}"
 
 # Build targets
 case "$TARGET" in
@@ -122,6 +136,9 @@ case "$TARGET" in
         ;;
     game)
         build_game
+        ;;
+    release)
+        build_release
         ;;
     test)
         build_test
