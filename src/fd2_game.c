@@ -1441,7 +1441,12 @@ typedef struct {
  *   Item 2 (Continue): y=182, x=49
  */
 static void menu_draw(fd2_game_t* game, int selection, int num_items) {
-    static const int item_x = 49;
+    /* Menu item positions from IDA sub_1FF79:
+     *   0xACD81 = 0xA0000 + 0xCD81: y=164, x=129
+     *   0xAD8C1 = 0xA0000 + 0xD8C1: y=173, x=129
+     *   0xAE401 = 0xA0000 + 0xE401: y=182, x=129
+     */
+    static const int item_x = 129;
     static const int item_y[3] = { 164, 173, 182 };
 
     /* Get FDOTHER #6 (DAT nested format with menu images)
