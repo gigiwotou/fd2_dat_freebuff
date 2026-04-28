@@ -9,6 +9,7 @@
 # Build directories
 bin/
 obj/
+obj_release/
 output/
 temp/
 sdl2_install/
