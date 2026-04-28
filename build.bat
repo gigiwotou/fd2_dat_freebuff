@@ -28,6 +28,7 @@ set RELEASE_LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
 set SRC_DIR=src
 set OBJ_DIR=obj
 set BIN_DIR=bin
+set EXE_EXT=.exe
 
 :: Object files
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
@@ -36,10 +37,10 @@ set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Targets
-set TARGET_GAME=%BIN_DIR%\fd2.exe
-set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release.exe
-set TARGET_TEST=%BIN_DIR%\fd2_decoder_test.exe
-set TARGET_INTRO=%BIN_DIR%\fd2_intro.exe
+set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
+set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
+set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
+set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
 
 :: Default target
 if "%~1"=="" set TARGET=all
