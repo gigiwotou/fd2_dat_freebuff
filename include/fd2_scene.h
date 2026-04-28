@@ -116,6 +116,7 @@ typedef struct {
     /* Timing */
     u32 cmd_timer;             /* Command execution timer */
     u32 frame_count;           /* Frame counter */
+    u32 scene_done_frame;      /* Frame when scene commands finished */
     
     /* Flags */
     bool playing;              /* Is currently playing */
@@ -129,8 +130,7 @@ typedef struct {
 #define SCENE_INTRO_END     105  /* Intro scene end */
 #define SCENE_BATTLE_START   90  /* Battle intro start */
 #define SCENE_BATTLE_END     98  /* Battle intro end */
-#define SCENE_FIELD_START     0  /* Battlefield scene start */
-#define SCENE_FIELD_END       5  /* Battlefield scene end */
+#define SCENE_FIELD_MAP      97  /* Battlefield map (main field scene) */
 
 /* ---- Lifecycle ---- */
 
@@ -182,7 +182,7 @@ bool scene_player_is_playing(const scene_player_t* player);
  * Get scene data for a given scene ID.
  * Scene data is hardcoded based on IDA MCP analysis.
  */
-const scene_data_t* scene_get_data(int scene_id);
+const struct raw_scene* scene_get_raw_scene(int scene_id);
 
 #ifdef __cplusplus
 }

@@ -23,32 +23,56 @@
  * Scene Data Tables - Extracted from IDA MCP
  * ======================================================================== */
 
-/* Scene 0 - First battlefield scene (5 commands, 27 bytes) */
-static const u8 scene_0_raw[] = {
+/* Scene 97 - Battlefield map (from IDA MCP at 0x6342F) */
+static const u8 scene_97_raw[] = {
+    0x03, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x84, 0x02, 0x00,
+    0x00, 0x01, 0x02, 0x09, 0x01, 0x03, 0x00, 0x03, 0x03, 0x03, 0x04, 0x03,
+    0x01, 0x03, 0x00, 0x00, 0x03, 0x03, 0x04, 0x03, 0x01, 0x03, 0x00, 0x03,
+    0x01, 0x03, 0x04, 0x03, 0x01, 0x04, 0x00, 0x03, 0x01, 0x03, 0x03, 0x00,
+    0x04, 0x03, 0x01, 0x04, 0x00, 0x03, 0x01, 0x03, 0x03, 0x03, 0x04, 0x00,
+    0x01, 0x04, 0x00, 0x00, 0x01, 0x03, 0x03, 0x03, 0x04, 0x03, 0x01, 0x04,
+    0x00, 0x03, 0x01, 0x00, 0x03, 0x03, 0x04, 0x03, 0x01, 0x04, 0x00, 0x03,
+    0x01, 0x03, 0x03, 0x00, 0x04, 0x03, 0x01, 0x04, 0x00, 0x03, 0x01, 0x03,
+    0x03, 0x03, 0x04, 0x00, 0x01, 0x06, 0x01, 0x02, 0x02, 0x01, 0x0A, 0x01,
+    0x02, 0x00, 0x01, 0x03, 0x01, 0x04, 0x01, 0x03, 0x02, 0x01, 0x04, 0x01,
+    0x01, 0x01, 0x04, 0x02, 0x01, 0x01, 0x04, 0x01, 0x01, 0x80, 0x01, 0x04,
+    0x01, 0x01, 0x82, 0x01, 0x03, 0x03, 0x05, 0x02, 0x01, 0x03, 0x03, 0x01,
+    0x01, 0x03, 0x00, 0x01, 0x01, 0x03, 0x03, 0x01, 0x02, 0x03, 0x03, 0x04,
+    0x00, 0x04, 0x02, 0x03, 0x03, 0x04, 0x03, 0x00, 0x00
+};
+
+/* Scene 99 - Opening animation (from IDA MCP at 0x62980) */
+static const u8 scene_99_raw[] = {
     0x05, 0x06, 0x04, 0x00, 0x02, 0x01, 0x02, 0x02, 0x02, 0x03, 0x02, 0x88,
     0x01, 0x00, 0x01, 0x88, 0x01, 0x00, 0x03, 0x08, 0x01, 0x00, 0x01, 0x84,
     0x01, 0x00, 0x00
 };
 
-/* Scene 99 - Opening animation (2 commands, 9 bytes) */
-static const u8 scene_99_raw[] = {
-    0x02, 0x88, 0x01, 0x08, 0x02, 0x80, 0x01, 0x08, 0x02
-};
-
-/* Scene 100 - Intro scene 1 */
+/* Scene 100 - Intro scene 1 (from IDA MCP at 0x6299B) */
 static const u8 scene_100_raw[] = {
-    0x03, 0x84, 0x05, 0x09, 0x02, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00
+    0x01, 0x01, 0x04, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0x07, 0x00, 0x04,
+    0x01, 0x04, 0x08, 0x02, 0x09, 0x02, 0x0A, 0x01, 0x0B, 0x03, 0x02, 0x04,
+    0x08, 0x03, 0x09, 0x02, 0x0A, 0x02, 0x0B, 0x02, 0x02, 0x04, 0x08, 0x02,
+    0x09, 0x03, 0x0A, 0x02, 0x0B, 0x02, 0x84, 0x05, 0x09, 0x02, 0x00, 0x00,
+    0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x03, 0x02, 0x04, 0x0E, 0x01, 0x0F,
+    0x02, 0x10, 0x02, 0x11, 0x02, 0x02, 0x04, 0x0E, 0x01, 0x0F, 0x01, 0x10,
+    0x01, 0x11, 0x01, 0x02, 0x04, 0x0E, 0x02, 0x0F, 0x01, 0x10, 0x02, 0x11,
+    0x01, 0x02, 0x01, 0x05, 0x12, 0x02, 0x13, 0x02, 0x14, 0x03, 0x15, 0x02,
+    0x16, 0x03, 0x01, 0x01, 0x12
 };
 
 /* Scene data wrapper - defined in fd2_scene.h */
 
 static const struct raw_scene raw_scenes[] = {
-    { .scene_id = 0, .raw_data = scene_0_raw, .raw_size = sizeof(scene_0_raw) },
+    { .scene_id = 97, .raw_data = scene_97_raw, .raw_size = sizeof(scene_97_raw) },
     { .scene_id = 99, .raw_data = scene_99_raw, .raw_size = sizeof(scene_99_raw) },
     { .scene_id = 100, .raw_data = scene_100_raw, .raw_size = sizeof(scene_100_raw) },
 };
 
 #define RAW_SCENE_COUNT (sizeof(raw_scenes) / sizeof(struct raw_scene))
+
+/* Minimum scene display time in frames (at 60fps, 60 frames = 1 second) */
+#define SCENE_MIN_DISPLAY_FRAMES 120  /* 2 seconds minimum */
 
 /* ========================================================================
  * Scene Player Implementation (async version)
@@ -68,6 +92,7 @@ int scene_player_init(scene_player_t* player) {
     player->render_mode = 0;
     player->cmd_timer = 0;
     player->frame_count = 0;
+    player->scene_done_frame = 0;
     player->playing = false;
     player->paused = false;
     player->skip_requested = false;
@@ -85,10 +110,10 @@ void scene_player_shutdown(scene_player_t* player) {
     }
 }
 
-const scene_data_t* scene_get_data(int scene_id) {
+const struct raw_scene* scene_get_raw_scene(int scene_id) {
     for (size_t i = 0; i < RAW_SCENE_COUNT; i++) {
         if (raw_scenes[i].scene_id == scene_id) {
-            return NULL;
+            return &raw_scenes[i];
         }
     }
     return NULL;
@@ -122,6 +147,7 @@ int scene_player_play(scene_player_t* player, int scene_id) {
     player->anim_frame = 0;
     player->cmd_timer = 0;
     player->frame_count = 0;
+    player->scene_done_frame = 0;
     player->playing = true;
     player->paused = false;
     player->skip_requested = false;
@@ -201,6 +227,18 @@ bool scene_player_update(scene_player_t* player, u32 frame_time_ms) {
 
     player->frame_count++;
 
+    /* If scene commands are done but minimum display time not reached, keep showing */
+    if (player->scene_done_frame > 0) {
+        if (player->frame_count < player->scene_done_frame) {
+            return false;  /* Still displaying, don't end yet */
+        }
+        /* Minimum display time reached */
+        player->playing = false;
+        printf("[SCENE] Scene %d complete (displayed for %d frames)\n",
+               player->current_scene_id, player->frame_count);
+        return true;
+    }
+
     if (player->cmd_timer > 0) {
         player->cmd_timer--;
         return false;
@@ -222,9 +260,10 @@ bool scene_player_update(scene_player_t* player, u32 frame_time_ms) {
     }
 
     if (player->cmd_step >= player->total_commands) {
-        player->playing = false;
-        printf("[SCENE] Scene %d complete\n", player->current_scene_id);
-        return true;
+        /* All commands executed, set minimum display time */
+        player->scene_done_frame = player->frame_count + SCENE_MIN_DISPLAY_FRAMES;
+        printf("[SCENE] Commands done, displaying until frame %d\n", player->scene_done_frame);
+        return false;
     }
 
     if (offset >= player->raw_scene->raw_size) {
@@ -260,8 +299,13 @@ void scene_player_render(scene_player_t* player, u8* screen, int width, int heig
         return;
     }
 
-    if (!player->playing) {
+    if (!player->playing && player->scene_done_frame == 0) {
         return;
+    }
+
+    /* Clear screen to dark color */
+    for (int i = 0; i < width * height; i++) {
+        screen[i] = 20;  /* Dark blue */
     }
 
     int rendered_count = 0;
@@ -284,10 +328,27 @@ void scene_player_render(scene_player_t* player, u8* screen, int width, int heig
         }
     }
 
+    /* If no characters visible, show animated background */
     if (rendered_count == 0) {
-        for (int x = 0; x < 320; x += 2) {
-            for (int y = 0; y < 200; y += 2) {
-                screen[y * 320 + x] = (u8)((player->frame_count + x + y) % 256);
+        /* Draw a colorful checkerboard pattern */
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int color = ((x / 8) + (y / 8)) % 4;
+                color = 30 + color * 40 + (player->frame_count % 60);
+                screen[y * width + x] = (u8)(color % 256);
+            }
+        }
+        
+        /* Draw a pulsing center rectangle */
+        int pulse = (player->frame_count * 3) % 256;
+        int rect_x = 100;
+        int rect_y = 60;
+        int rect_w = 120;
+        int rect_h = 80;
+        
+        for (int y = rect_y; y < rect_y + rect_h && y < height; y++) {
+            for (int x = rect_x; x < rect_x + rect_w && x < width; x++) {
+                screen[y * width + x] = (u8)pulse;
             }
         }
     }
@@ -310,5 +371,5 @@ bool scene_player_is_playing(const scene_player_t* player) {
     if (!player) {
         return false;
     }
-    return player->playing;
+    return player->playing || player->scene_done_frame > 0;
 }
