@@ -82,6 +82,7 @@ typedef struct fd2_game {
     int              game_mode;        /* n17 - 0=single, 1=vs, 2=demo */
     int              round;            /* Current round number */
     int              difficulty;       /* dword_53BEF */
+    int              map_index;        /* Current battle map index (e.g., 97 for first story level) */
 
     /* ---- Timing ---- */
     u32              frame_count;      /* Global frame counter */

@@ -33,19 +33,23 @@ set EXE_EXT=.exe
 
 :: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
-set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\main.o
+set SCENE_LOADER_OBJ=%OBJ_DIR%\fd2_scene_loader.o
+set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_scene_loader.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\main.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
+set EXPORT_OBJ=%OBJ_DIR%\fd2_export_scenes.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
-set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_scene.o %OBJ_RELEASE_DIR%\fd2_game.o %OBJ_RELEASE_DIR%\main.o
+set SCENE_LOADER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_scene_loader.o
+set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_scene.o %OBJ_RELEASE_DIR%\fd2_scene_loader.o %OBJ_RELEASE_DIR%\fd2_game.o %OBJ_RELEASE_DIR%\main.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
 set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
 set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
+set TARGET_EXPORT=%BIN_DIR%\fd2_export_scenes%EXE_EXT%
 
 :: Parse arguments (order-independent)
 set TARGET=all
@@ -108,6 +112,10 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
     if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_scene_loader.c %OBJ_DIR%\fd2_scene_loader.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_export_scenes.c %EXPORT_OBJ%
+    if errorlevel 1 goto :error
 
     echo Linking %TARGET_GAME% ...
     %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
@@ -123,12 +131,21 @@ if "%TARGET%"=="all" (
     %GCC% %CFLAGS% -o %TARGET_INTRO% %INTRO_OBJ% %DECODER_OBJ% %LDFLAGS% %SDL_LDFLAGS%
     if errorlevel 1 goto :error
     echo [OK] %TARGET_INTRO%
+
+    echo Linking %TARGET_EXPORT% ...
+    %GCC% %CFLAGS% -o %TARGET_EXPORT% %EXPORT_OBJ% %DECODER_OBJ% %OBJ_DIR%\fd2_scene.o %SCENE_LOADER_OBJ% %LDFLAGS%
+    if errorlevel 1 goto :error
+    echo [OK] %TARGET_EXPORT%
+
+    echo.
+    echo Copying required DLLs...
 )
 
 :: Individual targets
 if "%TARGET%"=="game" goto :build_game
 if "%TARGET%"=="test" goto :build_test
 if "%TARGET%"=="intro" goto :build_intro
+if "%TARGET%"=="export" goto :build_export
 if "%TARGET%"=="release" goto :build_release
 
 if "%TARGET%"=="all" (
@@ -149,6 +166,22 @@ if "%TARGET%"=="all" (
     echo Build complete! All targets generated in %BIN_DIR%\.
     goto :end
 )
+
+:build_export
+call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_scene.c %OBJ_DIR%\fd2_scene.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_scene_loader.c %SCENE_LOADER_OBJ%
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_export_scenes.c %EXPORT_OBJ%
+if errorlevel 1 goto :error
+
+echo Linking %TARGET_EXPORT%
+%GCC% %CFLAGS% -o %TARGET_EXPORT% %EXPORT_OBJ% %DECODER_OBJ% %OBJ_DIR%\fd2_scene.o %SCENE_LOADER_OBJ% %LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_EXPORT%
+goto :end
 
 echo Unknown target: %TARGET%
 echo Usage: build.bat [all^|game^|test^|intro^|clean^|release] [mingw64]

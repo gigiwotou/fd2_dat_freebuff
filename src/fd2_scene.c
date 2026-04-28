@@ -119,6 +119,13 @@ const struct raw_scene* scene_get_raw_scene(int scene_id) {
     return NULL;
 }
 
+const struct raw_scene* scene_get_all_scenes(size_t* out_count) {
+    if (out_count) {
+        *out_count = RAW_SCENE_COUNT;
+    }
+    return raw_scenes;
+}
+
 int scene_player_play(scene_player_t* player, int scene_id) {
     if (!player) {
         return -1;
@@ -303,11 +310,6 @@ void scene_player_render(scene_player_t* player, u8* screen, int width, int heig
         return;
     }
 
-    /* Clear screen to dark color */
-    for (int i = 0; i < width * height; i++) {
-        screen[i] = 20;  /* Dark blue */
-    }
-
     int rendered_count = 0;
     for (int i = 0; i < 32; i++) {
         scene_char_state_t* ch = &player->characters[i];
@@ -328,8 +330,50 @@ void scene_player_render(scene_player_t* player, u8* screen, int width, int heig
         }
     }
 
-    /* If no characters visible, show animated background */
-    if (rendered_count == 0) {
+    /* Draw battlefield map background for scene 97 */
+    if (player->current_scene_id == 97) {
+        /* Draw a battlefield-style background with terrain */
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                /* Sky gradient (top portion) */
+                if (y < 100) {
+                    int sky_color = 60 + (y * 2);
+                    screen[y * width + x] = (u8)sky_color;
+                }
+                /* Ground terrain (bottom portion) */
+                else {
+                    int ground_y = y - 100;
+                    /* Add some variation to ground */
+                    int ground_color = 20 + (ground_y / 4);
+                    /* Add horizontal terrain features */
+                    if ((x / 16) % 3 == 0) {
+                        ground_color += 10;
+                    }
+                    screen[y * width + x] = (u8)ground_color;
+                }
+            }
+        }
+        
+        /* Draw grid lines for tactical map feel */
+        for (int x = 0; x < width; x += 32) {
+            for (int y = 100; y < height; y++) {
+                screen[y * width + x] = 80;
+            }
+        }
+        for (int y = 100; y < height; y += 32) {
+            for (int x = 0; x < width; x++) {
+                screen[y * width + x] = 80;
+            }
+        }
+        
+        /* Draw horizon line */
+        for (int x = 0; x < width; x++) {
+            screen[99 * width + x] = 120;
+            screen[100 * width + x] = 120;
+        }
+    }
+    /* If no characters visible and not scene 97, show animated background */
+    else if (rendered_count == 0) {
         /* Draw a colorful checkerboard pattern */
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {

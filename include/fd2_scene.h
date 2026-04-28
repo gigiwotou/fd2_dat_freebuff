@@ -124,6 +124,13 @@ typedef struct {
     bool skip_requested;       /* User requested skip */
 } scene_player_t;
 
+/* ---- Raw Scene Data (for export) ---- */
+
+/*
+ * Get the raw scenes table for export tools.
+ */
+const struct raw_scene* scene_get_all_scenes(size_t* out_count);
+
 /* ---- Scene ID Constants (from sub_3231B analysis) ---- */
 #define SCENE_OPENING        99  /* Opening animation */
 #define SCENE_INTRO_START   100  /* Intro scene start */
