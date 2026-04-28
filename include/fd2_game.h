@@ -7,6 +7,7 @@
 #include "fd2_audio.h"
 #include "fd2_resources.h"
 #include "fd2_afm.h"
+#include "fd2_scene.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,7 @@ typedef enum {
     FD2_STATE_MENU,           /* Main menu (sub_1FF79 / sub_20421) */
     FD2_STATE_DEMO,           /* Demo/attract mode (sub_117E7 state 28/57) */
     FD2_STATE_CHAR_SELECT,    /* Character selection */
+    FD2_STATE_CUTSCENE,       /* Cutscene playback (sub_1366A + sub_15F84) */
     FD2_STATE_BATTLE,         /* In-game fight (sub_10010) */
     FD2_STATE_VICTORY,        /* Round/match result */
     FD2_STATE_CONTINUE,       /* Continue screen */
@@ -85,6 +87,12 @@ typedef struct fd2_game {
     u32              frame_count;      /* Global frame counter */
     u32              last_tick;        /* Last frame timestamp (SDL_GetTicks) */
     int              running;          /* 0 = quit requested */
+
+    /* ---- Cutscene state ---- */
+    scene_player_t   scene_player;     /* Scene/cutscene playback */
+    int              cutscene_sequence[32];  /* Scene sequence to play */
+    int              cutscene_count;   /* Number of scenes in sequence */
+    int              cutscene_index;   /* Current scene index in sequence */
 
     /* ---- Misc ---- */
     char             data_dir[512];    /* Path to game data directory */

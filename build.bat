@@ -33,13 +33,13 @@ set EXE_EXT=.exe
 
 :: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
-set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\main.o
+set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\main.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
-set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_game.o %OBJ_RELEASE_DIR%\main.o
+set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_scene.o %OBJ_RELEASE_DIR%\fd2_game.o %OBJ_RELEASE_DIR%\main.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
@@ -97,6 +97,8 @@ if "%TARGET%"=="all" (
     call :compile %SRC_DIR%\fd2_resources.c %OBJ_DIR%\fd2_resources.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_afm.c %OBJ_DIR%\fd2_afm.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_scene.c %OBJ_DIR%\fd2_scene.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_game.c %OBJ_DIR%\fd2_game.o
     if errorlevel 1 goto :error
@@ -165,6 +167,8 @@ call :compile %SRC_DIR%\fd2_resources.c %OBJ_DIR%\fd2_resources.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_afm.c %OBJ_DIR%\fd2_afm.o
 if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_scene.c %OBJ_DIR%\fd2_scene.o
+if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_game.c %OBJ_DIR%\fd2_game.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
@@ -188,6 +192,8 @@ if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_resources.c %OBJ_RELEASE_DIR%\fd2_resources.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_afm.c %OBJ_RELEASE_DIR%\fd2_afm.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_scene.c %OBJ_RELEASE_DIR%\fd2_scene.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_game.c %OBJ_RELEASE_DIR%\fd2_game.o
 if errorlevel 1 goto :error

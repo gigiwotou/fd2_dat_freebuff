@@ -86,9 +86,9 @@ DECODER_SRCS = $(SRC_DIR)/fd2_decoder.c
 DECODER_OBJS = $(OBJ_DIR)/fd2_decoder.o
 DECODER_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_decoder.o
 
-GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_game.c $(SRC_DIR)/main.c
-GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_game.o $(OBJ_DIR)/main.o
-GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_game.o $(OBJ_RELEASE_DIR)/main.o
+GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_scene.c $(SRC_DIR)/fd2_game.c $(SRC_DIR)/main.c
+GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_scene.o $(OBJ_DIR)/fd2_game.o $(OBJ_DIR)/main.o
+GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_scene.o $(OBJ_RELEASE_DIR)/fd2_game.o $(OBJ_RELEASE_DIR)/main.o
 
 TEST_OBJS = $(OBJ_DIR)/fd2_decoder_test.o
 INTRO_OBJS = $(OBJ_DIR)/fd2_intro.o $(DECODER_OBJS)

@@ -43,6 +43,10 @@ static void state_char_select_enter(fd2_game_t* game);
 static fd2_state_t state_char_select_update(fd2_game_t* game);
 static void state_char_select_exit(fd2_game_t* game);
 
+static void state_cutscene_enter(fd2_game_t* game);
+static fd2_state_t state_cutscene_update(fd2_game_t* game);
+static void state_cutscene_exit(fd2_game_t* game);
+
 static void state_battle_enter(fd2_game_t* game);
 static fd2_state_t state_battle_update(fd2_game_t* game);
 static void state_battle_exit(fd2_game_t* game);
@@ -67,6 +71,7 @@ static const fd2_state_ops_t builtin_states[FD2_STATE_COUNT] = {
     [FD2_STATE_MENU]         = { state_menu_enter, state_menu_update, state_menu_exit },
     [FD2_STATE_DEMO]         = { state_demo_enter, state_demo_update, state_demo_exit },
     [FD2_STATE_CHAR_SELECT]  = { state_char_select_enter, state_char_select_update, state_char_select_exit },
+    [FD2_STATE_CUTSCENE]     = { state_cutscene_enter, state_cutscene_update, state_cutscene_exit },
     [FD2_STATE_BATTLE]       = { state_battle_enter, state_battle_update, state_battle_exit },
     [FD2_STATE_VICTORY]      = { state_victory_enter, state_victory_update, state_victory_exit },
     [FD2_STATE_CONTINUE]     = { state_continue_enter, state_continue_update, state_continue_exit },
@@ -1628,18 +1633,24 @@ static fd2_state_t state_menu_update(fd2_game_t* game) {
         if (data->blink_count >= 8) {
             /* Dispatch based on selection */
             switch (data->menu_selection) {
-                case 0:  /* 1 Player */
+                case 0:  /* 1 Player - Play cutscenes then battle */
                     game->game_mode = 0;
-                    return FD2_STATE_CHAR_SELECT;
+                    /* Set up cutscene sequence from IDA analysis (sub_3231B):
+                     * 99 = opening, 100-105 = intro scenes,
+                     * 90-98 = battle intro scenes, 0-5 = battlefield scenes
+                     */
+                    game->cutscene_sequence[0] = 99;
+                    game->cutscene_count = 1;
+                    return FD2_STATE_CUTSCENE;
                 case 1:  /* VS Mode */
                     game->game_mode = 1;
-                    return FD2_STATE_CHAR_SELECT;
+                    return FD2_STATE_BATTLE;
                 case 2:  /* Demo */
                     game->game_mode = 2;
                     return FD2_STATE_DEMO;
                 default:
                     game->game_mode = 0;
-                    return FD2_STATE_CHAR_SELECT;
+                    return FD2_STATE_CUTSCENE;
             }
         }
 
@@ -1723,6 +1734,65 @@ static fd2_state_t state_char_select_update(fd2_game_t* game) {
 
 static void state_char_select_exit(fd2_game_t* game) {
     (void)game;
+}
+
+/* ---- CUTSCENE State ----
+ * Cutscene playback (sub_1366A + sub_15F84).
+ * Plays a sequence of scenes that tell the story.
+ * When all scenes are done, transitions to BATTLE state.
+ */
+static void state_cutscene_enter(fd2_game_t* game) {
+    scene_player_t* player = &game->scene_player;
+    scene_player_init(player);
+    
+    game->cutscene_index = 0;
+    
+    if (game->cutscene_count > 0) {
+        int first_scene = game->cutscene_sequence[0];
+        scene_player_play(player, first_scene);
+        printf("state_cutscene: entered, playing scene %d\n", first_scene);
+    } else {
+        printf("state_cutscene: entered, no scenes to play\n");
+    }
+}
+
+static fd2_state_t state_cutscene_update(fd2_game_t* game) {
+    scene_player_t* player = &game->scene_player;
+    
+    /* Handle input - skip cutscene with any key */
+    if (fd2_action_pressed(&game->input, FD2_ACTION_START) ||
+        fd2_action_pressed(&game->input, FD2_ACTION_A) ||
+        fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
+        scene_player_skip(player);
+    }
+    
+    /* Update scene player */
+    bool scene_done = scene_player_update(player, 16);  /* ~60fps */
+    
+    /* Render current scene */
+    scene_player_render(player, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+    fd2_render_present(&game->render);
+    
+    if (scene_done) {
+        /* Try to play next scene in sequence */
+        game->cutscene_index++;
+        if (game->cutscene_index < game->cutscene_count) {
+            int next_scene = game->cutscene_sequence[game->cutscene_index];
+            printf("state_cutscene: playing next scene %d\n", next_scene);
+            scene_player_play(player, next_scene);
+        } else {
+            /* All scenes done - transition to battle */
+            printf("state_cutscene: all scenes done, transitioning to battle\n");
+            return FD2_STATE_BATTLE;
+        }
+    }
+    
+    return FD2_STATE_CUTSCENE;
+}
+
+static void state_cutscene_exit(fd2_game_t* game) {
+    scene_player_shutdown(&game->scene_player);
+    printf("state_cutscene: exited\n");
 }
 
 /* ---- BATTLE State ----
