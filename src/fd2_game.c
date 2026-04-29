@@ -10,6 +10,7 @@
 
 #define _GNU_SOURCE
 #include "fd2_game.h"
+#include "fd2_map_loader.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1633,31 +1634,23 @@ static fd2_state_t state_menu_update(fd2_game_t* game) {
         if (data->blink_count >= 8) {
             /* Dispatch based on selection */
             switch (data->menu_selection) {
-                case 0:  /* 1 Player - Play cutscenes then battle */
+                case 0:  /* 1 Player - Go directly to first map */
                     game->game_mode = 0;
-                    /* Set first level map index to 97 (battlefield map from IDA analysis) */
-                    game->map_index = 97;
-                    /* Set up cutscene sequence from IDA analysis (sub_3231B):
-                     * Scene 97 = battlefield map (story level 1)
-                     * First play scene 97 as the story/battle intro
-                     */
-                    game->cutscene_sequence[0] = 97;
-                    game->cutscene_count = 1;
-                    printf("[MENU] Starting 1P story mode - Map 97, Scene 97\n");
-                    return FD2_STATE_CUTSCENE;
+                    /* Load first story map (map 0) */
+                    game->map_index = 0;
+                    printf("[MENU] Starting 1P story mode - Map 0\n");
+                    return FD2_STATE_BATTLE;
                 case 1:  /* VS Mode */
                     game->game_mode = 1;
-                    game->map_index = 97;  /* Default map for VS */
+                    game->map_index = 0;  /* Default map for VS */
                     return FD2_STATE_BATTLE;
                 case 2:  /* Demo */
                     game->game_mode = 2;
                     return FD2_STATE_DEMO;
                 default:
                     game->game_mode = 0;
-                    game->map_index = 97;
-                    game->cutscene_sequence[0] = 97;
-                    game->cutscene_count = 1;
-                    return FD2_STATE_CUTSCENE;
+                    game->map_index = 0;
+                    return FD2_STATE_BATTLE;
             }
         }
 
@@ -1805,75 +1798,104 @@ static void state_cutscene_exit(fd2_game_t* game) {
 }
 
 /* ---- BATTLE State ----
- * In-game fight. Based on sub_10010.
- * Placeholder: just shows a black screen.
+ * In-game fight. Uses fd2_map_loader to load and render maps from DAT files.
  */
+
+typedef struct {
+    fd2_map_t map;
+    int scroll_x;
+    int scroll_y;
+} state_battle_data_t;
+
 static void state_battle_enter(fd2_game_t* game) {
+    state_battle_data_t* data = (state_battle_data_t*)calloc(1, sizeof(state_battle_data_t));
+    game->state_data = data;
+    data->scroll_x = 0;
+    data->scroll_y = 0;
+
     /* Load battle resources */
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDSHAP);
-    fd2_resources_load_dat(&game->resources, FD2_DAT_FIGANI);
-    fd2_resources_load_dat(&game->resources, FD2_DAT_DATO);
+    fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
 
-    /* Draw battlefield map background based on map_index */
-    printf("state_battle: entered (map=%d)\n", game->map_index);
-    
-    if (game->map_index == 97) {
-        /* Draw battlefield map for scene 97 */
-        for (int y = 0; y < FD2_SCREEN_H; y++) {
-            for (int x = 0; x < FD2_SCREEN_W; x++) {
-                /* Sky gradient (top portion) */
-                if (y < 100) {
-                    int sky_color = 60 + (y * 2);
-                    game->render.screen[y * FD2_SCREEN_W + x] = (u8)sky_color;
-                }
-                /* Ground terrain (bottom portion) */
-                else {
-                    int ground_y = y - 100;
-                    int ground_color = 20 + (ground_y / 4);
-                    /* Add horizontal terrain features */
-                    if ((x / 16) % 3 == 0) {
-                        ground_color += 10;
-                    }
-                    game->render.screen[y * FD2_SCREEN_W + x] = (u8)ground_color;
-                }
-            }
+    /* Load map using new map loader */
+    int map_id = game->map_index;
+    printf("state_battle: loading map %d from DAT files\n", map_id);
+
+    const char* fdfield_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDFIELD);
+    const char* fdshap_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDSHAP);
+    const char* fdother_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDOTHER);
+
+    if (fd2_map_load_from_dat(&data->map, map_id, fdfield_path, fdshap_path, fdother_path) == 0) {
+        printf("state_battle: map %d loaded successfully (%dx%d tiles)\n",
+               map_id, data->map.width, data->map.height);
+
+        /* Apply palette */
+        if (data->map.palette_loaded) {
+            fd2_render_set_palette_6bit(&game->render, data->map.palette);
+            printf("state_battle: palette applied\n");
         }
-        
-        /* Draw grid lines for tactical map feel */
-        for (int x = 0; x < FD2_SCREEN_W; x += 32) {
-            for (int y = 100; y < FD2_SCREEN_H; y++) {
-                game->render.screen[y * FD2_SCREEN_W + x] = 80;
-            }
-        }
-        for (int y = 100; y < FD2_SCREEN_H; y += 32) {
-            for (int x = 0; x < FD2_SCREEN_W; x++) {
-                game->render.screen[y * FD2_SCREEN_W + x] = 80;
-            }
-        }
-        
-        /* Draw horizon line */
-        for (int x = 0; x < FD2_SCREEN_W; x++) {
-            game->render.screen[99 * FD2_SCREEN_W + x] = 120;
-            game->render.screen[100 * FD2_SCREEN_W + x] = 120;
-        }
+
+        /* Render map centered on screen */
+        fd2_map_render_centered(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+        fd2_render_present(&game->render);
+
+        printf("state_battle: map rendered\n");
     } else {
-        /* Default: black screen */
+        fprintf(stderr, "state_battle: failed to load map %d, showing black screen\n", map_id);
         fd2_render_fill_screen(&game->render, 0);
+        fd2_render_present(&game->render);
     }
-    
-    fd2_render_present(&game->render);
 }
 
 static fd2_state_t state_battle_update(fd2_game_t* game) {
+    state_battle_data_t* data = (state_battle_data_t*)game->state_data;
+    if (!data) return FD2_STATE_MENU;
+
     if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
         return FD2_STATE_MENU;
     }
+
+    /* Arrow keys scroll the map */
+    int scroll_speed = 8;
+    if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
+        data->scroll_y -= scroll_speed;
+        if (data->scroll_y < 0) data->scroll_y = 0;
+    }
+    if (fd2_action_pressed(&game->input, FD2_ACTION_DOWN)) {
+        data->scroll_y += scroll_speed;
+        int max_y = data->map.map_image_height - FD2_SCREEN_H;
+        if (max_y < 0) max_y = 0;
+        if (data->scroll_y > max_y) data->scroll_y = max_y;
+    }
+    if (fd2_action_pressed(&game->input, FD2_ACTION_LEFT)) {
+        data->scroll_x -= scroll_speed;
+        if (data->scroll_x < 0) data->scroll_x = 0;
+    }
+    if (fd2_action_pressed(&game->input, FD2_ACTION_RIGHT)) {
+        data->scroll_x += scroll_speed;
+        int max_x = data->map.map_image_width - FD2_SCREEN_W;
+        if (max_x < 0) max_x = 0;
+        if (data->scroll_x > max_x) data->scroll_x = max_x;
+    }
+
+    /* Render map with current scroll position */
+    if (data->map.loaded && data->map.map_rendered) {
+        fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
+                       data->scroll_x, data->scroll_y);
+        fd2_render_present(&game->render);
+    }
+
     return FD2_STATE_BATTLE;
 }
 
 static void state_battle_exit(fd2_game_t* game) {
-    (void)game;
+    state_battle_data_t* data = (state_battle_data_t*)game->state_data;
+    if (data) {
+        fd2_map_free(&data->map);
+        free(data);
+    }
+    game->state_data = NULL;
 }
 
 /* ---- VICTORY State ----
