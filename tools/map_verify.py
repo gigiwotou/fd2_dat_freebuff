@@ -407,34 +407,19 @@ def generate_map(map_id: int, fdfield_data: bytes, fdshap_data: bytes,
             tile_h = struct.unpack_from("<H", tile_set_data, 2)[0]
             print(f"Tile dimensions: {tile_w}x{tile_h}")
             
-            # Tile offset table:
-            # - Byte 4: first tile data offset
-            # - Byte 6+: offset entries every 4 bytes (offset + 2 zero bytes)
-            # Stop when we hit a non-zero "zero" field or offset exceeds resource size
+            # Tile offset table (IDA analysis: sub_1ACF3 uses *(DWORD*)(FDSHAP_DAT + 4*tile_index + 6)):
+            # - Byte 0-3: tile width (2), tile height (2)
+            # - Byte 4: unknown 2-byte value
+            # - Byte 6+: DWORD offset entries (4 bytes each)
             tile_offsets = []
             
-            # First offset at byte 4
-            first_offset = struct.unpack_from("<H", tile_set_data, 4)[0]
-            if first_offset > 0 and first_offset < len(tile_set_data):
-                tile_offsets.append(first_offset)
-            
-            # Additional offsets at byte 6, 10, 14, ...
-            # Each entry is 4 bytes: [offset(2), zero(2)]
             pos = 6
-            consecutive_invalid = 0
             while pos + 4 <= len(tile_set_data):
-                offset_val = struct.unpack_from("<H", tile_set_data, pos)[0]
-                zero_val = struct.unpack_from("<H", tile_set_data, pos + 2)[0]
-                
-                if zero_val == 0 and offset_val > 0 and offset_val < len(tile_set_data):
+                offset_val = struct.unpack_from("<I", tile_set_data, pos)[0]
+                if 0 < offset_val < len(tile_set_data):
                     tile_offsets.append(offset_val)
-                    consecutive_invalid = 0
                 else:
-                    consecutive_invalid += 1
-                    # Stop after 2 consecutive invalid entries
-                    if consecutive_invalid >= 2:
-                        break
-                
+                    break
                 pos += 4
             
             print(f"Found {len(tile_offsets)} tiles in tile set")
