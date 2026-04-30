@@ -2022,14 +2022,54 @@ static void state_battle_enter(fd2_game_t* game) {
         data->camera_y = data->character_tile_y * MAP_TILE_SIZE - FD2_SCREEN_H / 2;
         
         /* Clamp camera to map bounds */
-        int max_cam_x = data->map.map_image_width - FD2_SCREEN_W;
-        int max_cam_y = data->map.map_image_height - FD2_SCREEN_H;
-        if (max_cam_x < 0) max_cam_x = 0;
-        if (max_cam_y < 0) max_cam_y = 0;
-        if (data->camera_x < 0) data->camera_x = 0;
-        if (data->camera_y < 0) data->camera_y = 0;
-        if (data->camera_x > max_cam_x) data->camera_x = max_cam_x;
-        if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
+        /* Calculate camera position to center on map characters
+         * Find bounding box of all characters and center camera on it */
+        if (data->map.scene.loaded && data->map.scene.char_pos_count > 0) {
+            int min_x = 999, min_y = 999, max_x = 0, max_y = 0;
+            int valid_count = 0;
+            
+            for (int i = 0; i < data->map.scene.char_pos_count; i++) {
+                fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
+                if (char_pos->x == 0 && char_pos->y == 0) continue;
+                
+                if (char_pos->x < min_x) min_x = char_pos->x;
+                if (char_pos->y < min_y) min_y = char_pos->y;
+                if (char_pos->x > max_x) max_x = char_pos->x;
+                if (char_pos->y > max_y) max_y = char_pos->y;
+                valid_count++;
+            }
+            
+            if (valid_count > 0) {
+                /* Calculate center of character bounding box */
+                int center_tile_x = (min_x + max_x) / 2;
+                int center_tile_y = (min_y + max_y) / 2;
+                
+                /* Convert to pixel coordinates and center on screen */
+                data->camera_x = center_tile_x * MAP_TILE_SIZE - FD2_SCREEN_W / 2;
+                data->camera_y = center_tile_y * MAP_TILE_SIZE - FD2_SCREEN_H / 2;
+                
+                /* Clamp to map bounds */
+                int max_cam_x = data->map.map_image_width - FD2_SCREEN_W;
+                int max_cam_y = data->map.map_image_height - FD2_SCREEN_H;
+                if (max_cam_x < 0) max_cam_x = 0;
+                if (max_cam_y < 0) max_cam_y = 0;
+                if (data->camera_x < 0) data->camera_x = 0;
+                if (data->camera_y < 0) data->camera_y = 0;
+                if (data->camera_x > max_cam_x) data->camera_x = max_cam_x;
+                if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
+                
+                printf("state_battle: camera centered on %d chars\n", valid_count);
+                printf("  bounding box: (%d,%d) to (%d,%d)\n", min_x, min_y, max_x, max_y);
+                printf("  center tile: (%d,%d), camera: (%d,%d)\n", 
+                       center_tile_x, center_tile_y, data->camera_x, data->camera_y);
+            }
+        } else {
+            /* Default: no characters, center on map */
+            data->camera_x = (data->map.map_image_width - FD2_SCREEN_W) / 2;
+            data->camera_y = (data->map.map_image_height - FD2_SCREEN_H) / 2;
+            if (data->camera_x < 0) data->camera_x = 0;
+            if (data->camera_y < 0) data->camera_y = 0;
+        }
 
         /* Render map with current camera position */
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
@@ -2069,19 +2109,32 @@ static void state_battle_enter(fd2_game_t* game) {
         /* Draw all map characters from scene data */
         if (data->map.scene.loaded && data->map.scene.char_pos_count > 0) {
             printf("state_battle: drawing %d map characters\n", data->map.scene.char_pos_count);
+            printf("  camera=(%d,%d), MAP_TILE_SIZE=%d\n", data->camera_x, data->camera_y, MAP_TILE_SIZE);
+            
+            int drawn_count = 0;
+            int skipped_zero = 0;
+            int failed_icon = 0;
+            int offscreen = 0;
             
             for (int i = 0; i < data->map.scene.char_pos_count; i++) {
                 fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
                 
+                printf("  Char %d: pos=(%d,%d), portrait=%d\n", i, char_pos->x, char_pos->y, char_pos->portrait_id);
+                
                 /* Skip characters at (0,0) - likely unused slots */
-                if (char_pos->x == 0 && char_pos->y == 0) continue;
+                if (char_pos->x == 0 && char_pos->y == 0) {
+                    printf("    -> SKIP: at (0,0)\n");
+                    skipped_zero++;
+                    continue;
+                }
                 
                 /* Load character icon using portrait_id */
                 int icon_id = char_pos->portrait_id;
                 int cache_idx = fd2_icon_get(icon_id);
                 
                 if (cache_idx < 0) {
-                    printf("  Char %d: portrait %d not found in FDICON.B24\n", i, icon_id);
+                    printf("    -> FAIL: portrait %d not in FDICON.B24\n", icon_id);
+                    failed_icon++;
                     continue;
                 }
                 
@@ -2092,7 +2145,9 @@ static void state_battle_enter(fd2_game_t* game) {
                 if (!sprite_pixels) continue;
                 
                 if (fd2_icon_decode_segment(cache_idx, 0, sprite_width, sprite_height, sprite_pixels) != 0) {
+                    printf("    -> FAIL: decode segment failed\n");
                     free(sprite_pixels);
+                    failed_icon++;
                     continue;
                 }
                 
@@ -2101,6 +2156,8 @@ static void state_battle_enter(fd2_game_t* game) {
                 int screen_y = char_pos->y * MAP_TILE_SIZE - data->camera_y;
                 int draw_x = screen_x - sprite_width / 2;
                 int draw_y = screen_y - sprite_height / 2;
+                
+                printf("    -> screen=(%d,%d), draw=(%d,%d)\n", screen_x, screen_y, draw_x, draw_y);
                 
                 /* Render sprite if visible */
                 if (is_sprite_visible(draw_x, draw_y, sprite_width, sprite_height)) {
@@ -2112,12 +2169,18 @@ static void state_battle_enter(fd2_game_t* game) {
                     
                     fd2_sprite_render(&sprite_frame, game->render.screen, FD2_SCREEN_W, draw_x, draw_y);
                     
-                    printf("  Char %d: portrait=%d, tile=(%d,%d), screen=(%d,%d)\n",
-                           i, icon_id, char_pos->x, char_pos->y, screen_x, screen_y);
+                    printf("    -> DRAWN at tile(%d,%d) screen(%d,%d)\n", char_pos->x, char_pos->y, screen_x, screen_y);
+                    drawn_count++;
+                } else {
+                    printf("    -> OFFSCREEN at (%d,%d)\n", screen_x, screen_y);
+                    offscreen++;
                 }
                 
                 free(sprite_pixels);
             }
+            
+            printf("state_battle: character stats - drawn=%d, skipped(0,0)=%d, failed_icon=%d, offscreen=%d\n",
+                   drawn_count, skipped_zero, failed_icon, offscreen);
         }
 
         fd2_render_present(&game->render);
