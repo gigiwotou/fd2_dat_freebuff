@@ -1,90 +1,75 @@
-"""Deep analysis of FDICON.B24 segment data format.
-
-Segments are ~400-500 bytes, not matching simple dimensions.
-This suggests RLE compression or variable-length encoding.
-"""
+"""Analyze FDICON.B24 segment compression format."""
 
 import struct
 import sys
 
-def analyze_icon_segments(fdicon_path, icon_id):
-    data = open(fdicon_path, 'rb').read()
-    offset_table = struct.unpack('<1680I', data[6:6+6720])
+def analyze_fdicon_segments(fdicon_path):
+    with open(fdicon_path, 'rb') as f:
+        data = f.read()
     
-    base_idx = icon_id * 12
-    data_start = offset_table[base_idx]
-    data_end = offset_table[(icon_id + 1) * 12] if icon_id < 139 else len(data)
-    icon_data = data[data_start:data_end]
+    print(f"FDICON.B24 file size: {len(data)} bytes")
     
-    print(f"\n{'='*60}")
-    print(f"Icon {icon_id}: data_start={data_start}, data_end={data_end}, size={len(icon_data)}")
-    print(f"{'='*60}")
+    # Read offset table (starting at byte 6)
+    offsets = []
+    for i in range(140 * 12 + 4):
+        offset = struct.unpack('<I', data[6 + i*4:6 + (i+1)*4])[0]
+        offsets.append(offset)
     
-    for seg in range(12):
-        seg_start = offset_table[base_idx + seg] - data_start
-        seg_end = (offset_table[base_idx + seg + 1] - data_start) if seg < 11 else len(icon_data)
-        seg_size = seg_end - seg_start
+    print(f"Total offsets in table: {len(offsets)}")
+    print(f"First few offsets: {offsets[:15]}")
+    
+    # Analyze first 5 icons
+    for icon_id in range(min(10, 140)):
+        print(f"\n{'='*60}")
+        print(f"Icon {icon_id}")
+        print(f"{'='*60}")
         
-        if seg_start >= len(icon_data) or seg_size <= 0:
-            print(f"  Segment {seg}: SKIP (start={seg_start}, size={seg_size})")
-            continue
+        # Get 13 offsets for this icon
+        icon_offsets = offsets[icon_id * 12 : icon_id * 12 + 13]
+        data_start = icon_offsets[0]
+        data_end = icon_offsets[12]
+        data_size = data_end - data_start
         
-        seg_data = icon_data[seg_start:seg_start + seg_size]
+        print(f"  Data range: {data_start} - {data_end}")
+        print(f"  Data size: {data_size} bytes")
         
-        # Analyze data patterns
-        # Check if it looks like RLE
-        rle_like = False
-        for i in range(0, min(len(seg_data)-1, 100), 2):
-            if seg_data[i] == seg_data[i+1]:
-                rle_like = True
-                break
+        # Extract icon data
+        icon_data = data[data_start:data_end]
         
-        # Check entropy (unique byte count)
-        unique_bytes = len(set(seg_data))
-        
-        # Look for 0x00 or 0xFF patterns
-        zero_count = seg_data.count(0)
-        ff_count = seg_data.count(0xFF)
-        
-        # First 20 bytes hex dump
-        hex_sample = ' '.join(f'{b:02x}' for b in seg_data[:20])
-        
-        # Try to detect if it's run-length encoded
-        # RLE usually has pairs: (count, value) or (value, count)
-        
-        print(f"  Segment {seg}: size={seg_size:4d}, unique={unique_bytes:3d}, zeros={zero_count:4d}, 0xFF={ff_count:4d}, rle_like={rle_like}")
-        print(f"    First 20 bytes: {hex_sample}")
-        
-        # Try to decompress as simple RLE (count, value)
-        if rle_like:
-            try_rle_count = 0
-            rle_pixels = []
-            i = 0
-            while i < len(seg_data) - 1:
-                if i + 1 < len(seg_data):
-                    count = seg_data[i]
-                    value = seg_data[i+1]
-                    if count <= 50:  # Reasonable RLE count
-                        rle_pixels.extend([value] * count)
-                        try_rle_count += 1
-                    i += 2
-                else:
-                    break
+        # Analyze each segment
+        for seg_idx in range(12):
+            seg_start = icon_offsets[seg_idx] - data_start
+            seg_end = icon_offsets[seg_idx + 1] - data_start
+            seg_size = seg_end - seg_start
             
-            # Check if RLE decoded to reasonable image size
-            if len(rle_pixels) > 0:
-                sqrt_size = int(len(rle_pixels) ** 0.5)
-                if sqrt_size * sqrt_size == len(rle_pixels):
-                    print(f"    RLE decode: {len(rle_pixels)} pixels -> {sqrt_size}x{sqrt_size}")
-                elif len(rle_pixels) in [256, 576, 1024, 1536, 2304, 3072, 4096]:
-                    print(f"    RLE decode: {len(rle_pixels)} pixels (common size)")
+            if seg_size <= 0 or seg_start >= len(icon_data):
+                print(f"  Segment {seg_idx:2d}: empty/invalid")
+                continue
+            
+            seg_data = icon_data[seg_start:seg_end]
+            
+            # Print first 30 bytes
+            hex_str = ' '.join(f'{b:02x}' for b in seg_data[:30])
+            print(f"  Segment {seg_idx:2d}: size={seg_size:4d} bytes, first bytes: {hex_str}")
+            
+            # Analyze compression pattern
+            if len(seg_data) >= 3:
+                # Check for 3-byte pattern: CMD COUNT VALUE
+                # Or other patterns
+                byte_freq = {}
+                for b in seg_data:
+                    byte_freq[b] = byte_freq.get(b, 0) + 1
+                
+                # Most frequent bytes
+                sorted_bytes = sorted(byte_freq.items(), key=lambda x: x[1], reverse=True)
+                top_bytes = sorted_bytes[:5]
+                print(f"    Top 5 bytes: {', '.join(f'0x{b:02x}({c}x)' for b, c in top_bytes)}")
+                
+                # Check if it follows RLE pattern (bit7: copy vs run)
+                high_bit_count = sum(1 for b in seg_data if b & 0x80)
+                low_bit_count = len(seg_data) - high_bit_count
+                print(f"    Bit7 distribution: high={high_bit_count}, low={low_bit_count}")
 
 if __name__ == '__main__':
     fdicon_path = 'd:\\testworkspace\\fd2_dat_freebuff\\bin\\FDICON.B24'
-    
-    # Analyze first 10 icons in detail
-    for i in range(10):
-        analyze_icon_segments(fdicon_path, i)
-    
-    # Also check a larger icon
-    analyze_icon_segments(fdicon_path, 39)  # This had 24-byte segments
+    analyze_fdicon_segments(fdicon_path)

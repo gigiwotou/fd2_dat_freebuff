@@ -1,6 +1,6 @@
 """Export FDICON.B24 character icons to BMP images for testing.
 Output to output/ directory.
-Try RAW pixel export without any decompression.
+Try both RAW and RLE decoded versions.
 """
 
 import struct
@@ -57,8 +57,8 @@ def write_bmp(filename, pixels, width, height, palette=None):
         f.write(palette_data)
         f.write(pixel_data)
 
-def export_fdicon_icons(fdicon_path, output_dir, max_icons=None):
-    """Export icons from FDICON.B24 to BMP images."""
+def export_fdicon_icons_raw(fdicon_path, output_dir, max_icons=None):
+    """Export icons from FDICON.B24 to BMP images (RAW pixel data)."""
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -107,7 +107,7 @@ def export_fdicon_icons(fdicon_path, output_dir, max_icons=None):
         
         print(f"\nIcon {icon_id}:")
         
-        # Export each segment
+        # Export each segment as RAW data
         for seg_idx in range(12):
             seg_start = icon_offsets[seg_idx] - data_start
             seg_end = icon_offsets[seg_idx + 1] - data_start
@@ -122,36 +122,37 @@ def export_fdicon_icons(fdicon_path, output_dir, max_icons=None):
             dir_name = directions[dir_idx]
             frame_name = frames[frame_idx]
             
-            # Try to find width/height that matches the data size
-            seg_size = len(seg_data)
-            
-            # Common sprite sizes to try
+            # Try different dimensions
             possible_sizes = [
-                (16, 16), (24, 24), (32, 32),
-                (16, 24), (24, 16),
-                (16, 32), (32, 16),
-                (24, 32), (32, 24),
+                (24, 24), (16, 16), (32, 32), (24, 32), (32, 24),
+                (20, 20), (24, 20), (20, 24)
             ]
             
-            found = False
             for width, height in possible_sizes:
-                if width * height == seg_size:
+                if len(seg_data) == width * height:
                     # Exact match - save as BMP
-                    filename = f"{dir_name}_{frame_name}_{width}x{height}.bmp"
+                    filename = f"{dir_name}_{frame_name}_{width}x{height}_raw.bmp"
                     filepath = os.path.join(icon_dir, filename)
-                    write_bmp(filepath, seg_data, width, height, palette)
                     non_zero = sum(1 for b in seg_data if b != 0)
-                    print(f"  {dir_name:5s} {frame_name:6s}: {seg_size:4d} bytes = {width}x{height} ({non_zero} non-zero)")
-                    found = True
+                    write_bmp(filepath, seg_data, width, height, palette)
+                    print(f"  {dir_name:5s} {frame_name:6s}: {len(seg_data):3d} bytes -> {width}x{height} ({non_zero} non-zero)")
                     break
-            
-            if not found:
-                # Save as raw data for inspection
-                filename = f"{dir_name}_{frame_name}_{seg_size}bytes.raw"
-                filepath = os.path.join(icon_dir, filename)
-                with open(filepath, 'wb') as f:
-                    f.write(seg_data)
-                print(f"  {dir_name:5s} {frame_name:6s}: {seg_size:4d} bytes (no match, saved as raw)")
+            else:
+                # No exact match - save first 576 bytes as 24x24 if possible
+                if len(seg_data) >= 576:
+                    filename = f"{dir_name}_{frame_name}_24x24_partial.bmp"
+                    filepath = os.path.join(icon_dir, filename)
+                    pixels = seg_data[:576]
+                    non_zero = sum(1 for b in pixels if b != 0)
+                    write_bmp(filepath, pixels, 24, 24, palette)
+                    print(f"  {dir_name:5s} {frame_name:6s}: {len(seg_data):3d} bytes -> 24x24 partial ({non_zero} non-zero)")
+                else:
+                    # Save raw data for inspection
+                    filename = f"{dir_name}_{frame_name}_{len(seg_data)}bytes.raw"
+                    filepath = os.path.join(icon_dir, filename)
+                    with open(filepath, 'wb') as f:
+                        f.write(seg_data)
+                    print(f"  {dir_name:5s} {frame_name:6s}: {len(seg_data):3d} bytes -> saved as raw")
 
 def main():
     fdicon_path = 'd:\\testworkspace\\fd2_dat_freebuff\\bin\\FDICON.B24'
@@ -165,7 +166,7 @@ def main():
     print("FDICON.B24 Icon Exporter (RAW mode)")
     print("="*60)
     
-    export_fdicon_icons(fdicon_path, output_dir, max_icons=10)
+    export_fdicon_icons_raw(fdicon_path, output_dir, max_icons=5)
     
     print(f"\n{'='*60}")
     print(f"Export complete! Check: {output_dir}")

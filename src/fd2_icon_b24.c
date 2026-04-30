@@ -288,7 +288,111 @@ int fd2_icon_get_cached_id(int cache_index) {
     return g_cached_ids[cache_index];
 }
 
-/*
+/*/**
+ * Decode an icon segment into a sprite frame
+ * 
+ * Based on IDA sub_4E98D decompilation.
+ * 
+ * RLE compression format:
+ * - Each command byte encodes operation type via bits 7 and 6:
+ *   - 0xC0+ (11xxxxxx): SKIP pixels (transparent)
+ *   - 0x80-0xBF (10xxxxxx): COPY raw bytes from source
+ *   - 0x40-0x7F (01xxxxxx): FILL with next byte
+ *   - 0x00-0x3F (00xxxxxx): FILL with next byte
+ * - Count = (value & 0x3F) + 1
+ */
+int fd2_icon_decode_segment(int cache_index, int segment, int width, int height, unsigned char* pixels) {
+    if (cache_index < 0 || cache_index >= g_cached_count) {
+        fprintf(stderr, "fd2_icon_decode_segment: invalid cache_index %d\n", cache_index);
+        return -1;
+    }
+
+    if (segment < 0 || segment >= 12) {
+        fprintf(stderr, "fd2_icon_decode_segment: invalid segment %d\n", segment);
+        return -1;
+    }
+
+    if (!pixels || width <= 0 || height <= 0) {
+        return -1;
+    }
+
+    unsigned char* seg_data = fd2_icon_get_segment(cache_index, segment);
+    if (!seg_data) {
+        return -1;
+    }
+
+    /* Clear output buffer (0 = transparent) */
+    memset(pixels, 0, width * height);
+
+    /* 
+     * Decode RLE compressed icon segment using IDA sub_4E98D algorithm.
+     */
+    int src_ptr = 0;
+    int seg_data_len = 2000; /* Approximate segment size limit */
+
+    for (int y = 0; y < height; y++) {
+        int width_remaining = width;
+        int dst_ptr = y * width;
+        
+        while (width_remaining > 0 && src_ptr < seg_data_len) {
+            unsigned char value = seg_data[src_ptr++];
+            
+            /* Extract bits 7 and 6 for command type */
+            int bit7 = (value >> 7) & 1;
+            int bit6 = (value >> 6) & 1;
+            int count = (value & 0x3F) + 1;
+            
+            if (count > width_remaining) {
+                count = width_remaining;
+            }
+            
+            if (bit7 && bit6) {
+                /* 0xC0+: SKIP pixels (transparent) */
+                dst_ptr += count;
+                width_remaining -= count;
+            } else if (bit7 && !bit6) {
+                /* 0x80-0xBF: COPY raw bytes from source */
+                if (src_ptr + count > seg_data_len) {
+                    break;
+                }
+                for (int i = 0; i < count; i++) {
+                    pixels[dst_ptr++] = seg_data[src_ptr++];
+                }
+                width_remaining -= count;
+            } else if (!bit7 && bit6) {
+                /* 0x40-0x7F: FILL with next byte */
+                if (src_ptr >= seg_data_len) {
+                    break;
+                }
+                unsigned char fill_value = seg_data[src_ptr++];
+                
+                for (int i = 0; i < count; i++) {
+                    if (dst_ptr < width * height) {
+                        pixels[dst_ptr++] = fill_value;
+                    }
+                }
+                width_remaining -= count;
+            } else {
+                /* 0x00-0x3F: FILL with next byte */
+                if (src_ptr >= seg_data_len) {
+                    break;
+                }
+                unsigned char fill_value = seg_data[src_ptr++];
+                
+                for (int i = 0; i < count; i++) {
+                    if (dst_ptr < width * height) {
+                        pixels[dst_ptr++] = fill_value;
+                    }
+                }
+                width_remaining -= count;
+            }
+        }
+    }
+
+    return 0;
+}
+
+/**
  * Cleanup and free all resources
  */
 void fd2_icon_shutdown(void) {

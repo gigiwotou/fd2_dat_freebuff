@@ -92,6 +92,20 @@ int fd2_icon_get_count(void);
 int fd2_icon_get_cached_id(int cache_index);
 
 /**
+ * Decode an icon segment into a sprite frame
+ * 
+ * Decodes the RLE-compressed segment data into pixel buffer.
+ * 
+ * @param cache_index Index returned by fd2_icon_get
+ * @param segment Segment index (0-11)
+ * @param width Output width (24)
+ * @param height Output height (24)
+ * @param pixels Output pixel buffer (caller must allocate width*height bytes)
+ * @return 0 on success, -1 on error
+ */
+int fd2_icon_decode_segment(int cache_index, int segment, int width, int height, unsigned char* pixels);
+
+/**
  * Cleanup and free all resources
  * 
  * Closes the file, frees buffers, and resets state.

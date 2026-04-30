@@ -8,6 +8,8 @@
 #include "fd2_resources.h"
 #include "fd2_afm.h"
 #include "fd2_scene.h"
+#include "fd2_sprite.h"
+#include "fd2_icon_b24.h"
 
 #ifdef __cplusplus
 extern "C" {

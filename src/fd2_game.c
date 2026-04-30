@@ -1805,6 +1805,17 @@ typedef struct {
     fd2_map_t map;
     int scroll_x;
     int scroll_y;
+
+    /* Icon system (FDICON.B24 for map characters) */
+    int character_icon_id;        /* Icon ID for character on map */
+    int character_icon_cache_idx; /* Cache index from fd2_icon_get */
+    int character_segment;        /* Current segment (0-11, 4 directions x 3 frames) */
+    int character_direction;      /* 0=front, 1=left, 2=back, 3=right */
+    int character_frame;          /* 0-2 animation frame */
+    fd2_sprite_frame_t character_icon_frame; /* Decoded icon frame */
+    bool character_icon_loaded;
+    int character_x;  /* Character position on map */
+    int character_y;
 } state_battle_data_t;
 
 static void state_battle_enter(fd2_game_t* game) {
@@ -1812,6 +1823,15 @@ static void state_battle_enter(fd2_game_t* game) {
     game->state_data = data;
     data->scroll_x = 0;
     data->scroll_y = 0;
+    data->character_icon_loaded = false;
+    data->character_x = 160;  /* Center of screen */
+    data->character_y = 100;
+    
+    /* Default character icon ID (can be changed based on selected_char) */
+    data->character_icon_id = 0;  /* First icon in FDICON.B24 */
+    data->character_segment = 0;  /* Front, frame 0 */
+    data->character_direction = 0;
+    data->character_frame = 0;
 
     /* Load battle resources */
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
@@ -1836,8 +1856,52 @@ static void state_battle_enter(fd2_game_t* game) {
             printf("state_battle: palette applied\n");
         }
 
+        /* Initialize FDICON.B24 and load character icon */
+        const char* fdicon_path = fd2_game_data_path(game, "FDICON.B24");
+        if (fdicon_path && fd2_icon_init(fdicon_path) == 0) {
+            printf("state_battle: FDICON.B24 initialized (%d icons)\n", fd2_icon_get_count());
+
+            /* Load character icon */
+            data->character_icon_cache_idx = fd2_icon_get(data->character_icon_id);
+            if (data->character_icon_cache_idx >= 0) {
+                printf("state_battle: character icon %d loaded (cache index %d)\n",
+                       data->character_icon_id, data->character_icon_cache_idx);
+
+                /* Decode segment 0 (front, frame 0) into sprite frame */
+                int icon_width = 24;
+                int icon_height = 24;
+                data->character_icon_frame.pixels = (u8*)calloc(1, icon_width * icon_height);
+                if (data->character_icon_frame.pixels) {
+                    if (fd2_icon_decode_segment(data->character_icon_cache_idx,
+                                               data->character_segment,
+                                               icon_width, icon_height,
+                                               data->character_icon_frame.pixels) == 0) {
+                        data->character_icon_frame.width = icon_width;
+                        data->character_icon_frame.height = icon_height;
+                        data->character_icon_frame.pixel_data_size = icon_width * icon_height;
+                        data->character_icon_loaded = true;
+                        printf("state_battle: character icon decoded (%dx%d)\n", icon_width, icon_height);
+                    } else {
+                        free(data->character_icon_frame.pixels);
+                        data->character_icon_frame.pixels = NULL;
+                    }
+                }
+            }
+        } else {
+            printf("state_battle: FDICON.B24 initialization failed\n");
+        }
+
         /* Render map centered on screen */
         fd2_map_render_centered(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+
+        /* Draw character icon if loaded */
+        if (data->character_icon_loaded && data->character_icon_frame.pixels) {
+            fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
+                              data->character_x - data->character_icon_frame.width / 2,
+                              data->character_y - data->character_icon_frame.height / 2);
+            printf("state_battle: character icon drawn at (%d, %d)\n", data->character_x, data->character_y);
+        }
+
         fd2_render_present(&game->render);
 
         printf("state_battle: map rendered\n");
@@ -1883,6 +1947,14 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
     if (data->map.loaded && data->map.map_rendered) {
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
                        data->scroll_x, data->scroll_y);
+
+        /* Draw character icon if loaded */
+        if (data->character_icon_loaded && data->character_icon_frame.pixels) {
+            fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
+                              data->character_x - data->character_icon_frame.width / 2,
+                              data->character_y - data->character_icon_frame.height / 2);
+        }
+
         fd2_render_present(&game->render);
     }
 
