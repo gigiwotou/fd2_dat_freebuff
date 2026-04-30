@@ -686,13 +686,9 @@ static fd2_state_t state_intro_update(fd2_game_t* game) {
     state_intro_data_t* data = (state_intro_data_t*)game->state_data;
     if (!data) return FD2_STATE_QUIT;
 
-    /* ESC always quits */
-    if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
-        return FD2_STATE_QUIT;
-    }
-
-    /* Any other key skips remaining intro phases (jumps to menu) */
-    if (fd2_input_any_pressed(&game->input) && data->phase < 5) {
+    /* ESC or any key skips intro to menu */
+    if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE) ||
+        fd2_input_any_pressed(&game->input)) {
         if (data->ani_data) { free(data->ani_data); data->ani_data = NULL; }
         if (data->afm) { free(data->afm); data->afm = NULL; }
         if (data->scroll_buf) { free(data->scroll_buf); data->scroll_buf = NULL; }
@@ -1610,9 +1606,9 @@ static fd2_state_t state_menu_update(fd2_game_t* game) {
     state_menu_data_t* data = (state_menu_data_t*)game->state_data;
     if (!data) return FD2_STATE_QUIT;
 
-    /* ESC returns to intro (or quits) */
+    /* ESC returns to intro */
     if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
-        return FD2_STATE_QUIT;
+        return FD2_STATE_INTRO;
     }
 
     /* If we're in the blink-after-selection state */
@@ -2151,6 +2147,18 @@ static void state_battle_enter(fd2_game_t* game) {
                     continue;
                 }
                 
+                /* DEBUG: Count non-zero pixels and sample first 10 pixels */
+                int non_zero_count = 0;
+                int first_nonzero = -1;
+                for (int p = 0; p < sprite_width * sprite_height; p++) {
+                    if (sprite_pixels[p] != 0) {
+                        non_zero_count++;
+                        if (first_nonzero < 0) first_nonzero = p;
+                    }
+                }
+                printf("    -> Decoded pixels: %d non-zero/%d total, first@%d\n",
+                       non_zero_count, sprite_width * sprite_height, first_nonzero);
+                
                 /* Convert map tile coordinates to screen coordinates */
                 int screen_x = char_pos->x * MAP_TILE_SIZE - data->camera_x;
                 int screen_y = char_pos->y * MAP_TILE_SIZE - data->camera_y;
@@ -2169,7 +2177,8 @@ static void state_battle_enter(fd2_game_t* game) {
                     
                     fd2_sprite_render(&sprite_frame, game->render.screen, FD2_SCREEN_W, draw_x, draw_y);
                     
-                    printf("    -> DRAWN at tile(%d,%d) screen(%d,%d)\n", char_pos->x, char_pos->y, screen_x, screen_y);
+                    printf("    -> DRAWN at tile(%d,%d) screen(%d,%d) pixels=%d\n", 
+                           char_pos->x, char_pos->y, screen_x, screen_y, non_zero_count);
                     drawn_count++;
                 } else {
                     printf("    -> OFFSCREEN at (%d,%d)\n", screen_x, screen_y);

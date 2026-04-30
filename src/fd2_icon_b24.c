@@ -321,6 +321,13 @@ int fd2_icon_decode_segment(int cache_index, int segment, int width, int height,
         return -1;
     }
 
+    /* DEBUG: Print first 32 bytes of segment data */
+    printf("fd2_icon_decode: cache_idx=%d seg=%d, data[0..31]=", cache_index, segment);
+    for (int d = 0; d < 32; d++) {
+        printf("%02x ", seg_data[d]);
+    }
+    printf("\n");
+
     /* Clear output buffer (0 = transparent) */
     memset(pixels, 0, width * height);
 
@@ -388,6 +395,20 @@ int fd2_icon_decode_segment(int cache_index, int segment, int width, int height,
             }
         }
     }
+
+    /* DEBUG: Count non-zero pixels */
+    int decoded_nonzero = 0;
+    int max_pixel_val = 0;
+    int min_pixel_val = 255;
+    for (int p = 0; p < width * height; p++) {
+        if (pixels[p] != 0) {
+            decoded_nonzero++;
+            if (pixels[p] > max_pixel_val) max_pixel_val = pixels[p];
+            if (pixels[p] < min_pixel_val) min_pixel_val = pixels[p];
+        }
+    }
+    printf("fd2_icon_decode: result: %d/%d non-zero, range=[%d,%d]\n", 
+           decoded_nonzero, width * height, min_pixel_val == 255 ? 0 : min_pixel_val, max_pixel_val);
 
     return 0;
 }
