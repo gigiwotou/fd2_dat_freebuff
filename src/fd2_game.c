@@ -1830,9 +1830,13 @@ static void state_cutscene_exit(fd2_game_t* game) {
  *       screen_x = tile_x * TILE_SIZE - camera_x
  *       screen_y = tile_y * TILE_SIZE - camera_y
  *   - When camera moves, sprites stay at their map positions
+ *
+ * Note: FDSHAP.DAT tileset shows tiles are 24x24 pixels, not 128x128.
+ *   The 128 might be the "big tile" used for background rendering.
+ *   Character positions use 24-pixel grid.
  * ======================================================================== */
 
-#define MAP_TILE_SIZE 128  /* Map tile size in pixels (from IDA sub_2921A) */
+#define MAP_TILE_SIZE 24  /* Map tile size in pixels (24x24 per FDSHAP.DAT) */
 
 typedef struct {
     int tile_x;           /* Map tile X coordinate */

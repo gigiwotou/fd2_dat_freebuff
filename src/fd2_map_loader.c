@@ -585,8 +585,10 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     }
     
     /* Parse character spawn positions (IDA sub_1088D line 10a6a)
-     * v4 = char_pos_data + 6 * dword_53BE3 + 2
-     * Loop: read max_friendly characters, each 6 bytes apart
+     * IDA reads max_friendly characters starting from: 6 * total_units + 2
+     * But for complete map rendering, we need ALL characters:
+     *   - First total_units entries: enemy/NPC positions
+     *   - Next max_friendly entries: friendly character positions
      */
     int char_pos_idx = map_id * 3 + 2;
     
@@ -599,49 +601,46 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
         if (char_pos_data && char_pos_size >= 2) {
             uint16_t total_chars = char_pos_data[0] | (char_pos_data[1] << 8);
             
-            /* IDA uses total_units from control_data[2], but we stored it in max_friendly
-             * Let's recalculate using our stored values */
-            uint8_t ida_total_units = map->scene.total_units;
-            uint8_t ida_max_friendly = map->scene.max_friendly;
-            
-            /* Calculate v4 offset: 6 * total_units + 2 */
-            u32 v4_offset = 6 * ida_total_units + 2;
-            
             printf("fd2_map_load_from_dat: character position data\n");
             printf("  Total characters in file: %d\n", total_chars);
-            printf("  IDA calculation: v4_offset = 6 * %d + 2 = %d\n", 
-                   ida_total_units, v4_offset);
-            printf("  Reading %d friendly characters from offset %d\n", 
-                   ida_max_friendly, v4_offset);
+            printf("  total_units (enemies) = %d\n", map->scene.total_units);
+            printf("  max_friendly = %d\n", map->scene.max_friendly);
             
-            /* Read max_friendly characters starting from v4_offset */
+            /* Read ALL characters from file */
             map->scene.char_pos_count = 0;
             
-            for (int i = 0; i < ida_max_friendly && i < FD2_MAX_MAP_CHARS; i++) {
-                u32 offset = v4_offset + i * 6;
+            for (int i = 0; i < total_chars && i < FD2_MAX_MAP_CHARS; i++) {
+                u32 offset = 2 + i * 6;
                 
                 if (offset + 6 > char_pos_size) {
                     printf("  Warning: insufficient data for char %d\n", i);
                     break;
                 }
                 
-                /* IDA parsing:
-                 * *v3 = *v4;        // byte[0] = X
-                 * v3[1] = v4[2];    // byte[2] = Y
-                 * v3[7] = v4[3];    // byte[3] = portrait (used for icon loading)
-                 * Note: Actual data shows portrait at byte[4], but IDA uses v4[3]
-                 * This might be related to how v3 is structured
+                /* Parse character position:
+                 * byte[0] = X coordinate
+                 * byte[2] = Y coordinate
+                 * byte[4] = portrait ID
                  */
                 map->scene.char_positions[i].x = char_pos_data[offset];
                 map->scene.char_positions[i].y = char_pos_data[offset + 2];
                 map->scene.char_positions[i].portrait_id = char_pos_data[offset + 4];
                 map->scene.char_pos_count++;
                 
-                printf("  Friendly char %d: pos=(%d,%d), portrait=%d\n",
-                       i,
-                       map->scene.char_positions[i].x,
-                       map->scene.char_positions[i].y,
-                       map->scene.char_positions[i].portrait_id);
+                /* Mark character type based on position in file */
+                if (i < map->scene.total_units) {
+                    printf("  Enemy %d: pos=(%d,%d), portrait=%d\n",
+                           i,
+                           map->scene.char_positions[i].x,
+                           map->scene.char_positions[i].y,
+                           map->scene.char_positions[i].portrait_id);
+                } else {
+                    printf("  Friendly %d: pos=(%d,%d), portrait=%d\n",
+                           i - map->scene.total_units,
+                           map->scene.char_positions[i].x,
+                           map->scene.char_positions[i].y,
+                           map->scene.char_positions[i].portrait_id);
+                }
             }
             
             map->scene.loaded = true;
