@@ -401,12 +401,17 @@ int fd2_sprite_render(const fd2_sprite_frame_t* frame,
         return -1;
     }
     
-    /* Copy pixels row by row */
+    /* Copy pixels row by row, skip transparent pixels (value == 0) */
     uint8_t* dst = dest + dst_y * dest_width + dst_x;
     const uint8_t* src = frame->pixels;
     
     for (int row = 0; row < copy_height; row++) {
-        memcpy(dst, src, copy_width);
+        for (int col = 0; col < copy_width; col++) {
+            uint8_t pixel = src[col];
+            if (pixel != 0) {  /* Skip transparent pixels */
+                dst[col] = pixel;
+            }
+        }
         src += frame->width;
         dst += dest_width;
     }
