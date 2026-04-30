@@ -2062,6 +2062,60 @@ static void state_battle_enter(fd2_game_t* game) {
                    (void*)data->character_icon_frame.pixels);
         }
 
+        /* Draw all map characters from scene data */
+        if (data->map.scene.loaded && data->map.scene.char_pos_count > 0) {
+            printf("state_battle: drawing %d map characters\n", data->map.scene.char_pos_count);
+            
+            for (int i = 0; i < data->map.scene.char_pos_count; i++) {
+                fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
+                
+                /* Skip characters at (0,0) - likely unused slots */
+                if (char_pos->x == 0 && char_pos->y == 0) continue;
+                
+                /* Load character icon using portrait_id */
+                int icon_id = char_pos->portrait_id;
+                int cache_idx = fd2_icon_get(icon_id);
+                
+                if (cache_idx < 0) {
+                    printf("  Char %d: portrait %d not found in FDICON.B24\n", i, icon_id);
+                    continue;
+                }
+                
+                /* Decode segment 0 (front, frame 0) */
+                int sprite_width = 24;
+                int sprite_height = 24;
+                u8* sprite_pixels = (u8*)calloc(1, sprite_width * sprite_height);
+                if (!sprite_pixels) continue;
+                
+                if (fd2_icon_decode_segment(cache_idx, 0, sprite_width, sprite_height, sprite_pixels) != 0) {
+                    free(sprite_pixels);
+                    continue;
+                }
+                
+                /* Convert map tile coordinates to screen coordinates */
+                int screen_x = char_pos->x * MAP_TILE_SIZE - data->camera_x;
+                int screen_y = char_pos->y * MAP_TILE_SIZE - data->camera_y;
+                int draw_x = screen_x - sprite_width / 2;
+                int draw_y = screen_y - sprite_height / 2;
+                
+                /* Render sprite if visible */
+                if (is_sprite_visible(draw_x, draw_y, sprite_width, sprite_height)) {
+                    fd2_sprite_frame_t sprite_frame;
+                    sprite_frame.pixels = sprite_pixels;
+                    sprite_frame.width = sprite_width;
+                    sprite_frame.height = sprite_height;
+                    sprite_frame.pixel_data_size = sprite_width * sprite_height;
+                    
+                    fd2_sprite_render(&sprite_frame, game->render.screen, FD2_SCREEN_W, draw_x, draw_y);
+                    
+                    printf("  Char %d: portrait=%d, tile=(%d,%d), screen=(%d,%d)\n",
+                           i, icon_id, char_pos->x, char_pos->y, screen_x, screen_y);
+                }
+                
+                free(sprite_pixels);
+            }
+        }
+
         fd2_render_present(&game->render);
         printf("state_battle: map rendered with camera at (%d, %d)\n", 
                data->camera_x, data->camera_y);

@@ -174,7 +174,7 @@ int fd2_map_init(fd2_map_t* map) {
     if (!map) return -1;
 
     memset(map, 0, sizeof(*map));
-    map->tile_size = 64;
+    map->tile_size = 24;
     map->loaded = false;
     return 0;
 }
@@ -331,7 +331,7 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
 
     printf("fd2_map_load_from_dat: layout_data at offset %u, size=%u\n", fdfield_offsets[layout_idx], layout_size);
 
-    /* Load control data to get terrain_set_id */
+    /* Load control data to get terrain_set_id and map parameters (IDA sub_1088D lines 1098b-10995) */
     u32 control_size;
     const u8* control_data = get_resource(fdfield_data, fdfield_size, fdfield_offsets, fdfield_count, control_idx, &control_size);
     if (!control_data || control_size < 3) {
@@ -341,18 +341,21 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
 
     printf("fd2_map_load_from_dat: control_data at offset %u, size=%u\n", fdfield_offsets[control_idx], control_size);
 
+    /* IDA parsing:
+     * byte[0] = terrain_set_id
+     * byte[1] = max_friendly (::n6)
+     * byte[2] = total_units (dword_53BE3)
+     */
     int terrain_set_id = control_data[0];
     map->terrain_set_id = terrain_set_id;
+    map->scene.map_number = map_id;
+    map->scene.max_friendly = control_data[1];
+    map->scene.total_units = control_data[2];
 
-    printf("fd2_map_load_from_dat: map %d, control[%d] size=%u, terrain_set_id=%d (raw byte=0x%02x)\n",
-           map_id, control_idx, control_size, terrain_set_id, control_data[0]);
-    
-    /* Debug: print first 10 bytes of control data */
-    printf("fd2_map_load_from_dat: control data[0..9]: ");
-    for (int i = 0; i < 10 && i < (int)control_size; i++) {
-        printf("%02x ", control_data[i]);
-    }
-    printf("\n");
+    printf("fd2_map_load_from_dat: map %d, control[%d] size=%u, terrain_set_id=%d\n",
+           map_id, control_idx, control_size, terrain_set_id);
+    printf("  max_friendly (::n6) = %d\n", map->scene.max_friendly);
+    printf("  total_units (dword_53BE3) = %d\n", map->scene.total_units);
 
     /* Load FDSHAP.DAT tileset: terrain_set_id * 2 (tileset at even resources) */
     int tileset_idx = terrain_set_id * 2;
@@ -551,6 +554,99 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     }
 
     map->loaded = true;
+
+    /* Parse character info from control data (enemy/NPC units, 26 bytes each)
+     * Structure starts at offset 0x83 (131 bytes) in control data */
+    u32 char_info_offset = 0x83;
+    
+    if (char_info_offset + 26 <= control_size) {
+        int char_info_count = map->scene.total_units;
+        map->scene.char_info_count = (char_info_count < FD2_MAX_MAP_CHARS) ? 
+                                     char_info_count : FD2_MAX_MAP_CHARS;
+        
+        printf("fd2_map_load_from_dat: Parsing %d enemy/NPC character info units\n", map->scene.char_info_count);
+        
+        for (int i = 0; i < map->scene.char_info_count; i++) {
+            u32 offset = char_info_offset + i * 26;
+            if (offset + 26 > control_size) break;
+            
+            map->scene.char_info[i].faction = control_data[offset];
+            map->scene.char_info[i].portrait_id = control_data[offset + 1];
+            map->scene.char_info[i].race_id = control_data[offset + 2];
+            map->scene.char_info[i].job_id = control_data[offset + 3];
+            map->scene.char_info[i].level = control_data[offset + 4];
+            memcpy(map->scene.char_info[i].items, &control_data[offset + 5], 8);
+            memcpy(map->scene.char_info[i].spells, &control_data[offset + 13], 4);
+            map->scene.char_info[i].spawn_turn = control_data[offset + 17];
+            map->scene.char_info[i].drop_type = control_data[offset + 18];
+            memcpy(map->scene.char_info[i].drop_content, &control_data[offset + 19], 3);
+            memcpy(map->scene.char_info[i].reserved, &control_data[offset + 22], 4);
+        }
+    }
+    
+    /* Parse character spawn positions (IDA sub_1088D line 10a6a)
+     * v4 = char_pos_data + 6 * dword_53BE3 + 2
+     * Loop: read max_friendly characters, each 6 bytes apart
+     */
+    int char_pos_idx = map_id * 3 + 2;
+    
+    if (char_pos_idx < fdfield_count) {
+        u32 char_pos_size;
+        const u8* char_pos_data = get_resource(fdfield_data, fdfield_size,
+                                               fdfield_offsets, fdfield_count,
+                                               char_pos_idx, &char_pos_size);
+        
+        if (char_pos_data && char_pos_size >= 2) {
+            uint16_t total_chars = char_pos_data[0] | (char_pos_data[1] << 8);
+            
+            /* IDA uses total_units from control_data[2], but we stored it in max_friendly
+             * Let's recalculate using our stored values */
+            uint8_t ida_total_units = map->scene.total_units;
+            uint8_t ida_max_friendly = map->scene.max_friendly;
+            
+            /* Calculate v4 offset: 6 * total_units + 2 */
+            u32 v4_offset = 6 * ida_total_units + 2;
+            
+            printf("fd2_map_load_from_dat: character position data\n");
+            printf("  Total characters in file: %d\n", total_chars);
+            printf("  IDA calculation: v4_offset = 6 * %d + 2 = %d\n", 
+                   ida_total_units, v4_offset);
+            printf("  Reading %d friendly characters from offset %d\n", 
+                   ida_max_friendly, v4_offset);
+            
+            /* Read max_friendly characters starting from v4_offset */
+            map->scene.char_pos_count = 0;
+            
+            for (int i = 0; i < ida_max_friendly && i < FD2_MAX_MAP_CHARS; i++) {
+                u32 offset = v4_offset + i * 6;
+                
+                if (offset + 6 > char_pos_size) {
+                    printf("  Warning: insufficient data for char %d\n", i);
+                    break;
+                }
+                
+                /* IDA parsing:
+                 * *v3 = *v4;        // byte[0] = X
+                 * v3[1] = v4[2];    // byte[2] = Y
+                 * v3[7] = v4[3];    // byte[3] = portrait (used for icon loading)
+                 * Note: Actual data shows portrait at byte[4], but IDA uses v4[3]
+                 * This might be related to how v3 is structured
+                 */
+                map->scene.char_positions[i].x = char_pos_data[offset];
+                map->scene.char_positions[i].y = char_pos_data[offset + 2];
+                map->scene.char_positions[i].portrait_id = char_pos_data[offset + 4];
+                map->scene.char_pos_count++;
+                
+                printf("  Friendly char %d: pos=(%d,%d), portrait=%d\n",
+                       i,
+                       map->scene.char_positions[i].x,
+                       map->scene.char_positions[i].y,
+                       map->scene.char_positions[i].portrait_id);
+            }
+            
+            map->scene.loaded = true;
+        }
+    }
 
 cleanup:
     /* Cleanup temporary data */
