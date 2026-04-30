@@ -66,7 +66,10 @@ class XMidiParser:
         if meta_type == 0x2F:
             self.events.append((delta, 0xFF, 0x2F, 0))
         elif meta_type == 0x51 and length == 3:
-            tempo = (data_bytes[0] << 16) | (data_bytes[1] << 8) | data_bytes[2]
+            tempo_raw = (data_bytes[0] << 16) | (data_bytes[1] << 8) | data_bytes[2]
+            # FD2将tempo值乘以16存储，需要除以16得到标准MIDI tempo
+            # 从IDA sub_43270分析: *(_DWORD *)(dword_543E0 + 108) = 16 * dword_543F4;
+            tempo = max(1, tempo_raw // 16)
             self.events.append((delta, 0xFF, 0x51, tempo))
         return pos
     
