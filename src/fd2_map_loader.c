@@ -203,30 +203,89 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
         return -1;
     }
 
-    /* Parse FDFIELD.DAT entries */
+    /* Parse FDFIELD.DAT entries (format 2: no count, offsets from byte 6)
+     * Note: byte 6-9 contains a count value (406), but format 2 treats it as offset[0].
+     * This means offset[0] = 406, which points to actual layout data.
+     */
     u32* fdfield_offsets = NULL;
     int fdfield_count = 0;
-    if (parse_dat_entries(fdfield_data, fdfield_size, &fdfield_offsets, &fdfield_count) != 0) {
-        fprintf(stderr, "fd2_map_load_from_dat: failed to parse FDFIELD.DAT\n");
-        goto cleanup;
-    }
-    printf("fd2_map_load_from_dat: FDFIELD.DAT parsed %d resources\n", fdfield_count);
+    {
+        int capacity = 512;
+        fdfield_offsets = (u32*)malloc(capacity * sizeof(u32));
+        if (!fdfield_offsets) {
+            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdfield_offsets\n");
+            goto cleanup;
+        }
 
-    /* Parse FDSHAP.DAT entries */
+        u32 pos = 6;
+        while (pos + 4 <= fdfield_size && fdfield_count < capacity) {
+            u32 offset = fdfield_data[pos] | (fdfield_data[pos+1] << 8) |
+                         (fdfield_data[pos+2] << 16) | (fdfield_data[pos+3] << 24);
+            
+            if (offset > fdfield_size) {
+                break;
+            }
+
+            fdfield_offsets[fdfield_count] = offset;
+            fdfield_count++;
+            pos += 4;
+        }
+    }
+    printf("fd2_map_load_from_dat: FDFIELD.DAT parsed %d resources (format 2)\n", fdfield_count);
+
+    /* Parse FDSHAP.DAT entries (format 2: no count, offsets from byte 6) */
     u32* fdshap_offsets = NULL;
     int fdshap_count = 0;
-    if (parse_dat_entries(fdshap_data, fdshap_size, &fdshap_offsets, &fdshap_count) != 0) {
-        fprintf(stderr, "fd2_map_load_from_dat: failed to parse FDSHAP.DAT\n");
-        goto cleanup;
-    }
+    {
+        int capacity = 64;
+        fdshap_offsets = (u32*)malloc(capacity * sizeof(u32));
+        if (!fdshap_offsets) {
+            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdshap_offsets\n");
+            goto cleanup;
+        }
 
-    /* Parse FDOTHER.DAT entries */
+        u32 pos = 6;
+        while (pos + 4 <= fdshap_size && fdshap_count < capacity) {
+            u32 offset = fdshap_data[pos] | (fdshap_data[pos+1] << 8) |
+                         (fdshap_data[pos+2] << 16) | (fdshap_data[pos+3] << 24);
+            
+            if (offset > fdshap_size) {
+                break;
+            }
+
+            fdshap_offsets[fdshap_count] = offset;
+            fdshap_count++;
+            pos += 4;
+        }
+    }
+    printf("fd2_map_load_from_dat: FDSHAP.DAT parsed %d resources (format 2)\n", fdshap_count);
+
+    /* Parse FDOTHER.DAT entries (format 2: no count, offsets from byte 6) */
     u32* fdother_offsets = NULL;
     int fdother_count = 0;
-    if (parse_dat_entries(fdother_data, fdother_size, &fdother_offsets, &fdother_count) != 0) {
-        fprintf(stderr, "fd2_map_load_from_dat: failed to parse FDOTHER.DAT\n");
-        goto cleanup;
+    {
+        int capacity = 512;
+        fdother_offsets = (u32*)malloc(capacity * sizeof(u32));
+        if (!fdother_offsets) {
+            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdother_offsets\n");
+            goto cleanup;
+        }
+
+        u32 pos = 6;
+        while (pos + 4 <= fdother_size && fdother_count < capacity) {
+            u32 offset = fdother_data[pos] | (fdother_data[pos+1] << 8) |
+                         (fdother_data[pos+2] << 16) | (fdother_data[pos+3] << 24);
+            
+            if (offset > fdother_size) {
+                break;
+            }
+
+            fdother_offsets[fdother_count] = offset;
+            fdother_count++;
+            pos += 4;
+        }
     }
+    printf("fd2_map_load_from_dat: FDOTHER.DAT parsed %d resources (format 2)\n", fdother_count);
 
     /* Load global palette from FDOTHER.DAT resource 0 */
     {
@@ -242,14 +301,12 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
         }
     }
 
-    /* Load FDFIELD.DAT resources:
-     * Each map uses 3 resources in this order:
-     *   Resource 3*map_id + 0: Control data (terrain_set_id, ally_max, enemy_total)
-     *   Resource 3*map_id + 1: Unknown (maybe additional data)
-     *   Resource 3*map_id + 2: Layout data (map width, height, tile data)
+    /* Load FDFIELD.DAT resources (format 2 indices, same as Python):
+     * map_id * 3 = Layout index
+     * map_id * 3 + 1 = Control index
      */
-    int control_idx = map_id * 3;
-    int layout_idx = map_id * 3 + 2;
+    int layout_idx = map_id * 3;
+    int control_idx = map_id * 3 + 1;
 
     printf("fd2_map_load_from_dat: map %d, requesting layout[%d], control[%d]\n",
            map_id, layout_idx, control_idx);

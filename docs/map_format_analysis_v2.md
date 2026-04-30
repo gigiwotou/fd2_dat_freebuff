@@ -334,7 +334,250 @@ tile_idx = terrain_id % 192;   // ❌ 超出范围的瓦片无法渲染
 
 ---
 
-## 六、待解决问题
+## 七、C代码实现关键经验
+
+### 7.1 FDFIELD.DAT的两种解析格式
+
+**问题描述**：
+FDFIELD.DAT的字节6-9包含值406，这个值可以有两种理解：
+- **Format 1**：视为资源数量，偏移表从字节10开始
+- **Format 2**：视为offset[0]，偏移表从字节6开始（406本身就是第一个资源的偏移）
+
+**Python工具的成功经验**：
+- Python导出工具使用**Format 2**解析，全部33个地图100%成功
+- 当使用Format 2时，`offsets[0] = 406`，指向实际的地图布局数据
+- 资源索引：`layout_idx = 0`, `control_idx = 1`
+
+**C代码的错误尝试**：
+- 第一次尝试：使用Format 1（count=406，偏移从字节10开始），索引`map_id * 3`
+- 结果：地图瓦片正确但布局显示为重复网格图案
+
+**正确实现**（与Python工具一致）：
+```c
+/* FDFIELD.DAT - Format 2解析 */
+u32 pos = 6;  /* 直接从字节6开始读取偏移表 */
+while (pos + 4 <= file_size) {
+    u32 offset = read_dword(data, pos);
+    if (offset > file_size) break;
+    offsets[count++] = offset;
+    pos += 4;
+}
+
+/* 资源索引 */
+int layout_idx = map_id * 3;      /* 地图0 → 资源0 */
+int control_idx = map_id * 3 + 1; /* 地图0 → 资源1 */
+```
+
+### 7.2 三种DAT文件的格式差异
+
+| 文件 | 格式 | 字节6-9 | 偏移表起始 | 资源数量 |
+|------|------|---------|-----------|---------|
+| FDFIELD.DAT | **Format 2** | offset[0]=406 | 字节6 | 无显式计数 |
+| FDSHAP.DAT | **Format 2** | offset[0] | 字节6 | 无显式计数 |
+| FDOTHER.DAT | **Format 2** | offset[0] | 字节6 | 无显式计数 |
+
+**重要发现**：
+- 三种DAT文件都使用**Format 2**（无显式计数，偏移表从字节6开始）
+- 之前误以为FDFIELD.DAT使用Format 1，这是导致地图布局错误的根本原因
+
+### 7.3 资源路径缓冲区陷阱
+
+**错误代码**：
+```c
+/* 单个静态缓冲区 - 多次调用会覆盖 */
+const char* fd2_resources_dat_path(fd2_resources_t* res, fd2_dat_id_t id) {
+    static char path_buf[768];  /* ❌ 所有调用共享同一缓冲区 */
+    snprintf(path_buf, sizeof(path_buf), "%s/%s", res->data_dir, filenames[id]);
+    return path_buf;
+}
+
+/* 调用时的问题 */
+const char* fdfield = fd2_resources_dat_path(res, FD2_DAT_FDFIELD);
+const char* fdshap = fd2_resources_dat_path(res, FD2_DAT_FDSHAP);  /* 覆盖了fdfield的路径 */
+const char* fdother = fd2_resources_dat_path(res, FD2_DAT_FDOTHER); /* 再次覆盖 */
+/* 结果：三个指针都指向同一个路径（FDOTHER.DAT） */
+```
+
+**正确实现**：
+```c
+/* 每个DAT文件独立的线程局部缓冲区 */
+const char* fd2_resources_dat_path(const fd2_resources_t* res, fd2_dat_id_t id) {
+    static __thread char path_bufs[FD2_DAT_COUNT][512];  /* ✅ 每个DAT独立缓冲区 */
+    snprintf(path_bufs[id], sizeof(path_bufs[id]), "%s/%s",
+             res->data_dir, fd2_dat_filenames[id]);
+    return path_bufs[id];
+}
+```
+
+**调试线索**：
+- 日志显示"FDFIELD.DAT parsed 422 resources"（应该是406）
+- 422是FDOTHER.DAT的资源数量，说明路径被覆盖了
+
+### 7.4 地形ID提取的位运算
+
+**正确方式**：
+```c
+/* 10位地形ID (0-1023) */
+uint16_t terrain_id = data[0] | ((data[1] & 0x03) << 8);
+```
+
+**说明**：
+- byte[0]：低8位
+- byte[1]的低2位：高2位
+- byte[1]的高6位：其他标志（事件/宝箱等）
+
+**示例**：
+- 数据：`[0x31, 0x00]` → terrain_id = 0x31 = 49
+- 数据：`[0x71, 0x00]` → terrain_id = 0x71 = 113
+- 数据：`[0x12, 0x01]` → terrain_id = 0x112 = 274
+
+### 7.5 游戏状态机修改
+
+**跳过剧情直接显示地图**：
+```c
+/* fd2_game.c - state_menu_select() */
+static fd2_state_t state_menu_select(fd2_game_t* game) {
+    /* 原代码：返回 FD2_STATE_CUTSCENE */
+    /* 修改后：直接返回 FD2_STATE_BATTLE */
+    return FD2_STATE_BATTLE;
+}
+```
+
+**BATTLE状态实现**：
+```c
+static void state_battle_enter(fd2_game_t* game) {
+    /* 1. 加载DAT资源 */
+    fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
+    fd2_resources_load_dat(&game->resources, FD2_DAT_FDSHAP);
+    fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
+    
+    /* 2. 加载地图 */
+    fd2_map_load_from_dat(&data->map, map_id, 
+                          fdfield_path, fdshap_path, fdother_path);
+    
+    /* 3. 应用调色板 */
+    fd2_render_set_palette_6bit(&game->render, data->map.palette);
+    
+    /* 4. 渲染地图 */
+    fd2_map_render_centered(&data->map, game->render.screen, 
+                           FD2_SCREEN_W, FD2_SCREEN_H);
+    fd2_render_present(&game->render);
+}
+
+static void state_battle_update(fd2_game_t* game) {
+    /* 支持箭头键滚动 */
+    if (input_is_pressed(KEY_UP))    data->scroll_y -= 5;
+    if (input_is_pressed(KEY_DOWN))  data->scroll_y += 5;
+    if (input_is_pressed(KEY_LEFT))  data->scroll_x -= 5;
+    if (input_is_pressed(KEY_RIGHT)) data->scroll_x += 5;
+}
+
+static void state_battle_exit(fd2_game_t* game) {
+    fd2_map_free(&data->map);
+    free(game->state_data);
+}
+```
+
+### 7.6 瓦片集加载关键细节
+
+**资源索引计算**：
+```c
+/* 从control数据获取terrain_set_id */
+uint8_t terrain_set_id = control_data[0];
+
+/* FDSHAP.DAT中使用偶数资源 */
+int tileset_idx = terrain_set_id * 2;  /* 0, 2, 4, 6... */
+int palette_idx = terrain_set_id * 2;  /* 与tileset_idx相同 */
+```
+
+**瓦片集头部解析**：
+```c
+/* 直接解析，没有"LLLLLL"魔数 */
+uint16_t tile_width  = read_word(data, 0);  /* 通常24 */
+uint16_t tile_height = read_word(data, 2);  /* 通常24 */
+uint16_t tile_count  = read_word(data, 4);  /* 96-384不等 */
+/* 字节6开始：瓦片偏移表 */
+```
+
+**错误尝试**：
+- 使用`terrain_set_id * 2 + 1`（奇数资源）→ 加载失败
+- 调用`parse_dat_entries()`期望"LLLLLL"魔数 → 解析错误
+
+### 7.7 地图渲染优化
+
+**预渲染策略**：
+```c
+/* 一次性渲染整张地图到内存缓冲区 */
+void fd2_map_render_centered(fd2_map_t* map, uint8_t* screen, 
+                             int screen_w, int screen_h) {
+    /* 1. 创建全尺寸缓冲区 */
+    int map_w = map->width * TILE_SIZE;
+    int map_h = map->height * TILE_SIZE;
+    uint8_t* map_buffer = malloc(map_w * map_h);
+    
+    /* 2. 渲染所有瓦片 */
+    for (int y = 0; y < map->height; y++) {
+        for (int x = 0; x < map->width; x++) {
+            render_tile(map_buffer, x, y, tile_idx);
+        }
+    }
+    
+    /* 3. 复制到屏幕（支持滚动偏移） */
+    copy_to_screen(screen, map_buffer, scroll_x, scroll_y);
+}
+```
+
+**优势**：
+- 避免每帧重新渲染所有瓦片
+- 滚动时只需复制缓冲区的一部分到屏幕
+
+---
+
+## 八、常见错误和教训
+
+### 8.1 资源索引错误
+
+**错误**：使用 `map_id * 3 + 1` 作为Layout索引
+- **原因**：用户说"1, 4, 7, 10"，错误理解为 `map_id * 3 + 1`
+- **实际**：用户索引从1开始，转换为0开始：`map_id * 3`
+- **后果**：所有33个地图导出失败
+
+### 8.2 FDFIELD.DAT格式混淆
+
+**错误**：使用Format 1解析FDFIELD.DAT
+- **原因**：字节6-9的值406看起来像资源数量
+- **实际**：Python工具使用Format 2，将406视为offset[0]
+- **后果**：地图瓦片正确但布局显示为重复网格
+- **调试线索**：对比Python和C代码解析的terrain_id序列，发现完全不同
+
+### 8.3 DAT路径缓冲区覆盖
+
+**错误**：三个DAT文件路径指向同一个文件
+- **原因**：静态缓冲区被多次调用覆盖
+- **后果**：FDFIELD.DAT实际读取的是FDOTHER.DAT（422资源 vs 406资源）
+- **调试线索**：日志显示资源数量异常
+
+### 8.4 瓦片索引串位错误
+
+**错误**：使用 `terrain_id & 0x7F` 作为瓦片索引
+- **原因**：从旧代码复制，当时误以为地图0只有192个瓦片
+- **实际**：地图0有288个瓦片，地形ID范围8-286都在范围内
+- **后果**：调色板正确、地图数据和瓦块集对上了，但瓦片位置完全错误
+- **示例**：地形ID 274 (0x112) → 索引18 (0x12)，导致瓦片位置错乱
+
+### 8.5 关键教训总结
+
+1. **用户索引可能从1开始**，需要转换为0开始
+2. **不要盲目猜测DAT格式**，要与成功的Python工具保持一致
+3. **静态缓冲区多次调用会覆盖**，使用独立缓冲区或线程局部存储
+4. **不要盲目复制旧代码的掩码运算**，要先验证数据范围
+5. **如果调色板正确但瓦片位置不对**，很可能是索引掩码问题
+6. **直接使用 `tile_idx = terrain_id`** 是正确的方式
+7. **三种DAT文件都使用Format 2**，没有显式资源计数
+
+---
+
+## 九、待解决问题
 
 1. **调色板后432字节**：地形控制资料的完整结构
 2. **变体地形**：byte[1]=1 的地形（272-286）是否使用不同的瓦片
