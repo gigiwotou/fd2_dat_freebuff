@@ -82,6 +82,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    fd2_resources_destroy(&res);
+    // fd2_resources_destroy(&res);
     return 0;
 }

@@ -237,7 +237,7 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     u32* fdshap_offsets = NULL;
     int fdshap_count = 0;
     {
-        int capacity = 64;
+        int capacity = 128;
         fdshap_offsets = (u32*)malloc(capacity * sizeof(u32));
         if (!fdshap_offsets) {
             fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdshap_offsets\n");

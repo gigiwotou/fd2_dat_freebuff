@@ -1636,9 +1636,9 @@ static fd2_state_t state_menu_update(fd2_game_t* game) {
             switch (data->menu_selection) {
                 case 0:  /* 1 Player - Go directly to first map */
                     game->game_mode = 0;
-                    /* Load first story map (map 0) */
-                    game->map_index = 0;
-                    printf("[MENU] Starting 1P story mode - Map 0\n");
+                    /* Load first story map (map 32 - the palace/hall scene) */
+                    game->map_index = 32;
+                    printf("[MENU] Starting 1P story mode - Map 32\n");
                     return FD2_STATE_BATTLE;
                 case 1:  /* VS Mode */
                     game->game_mode = 1;
