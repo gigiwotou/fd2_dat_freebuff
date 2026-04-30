@@ -1801,35 +1801,157 @@ static void state_cutscene_exit(fd2_game_t* game) {
  * In-game fight. Uses fd2_map_loader to load and render maps from DAT files.
  */
 
+/* ========================================================================
+ * Map Sprite Coordinate System (from IDA analysis):
+ *
+ * IDA sub_2B4FB (sprite rendering):
+ *   v16 = 320 * (30 * (i / 10) + 100) + 28 * (i % 10) + 23
+ *   This means sprites are placed on a grid:
+ *   - X spacing: 28 pixels per tile
+ *   - Y spacing: 30 pixels per tile
+ *   - Base offset: (100 rows, 23 columns)
+ *
+ * IDA sub_2921A (map tile rendering):
+ *   Map tiles are 128x128 pixels (0x80)
+ *   Screen pixel (sx, sy) maps to map byte at:
+ *     map_row = (sy + camera_y) >> 7
+ *     map_col = (sx + camera_x) >> 7
+ *   This means camera offset shifts the visible region of the map.
+ *
+ * IDA sub_10010 (character data loading):
+ *   Each character record is 80 bytes, loaded from FD2SAV+4771
+ *   Offset+7: icon_id (FDICON.B24 index)
+ *   Other offsets contain map tile coordinates, direction, etc.
+ *
+ * Our coordinate system:
+ *   - Sprites store position in MAP TILE coordinates (tile_x, tile_y)
+ *   - Tile coordinates represent grid positions on the map
+ *   - During rendering, tile coordinates are converted to screen pixels:
+ *       screen_x = tile_x * TILE_SIZE - camera_x
+ *       screen_y = tile_y * TILE_SIZE - camera_y
+ *   - When camera moves, sprites stay at their map positions
+ * ======================================================================== */
+
+#define MAP_TILE_SIZE 128  /* Map tile size in pixels (from IDA sub_2921A) */
+
+typedef struct {
+    int tile_x;           /* Map tile X coordinate */
+    int tile_y;           /* Map tile Y coordinate */
+    int icon_id;          /* FDICON.B24 icon index */
+    int direction;        /* 0=front, 1=left, 2=back, 3=right */
+    int anim_frame;       /* 0-2 animation frame */
+    int cache_idx;        /* fd2_icon_get cache index */
+    int segment;          /* Current segment (0-11) */
+    u8* pixels;           /* Decoded sprite pixel data */
+    int width;
+    int height;
+    bool loaded;
+} map_sprite_t;
+
+/* Convert map tile coordinates to screen coordinates based on camera offset */
+static inline int tile_to_screen_x(int tile_x, int camera_x) {
+    return tile_x * MAP_TILE_SIZE - camera_x;
+}
+
+static inline int tile_to_screen_y(int tile_y, int camera_y) {
+    return tile_y * MAP_TILE_SIZE - camera_y;
+}
+
+/* Check if a sprite at screen position is visible on screen */
+static inline bool is_sprite_visible(int screen_x, int screen_y, int width, int height) {
+    return (screen_x + width > 0 && screen_x < FD2_SCREEN_W &&
+            screen_y + height > 0 && screen_y < FD2_SCREEN_H);
+}
+
+/* Helper: load a map sprite icon from FDICON.B24 */
+static bool load_map_sprite_icon(map_sprite_t* sprite, int icon_id) {
+    if (!sprite) return false;
+    
+    int cache_idx = fd2_icon_get(icon_id);
+    if (cache_idx < 0) {
+        printf("load_map_sprite_icon: icon %d not found\n", icon_id);
+        return false;
+    }
+    
+    sprite->icon_id = icon_id;
+    sprite->cache_idx = cache_idx;
+    sprite->direction = 0;
+    sprite->anim_frame = 0;
+    sprite->segment = 0;
+    
+    sprite->width = 24;
+    sprite->height = 24;
+    sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
+    if (!sprite->pixels) return false;
+    
+    if (fd2_icon_decode_segment(cache_idx, sprite->segment,
+                                sprite->width, sprite->height,
+                                sprite->pixels) != 0) {
+        free(sprite->pixels);
+        sprite->pixels = NULL;
+        return false;
+    }
+    
+    sprite->loaded = true;
+    return true;
+}
+
+/* Helper: update map sprite animation frame */
+static void update_map_sprite_animation(map_sprite_t* sprite) {
+    if (!sprite || !sprite->loaded) return;
+    
+    sprite->anim_frame = (sprite->anim_frame + 1) % 3;
+    sprite->segment = sprite->direction * 3 + sprite->anim_frame;
+    
+    fd2_icon_decode_segment(sprite->cache_idx, sprite->segment,
+                            sprite->width, sprite->height,
+                            sprite->pixels);
+}
+
+/* Helper: move sprite to new tile position */
+static void move_sprite_to_tile(map_sprite_t* sprite, int new_tile_x, int new_tile_y) {
+    if (sprite) {
+        sprite->tile_x = new_tile_x;
+        sprite->tile_y = new_tile_y;
+    }
+}
+
 typedef struct {
     fd2_map_t map;
-    int scroll_x;
-    int scroll_y;
+    int camera_x;         /* Camera offset in map pixels */
+    int camera_y;         /* Camera offset in map pixels */
 
+    /* Character sprite on map */
+    map_sprite_t* sprites;
+    int sprite_count;
+    int max_sprites;
+    
     /* Icon system (FDICON.B24 for map characters) */
-    int character_icon_id;        /* Icon ID for character on map */
-    int character_icon_cache_idx; /* Cache index from fd2_icon_get */
-    int character_segment;        /* Current segment (0-11, 4 directions x 3 frames) */
-    int character_direction;      /* 0=front, 1=left, 2=back, 3=right */
-    int character_frame;          /* 0-2 animation frame */
-    fd2_sprite_frame_t character_icon_frame; /* Decoded icon frame */
+    int character_icon_id;
+    int character_icon_cache_idx;
+    int character_segment;
+    int character_direction;
+    int character_frame;
+    fd2_sprite_frame_t character_icon_frame;
     bool character_icon_loaded;
-    int character_x;  /* Character position on map */
-    int character_y;
+    int character_tile_x;   /* Character tile X coordinate */
+    int character_tile_y;   /* Character tile Y coordinate */
 } state_battle_data_t;
 
 static void state_battle_enter(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)calloc(1, sizeof(state_battle_data_t));
     game->state_data = data;
-    data->scroll_x = 0;
-    data->scroll_y = 0;
+    data->camera_x = 0;
+    data->camera_y = 0;
     data->character_icon_loaded = false;
-    data->character_x = 160;  /* Center of screen */
-    data->character_y = 100;
+    data->character_tile_x = 5;
+    data->character_tile_y = 5;
+    data->sprites = NULL;
+    data->sprite_count = 0;
+    data->max_sprites = 0;
     
-    /* Default character icon ID (can be changed based on selected_char) */
-    data->character_icon_id = 0;  /* First icon in FDICON.B24 */
-    data->character_segment = 0;  /* Front, frame 0 */
+    data->character_icon_id = 0;
+    data->character_segment = 0;
     data->character_direction = 0;
     data->character_frame = 0;
 
@@ -1891,20 +2013,58 @@ static void state_battle_enter(fd2_game_t* game) {
             printf("state_battle: FDICON.B24 initialization failed\n");
         }
 
-        /* Render map centered on screen */
-        fd2_map_render_centered(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+        /* Center camera on character tile position */
+        data->camera_x = data->character_tile_x * MAP_TILE_SIZE - FD2_SCREEN_W / 2;
+        data->camera_y = data->character_tile_y * MAP_TILE_SIZE - FD2_SCREEN_H / 2;
+        
+        /* Clamp camera to map bounds */
+        int max_cam_x = data->map.map_image_width - FD2_SCREEN_W;
+        int max_cam_y = data->map.map_image_height - FD2_SCREEN_H;
+        if (max_cam_x < 0) max_cam_x = 0;
+        if (max_cam_y < 0) max_cam_y = 0;
+        if (data->camera_x < 0) data->camera_x = 0;
+        if (data->camera_y < 0) data->camera_y = 0;
+        if (data->camera_x > max_cam_x) data->camera_x = max_cam_x;
+        if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
 
-        /* Draw character icon if loaded */
+        /* Render map with current camera position */
+        fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
+                       data->camera_x, data->camera_y);
+
+        /* Draw character icon at tile position converted to screen coordinates */
         if (data->character_icon_loaded && data->character_icon_frame.pixels) {
-            fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
-                              data->character_x - data->character_icon_frame.width / 2,
-                              data->character_y - data->character_icon_frame.height / 2);
-            printf("state_battle: character icon drawn at (%d, %d)\n", data->character_x, data->character_y);
+            int screen_x = tile_to_screen_x(data->character_tile_x, data->camera_x);
+            int screen_y = tile_to_screen_y(data->character_tile_y, data->camera_y);
+            int draw_x = screen_x - data->character_icon_frame.width / 2;
+            int draw_y = screen_y - data->character_icon_frame.height / 2;
+            
+            printf("DEBUG: character tile=(%d,%d) camera=(%d,%d) screen=(%d,%d) draw=(%d,%d)\n",
+                   data->character_tile_x, data->character_tile_y,
+                   data->camera_x, data->camera_y,
+                   screen_x, screen_y, draw_x, draw_y);
+            printf("DEBUG: map_image_size=%dx%d, map_tiles=%dx%d\n",
+                   data->map.map_image_width, data->map.map_image_height,
+                   data->map.width, data->map.height);
+            
+            if (is_sprite_visible(draw_x, draw_y, 
+                                  data->character_icon_frame.width,
+                                  data->character_icon_frame.height)) {
+                fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
+                                  draw_x, draw_y);
+                printf("state_battle: character icon drawn at tile(%d,%d) screen(%d,%d)\n", 
+                       data->character_tile_x, data->character_tile_y, screen_x, screen_y);
+            } else {
+                printf("state_battle: character NOT VISIBLE at screen(%d,%d)\n", screen_x, screen_y);
+            }
+        } else {
+            printf("DEBUG: character icon NOT loaded: %s, pixels=%p\n",
+                   data->character_icon_loaded ? "yes" : "no",
+                   (void*)data->character_icon_frame.pixels);
         }
 
         fd2_render_present(&game->render);
-
-        printf("state_battle: map rendered\n");
+        printf("state_battle: map rendered with camera at (%d, %d)\n", 
+               data->camera_x, data->camera_y);
     } else {
         fprintf(stderr, "state_battle: failed to load map %d, showing black screen\n", map_id);
         fd2_render_fill_screen(&game->render, 0);
@@ -1920,39 +2080,48 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         return FD2_STATE_MENU;
     }
 
-    /* Arrow keys scroll the map */
+    /* Arrow keys scroll the map (camera movement) */
     int scroll_speed = 8;
     if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
-        data->scroll_y -= scroll_speed;
-        if (data->scroll_y < 0) data->scroll_y = 0;
+        data->camera_y -= scroll_speed;
+        if (data->camera_y < 0) data->camera_y = 0;
     }
     if (fd2_action_pressed(&game->input, FD2_ACTION_DOWN)) {
-        data->scroll_y += scroll_speed;
+        data->camera_y += scroll_speed;
         int max_y = data->map.map_image_height - FD2_SCREEN_H;
         if (max_y < 0) max_y = 0;
-        if (data->scroll_y > max_y) data->scroll_y = max_y;
+        if (data->camera_y > max_y) data->camera_y = max_y;
     }
     if (fd2_action_pressed(&game->input, FD2_ACTION_LEFT)) {
-        data->scroll_x -= scroll_speed;
-        if (data->scroll_x < 0) data->scroll_x = 0;
+        data->camera_x -= scroll_speed;
+        if (data->camera_x < 0) data->camera_x = 0;
     }
     if (fd2_action_pressed(&game->input, FD2_ACTION_RIGHT)) {
-        data->scroll_x += scroll_speed;
+        data->camera_x += scroll_speed;
         int max_x = data->map.map_image_width - FD2_SCREEN_W;
         if (max_x < 0) max_x = 0;
-        if (data->scroll_x > max_x) data->scroll_x = max_x;
+        if (data->camera_x > max_x) data->camera_x = max_x;
     }
 
-    /* Render map with current scroll position */
+    /* Render map with current camera position */
     if (data->map.loaded && data->map.map_rendered) {
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                       data->scroll_x, data->scroll_y);
+                       data->camera_x, data->camera_y);
 
-        /* Draw character icon if loaded */
+        /* Draw character icon at map position converted to screen coordinates */
         if (data->character_icon_loaded && data->character_icon_frame.pixels) {
-            fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
-                              data->character_x - data->character_icon_frame.width / 2,
-                              data->character_y - data->character_icon_frame.height / 2);
+            /* Character stays at fixed map position, camera moves */
+            int screen_x = data->character_tile_x * MAP_TILE_SIZE - data->camera_x;
+            int screen_y = data->character_tile_y * MAP_TILE_SIZE - data->camera_y;
+            int draw_x = screen_x - data->character_icon_frame.width / 2;
+            int draw_y = screen_y - data->character_icon_frame.height / 2;
+            
+            if (is_sprite_visible(draw_x, draw_y, 
+                                  data->character_icon_frame.width,
+                                  data->character_icon_frame.height)) {
+                fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
+                                  draw_x, draw_y);
+            }
         }
 
         fd2_render_present(&game->render);
