@@ -5,10 +5,11 @@ Extract audio samples from FDOTHER.DAT and convert to WAV.
 From IDA analysis and audio testing:
 1. sub_111BA loads resources using offset table (4*index + 6)
 2. The loaded buffer contains multiple samples with their own offset table
-3. Sample format: 16-bit big-endian PCM at 16000 Hz, mono
+3. Sample format: 16-bit PCM at 8000 Hz, mono (best quality verified by listening)
 4. The buffer structure (from sub_25A96 analysis):
-   - First bytes: 4-byte offset table entries (each entry = 4 bytes pointing to sample data)
-   - Sample data: 16-bit big-endian PCM encoded
+   - First 4 bytes: header/offset table entries
+   - Sample data starts after 4-byte header
+   - Sample data: 16-bit PCM (byte-swapped for WAV storage)
 
 Key call chains:
 - Resource #78 (0x4E): sub_20421 loads this, plays sample #0 (lightning)
@@ -21,9 +22,15 @@ import wave
 import io
 from pathlib import Path
 
+HEADER_SKIP = 4
+SAMPLE_RATE = 8000
 
-def pcm16_be_to_wav(pcm_data, sample_rate=16000, channels=1):
-    """Convert 16-bit big-endian PCM data to WAV format."""
+
+def pcm16_to_wav(pcm_data, sample_rate=SAMPLE_RATE, channels=1):
+    """Convert 16-bit PCM data to WAV format."""
+    if len(pcm_data) % 2 != 0:
+        pcm_data = pcm_data[:-1]
+    
     wav_buffer = io.BytesIO()
     with wave.open(wav_buffer, 'wb') as wf:
         wf.setnchannels(channels)
@@ -31,6 +38,22 @@ def pcm16_be_to_wav(pcm_data, sample_rate=16000, channels=1):
         wf.setframerate(sample_rate)
         wf.writeframes(pcm_data)
     return wav_buffer.getvalue()
+
+
+def convert_to_be16_audio(data):
+    """Convert raw data to big-endian 16-bit audio format.
+    
+    The source data is stored as little-endian 16-bit PCM.
+    We need to swap each pair of bytes to get big-endian format for WAV.
+    """
+    if len(data) % 2 != 0:
+        data = data[:-1]
+    
+    result = bytearray()
+    for i in range(0, len(data), 2):
+        result.append(data[i + 1])
+        result.append(data[i])
+    return bytes(result)
 
 
 def read_fdother_resource(fdother_data, index):
@@ -54,22 +77,17 @@ def extract_samples_from_buffer(raw_data, label=""):
     Based on IDA analysis of sub_25A96:
     - Buffer starts with offset table entries (4 bytes each)
     - Each entry points to sample data
-    - Sample data is 16-bit big-endian PCM
+    - Sample data is 16-bit PCM
     """
     samples = []
     
     if len(raw_data) < 8:
         return samples
     
-    # Try to detect offset table structure
-    # First bytes appear to be 4-byte little-endian offsets
-    
-    # Method 1: Try first 2 bytes as count, rest as offsets
     if raw_data[:2] != b'LL' and raw_data[:4] != b'LMI1':
         val1 = struct.unpack_from('<H', raw_data, 0)[0]
         val2 = struct.unpack_from('<H', raw_data, 2)[0]
         
-        # If val1 and val2 look like counts (small values), use them
         if val1 < 100 and val2 < 100 and val1 > 0:
             offset_start = 4 + val1 * 4
             if offset_start < len(raw_data):
@@ -88,7 +106,6 @@ def extract_samples_from_buffer(raw_data, label=""):
                         sample_data = raw_data[start:end]
                         samples.append(sample_data)
     
-    # Method 2: If no offset table found, treat entire data as one sample
     if not samples and len(raw_data) > 50:
         if raw_data[:4] == b'\x40\x01\xc8\x00':
             samples.append(raw_data[4:])
@@ -130,10 +147,10 @@ def extract_all_sfx(fdother_path, output_dir):
                 if len(sample_data) < 50:
                     continue
                 
-                pcm_data = sample_data
+                be16_audio = convert_to_be16_audio(sample_data)
                 
                 wav_path = res_output_dir / f"sample_{i:02d}.wav"
-                wav_path.write_bytes(pcm16_be_to_wav(pcm_data))
+                wav_path.write_bytes(pcm16_to_wav(be16_audio))
                 
                 raw_path = res_output_dir / f"sample_{i:02d}.pcm16"
                 raw_path.write_bytes(sample_data)
@@ -178,15 +195,15 @@ def extract_key_sfx(fdother_path, output_dir):
         raw_path = res_output_dir / "raw_data.bin"
         raw_path.write_bytes(raw_data)
         
-        for header_skip in [0, 4, 6, 8, 12]:
-            if len(raw_data) > header_skip + 50:
-                pcm_data = raw_data[header_skip:]
-                
-                wav_path = res_output_dir / f"decoded_skip{header_skip}.wav"
-                wav_path.write_bytes(pcm16_be_to_wav(pcm_data))
-                
-                print(f"  Decoded (skip {header_skip} bytes): "
-                      f"pcm16={len(pcm_data)}")
+        if len(raw_data) > HEADER_SKIP + 50:
+            raw_audio = raw_data[HEADER_SKIP:]
+            be16_audio = convert_to_be16_audio(raw_audio)
+            
+            wav_path = res_output_dir / f"decoded.wav"
+            wav_path.write_bytes(pcm16_to_wav(be16_audio))
+            
+            print(f"  Decoded (skip {HEADER_SKIP} bytes, {SAMPLE_RATE}Hz): "
+                  f"raw={len(raw_audio)} -> be16={len(be16_audio)}")
 
 
 if __name__ == "__main__":
@@ -198,6 +215,7 @@ if __name__ == "__main__":
     output_dir = Path("output/sfx_wav")
     
     print("FDOTHER.DAT Sound Effect Extractor")
+    print(f"Config: skip={HEADER_SKIP} bytes, sample_rate={SAMPLE_RATE}Hz")
     print("=" * 60)
     
     extract_key_sfx(fdother_path, output_dir / "key_sfx")
