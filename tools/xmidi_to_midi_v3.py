@@ -1,252 +1,354 @@
 #!/usr/bin/env python3
 """
-Convert XMIDI (EA FORM/XMID format) to standard MIDI format
-Fixed: Proper handling of running status for 1-byte and 2-byte commands
+XMIDI to Standard MIDI converter V3
+Based on IDA analysis + comparison with working MIDI files
+
+Key findings:
+1. XMIDI EVNT starts with header meta events (no delta time):
+   - FF 58 (Time Signature)
+   - FF 21 (Port Prefix) - multiple may exist
+   - FF 59 (Key Signature)
+   - (Optionally FF 51 Tempo)
+   
+2. After headers, events start with delta times (variable-length)
+
+3. For Note On (0x90), XMIDI adds a duration field after note+velocity
+   - This duration is in ticks
+   - Need to generate corresponding Note Off events
+
+4. Standard MIDI requires:
+   - Delta time for EVERY event (including headers)
+   - Separate Note Off events (0x80)
 """
 
 import struct
 from pathlib import Path
+from mido import MidiFile, MidiTrack, Message, MetaMessage
 
-def parse_variable_length(data, pos, end):
-    """Parse variable-length quantity"""
+def read_variable_length(data, pos):
+    """IDA sub_424B0: Variable-length integer decoder"""
     value = 0
-    while pos < end:
+    count = 0
+    while count < 4 and pos < len(data):
         byte = data[pos]
         pos += 1
         value = (value << 7) | (byte & 0x7F)
+        count += 1
         if not (byte & 0x80):
             break
     return value, pos
 
-def extract_xmidi_events(data):
-    """Extract MIDI events from XMIDI EVNT chunk"""
-    events = []
+def parse_xmidi_v3(evnt_data):
+    """Parse XMIDI EVNT data, return list of (abs_tick, event)"""
     pos = 0
+    end = len(evnt_data)
+    running_status = None
+    abs_tick = 0
     
-    if data[:4] != b'EVNT':
-        print(f"  Warning: No EVNT chunk found")
-        return events
+    events = []  # (abs_tick, type, data)
     
-    chunk_size = struct.unpack('>I', data[4:8])[0]
-    pos = 8
-    end = pos + chunk_size
-    
-    running_status = 0
-    
-    while pos < end:
-        # Parse delta time
-        delta, pos = parse_variable_length(data, pos, end)
-        
-        if pos >= end:
-            break
-        
-        # Parse MIDI event
-        status = data[pos]
+    # Step 1: Parse header meta events (no delta time)
+    # These will be placed at tick 0
+    while pos < end and evnt_data[pos] == 0xFF:
+        pos += 1  # Skip 0xFF
+        meta_type = evnt_data[pos]
         pos += 1
         
-        if status == 0xFF:  # Meta event
+        length, pos = read_variable_length(evnt_data, pos)
+        meta_data = evnt_data[pos:pos+length]
+        pos += length
+        
+        if meta_type == 0x58:
+            # Time signature
+            if length >= 4:
+                events.append((0, 'time_signature', {
+                    'numerator': meta_data[0],
+                    'denominator': meta_data[1],
+                    'clocks_per_click': meta_data[2],
+                    'notated_32nd_notes_per_beat': meta_data[3]
+                }))
+        elif meta_type == 0x59:
+            # Key signature
+            if length >= 2:
+                events.append((0, 'key_signature', {
+                    'key': meta_data[0],
+                    'mode': meta_data[1]
+                }))
+        elif meta_type == 0x51:
+            # Tempo
+            if length == 3:
+                tempo = (meta_data[0] << 16) | (meta_data[1] << 8) | meta_data[2]
+                events.append((0, 'tempo', {'tempo': tempo}))
+        # Skip FF 21 (port prefix) and other meta events
+    
+    # Step 2: Parse regular events with delta times
+    # After headers, first event may have no delta (delta=0) if it starts with status byte
+    if pos < end and evnt_data[pos] >= 0x80:
+        # First event after headers has delta=0
+        delta = 0
+    else:
+        delta, pos = read_variable_length(evnt_data, pos)
+    
+    while pos < end:
+        # If we didn't read delta above, read it now
+        if delta is None:
+            delta, pos = read_variable_length(evnt_data, pos)
             if pos >= end:
                 break
-            meta_type = data[pos]
+        
+        abs_tick += delta
+        delta = None  # Reset for next iteration
+        
+        # Read status byte
+        byte = evnt_data[pos]
+        
+        if byte >= 0x80:
+            status = byte
             pos += 1
-            
-            length, pos = parse_variable_length(data, pos, end)
-            
-            if meta_type == 0x2F:  # End of track
-                events.append((delta, 0xFF, 0x2F, b''))
-                break
-            
-            data_bytes = data[pos:pos+length]
-            pos += length
-            
-            # Skip XMIDI-specific meta events (0x21 port prefix, etc.)
-            if meta_type in (0x21, 0x59):
-                continue
-            
-            events.append((delta, 0xFF, meta_type, data_bytes))
-            running_status = 0  # Meta events reset running status
-            
-        elif status == 0xF0 or status == 0xF7:  # SysEx
-            length, pos = parse_variable_length(data, pos, end)
-            sys_ex_data = data[pos:pos+length]
-            pos += length
-            events.append((delta, status, 0, sys_ex_data))
-            running_status = 0
-            
-        elif status >= 0x80:  # Channel event
             running_status = status
-            command = status & 0xF0
+        else:
+            if running_status is None:
+                # No running status, skip
+                continue
+            status = running_status
+        
+        status_type = status & 0xF0
+        channel = status & 0x0F
+        
+        if status == 0xFF:
+            # Meta event in stream
+            meta_type = evnt_data[pos]
+            pos += 1
+            length, pos = read_variable_length(evnt_data, pos)
+            meta_data = evnt_data[pos:pos+length]
+            pos += length
             
-            if command in (0x80, 0x90, 0xA0, 0xB0, 0xE0):  # 2-byte commands
+            if meta_type == 0x51 and length == 3:
+                tempo = (meta_data[0] << 16) | (meta_data[1] << 8) | meta_data[2]
+                events.append((abs_tick, 'tempo', {'tempo': tempo}))
+            elif meta_type == 0x2F:
+                events.append((abs_tick, 'end_of_track', {}))
+                break
+        
+        elif status >= 0xF0:
+            # System events - skip
+            running_status = None
+            if status in (0xF0, 0xF7):
+                length, pos = read_variable_length(evnt_data, pos)
+                pos += length
+            else:
+                pos += 1
+        
+        else:
+            # Regular MIDI events
+            if status_type in (0x80, 0x90, 0xA0, 0xB0, 0xE0):
                 if pos + 1 >= end:
                     break
-                byte1 = data[pos]
-                byte2 = data[pos+1]
-                pos += 2
-                events.append((delta, status, byte1, byte2))
-            elif command in (0xC0, 0xD0):  # 1-byte commands
-                if pos >= end:
-                    break
-                byte1 = data[pos]
+                data1 = evnt_data[pos]
                 pos += 1
-                events.append((delta, status, byte1, 0))
-            else:
-                # Unknown - skip
-                pos -= 1
-                continue
-        else:  # Running status
-            # Use previous running_status to determine command type
-            pos -= 1  # Put status byte back
-            command = running_status & 0xF0
+                data2 = evnt_data[pos]
+                pos += 1
+                
+                if status_type == 0x90:
+                    # Note On with duration
+                    duration, pos = read_variable_length(evnt_data, pos)
+                    
+                    # Clamp to valid range
+                    note = max(0, min(127, data1))
+                    vel = max(0, min(127, data2))
+                    
+                    events.append((abs_tick, 'note_on', {
+                        'channel': channel,
+                        'note': note,
+                        'velocity': vel
+                    }))
+                    
+                    # Schedule Note Off
+                    if duration > 0:
+                        events.append((abs_tick + duration, 'note_off', {
+                            'channel': channel,
+                            'note': note,
+                            'velocity': 0
+                        }))
+                
+                elif status_type == 0x80:
+                    note = max(0, min(127, data1))
+                    vel = max(0, min(127, data2))
+                    events.append((abs_tick, 'note_off', {
+                        'channel': channel,
+                        'note': note,
+                        'velocity': vel
+                    }))
+                
+                elif status_type == 0xB0:
+                    ctrl = max(0, min(127, data1))
+                    val = max(0, min(127, data2))
+                    events.append((abs_tick, 'control_change', {
+                        'channel': channel,
+                        'control': ctrl,
+                        'value': val
+                    }))
+                
+                elif status_type == 0xE0:
+                    lsb = max(0, min(127, data1))
+                    msb = max(0, min(127, data2))
+                    pitch = (msb << 7) | lsb
+                    # Convert to -8192..8191 range
+                    pitch = max(-8192, min(8191, pitch - 8192))
+                    events.append((abs_tick, 'pitchwheel', {
+                        'channel': channel,
+                        'pitch': pitch
+                    }))
+                
+                else:
+                    events.append((abs_tick, 'unknown', {
+                        'status': status,
+                        'data1': data1,
+                        'data2': data2
+                    }))
             
-            if command in (0x80, 0x90, 0xA0, 0xB0, 0xE0):  # 2-byte
-                if pos + 1 >= end:
-                    break
-                byte1 = data[pos]
-                byte2 = data[pos+1]
-                pos += 2
-                events.append((delta, running_status, byte1, byte2))
-            elif command in (0xC0, 0xD0):  # 1-byte
+            elif status_type == 0xC0:
                 if pos >= end:
                     break
-                byte1 = data[pos]
+                prog = max(0, min(127, evnt_data[pos]))
                 pos += 1
-                events.append((delta, running_status, byte1, 0))
-            else:
-                # Unknown running status - skip this byte
+                events.append((abs_tick, 'program_change', {
+                    'channel': channel,
+                    'program': prog
+                }))
+            
+            elif status_type == 0xD0:
+                if pos >= end:
+                    break
+                val = max(0, min(127, evnt_data[pos]))
                 pos += 1
-                continue
+                events.append((abs_tick, 'aftertouch', {
+                    'channel': channel,
+                    'value': val
+                }))
     
     return events
 
-def convert_xmidi_to_midi(xmidi_data):
-    """Convert full XMIDI file to standard MIDI"""
+def build_midi_v3(events, ppqn=480):
+    """Build standard MIDI file from parsed events"""
+    mid = MidiFile(type=0, ticks_per_beat=ppqn)
+    track = MidiTrack()
+    mid.tracks.append(track)
     
-    # Find XMID FORM chunk
-    if xmidi_data[:4] == b'FORM' and b'XMID' in xmidi_data[12:20]:
-        pass  # Standard XMIDI structure
-    elif b'FORM' in xmidi_data:
-        # Skip initial header to find FORM
-        form_pos = xmidi_data.find(b'FORM')
-        xmidi_data = xmidi_data[form_pos:]
-    else:
-        print("  No FORM chunk found")
-        return None
+    # Sort events by absolute tick
+    events.sort(key=lambda x: x[0])
     
-    # Find EVNT chunk
-    evnt_pos = xmidi_data.find(b'EVNT')
-    if evnt_pos < 0:
-        print("  No EVNT chunk found")
-        return None
-    
-    # Extract MIDI events
-    events = extract_xmidi_events(xmidi_data[evnt_pos:])
-    
-    if not events:
-        print("  No MIDI events extracted")
-        return None
-    
-    # Count note events for validation
-    note_count = sum(1 for _, status, b1, _ in events 
-                    if status >= 0x80 and (status & 0xF0) in (0x80, 0x90))
-    
-    if note_count < 5:
-        print(f"  Warning: Only {note_count} note events found (suspicious)")
-    
-    # Build standard MIDI file
-    midi_data = struct.pack('>4sIHHH',
-                           b'MThd',
-                           6,
-                           0,    # Format 0
-                           1,    # 1 track
-                           120   # 120 ticks per quarter note
-                           )
-    
-    # Track events
-    track_events = b''
-    for delta, status, byte1, byte2 in events:
-        # Write delta (variable length)
-        if delta == 0:
-            track_events += bytes([0])
-        else:
-            vl_bytes = []
-            val = delta
-            vl_bytes.append(val & 0x7F)
-            val >>= 7
-            while val > 0:
-                vl_bytes.append(0x80 | (val & 0x7F))
-                val >>= 7
-            track_bytes = bytes(reversed(vl_bytes))
-            track_events += track_bytes
+    # Convert to messages
+    prev_tick = 0
+    for abs_tick, event_type, data in events:
+        delta = abs_tick - prev_tick
         
-        # Write event
-        if status == 0xFF:  # Meta event
-            track_events += bytes([0xFF])
-            if isinstance(byte2, bytes):
-                track_events += bytes([byte1, len(byte2)]) + byte2
-            else:
-                track_events += bytes([byte1, 0])
-        elif status in (0xF0, 0xF7):  # SysEx
-            track_events += bytes([status])
-            if isinstance(byte2, bytes):
-                track_events += bytes([len(byte2)]) + byte2
-        else:
-            command = status & 0xF0
-            if command in (0xC0, 0xD0):  # 1-byte commands
-                track_events += bytes([status, byte1])
-            else:
-                track_events += bytes([status, byte1, byte2])
+        if event_type == 'tempo':
+            track.append(MetaMessage('set_tempo', tempo=data['tempo'], time=delta))
+        elif event_type == 'time_signature':
+            track.append(MetaMessage('time_signature',
+                                   numerator=data['numerator'],
+                                   denominator=data['denominator'],
+                                   clocks_per_click=data.get('clocks_per_click', 24),
+                                   notated_32nd_notes_per_beat=data.get('notated_32nd_notes_per_beat', 8),
+                                   time=delta))
+        elif event_type == 'key_signature':
+            try:
+                track.append(MetaMessage('key_signature',
+                                       key=data['key'],
+                                       mode=data['mode'],
+                                       time=delta))
+            except:
+                pass
+        elif event_type == 'note_on':
+            track.append(Message('note_on',
+                               channel=data['channel'],
+                               note=data['note'],
+                               velocity=data['velocity'],
+                               time=delta))
+        elif event_type == 'note_off':
+            track.append(Message('note_off',
+                               channel=data['channel'],
+                               note=data['note'],
+                               velocity=data['velocity'],
+                               time=delta))
+        elif event_type == 'control_change':
+            track.append(Message('control_change',
+                               channel=data['channel'],
+                               control=data['control'],
+                               value=data['value'],
+                               time=delta))
+        elif event_type == 'program_change':
+            track.append(Message('program_change',
+                               channel=data['channel'],
+                               program=data['program'],
+                               time=delta))
+        elif event_type == 'pitchwheel':
+            track.append(Message('pitchwheel',
+                               channel=data['channel'],
+                               pitch=data['pitch'],
+                               time=delta))
+        
+        prev_tick = abs_tick
     
     # Add End of Track if not present
-    if not any(e[1] == 0xFF and e[2] == 0x2F for e in events):
-        track_events += bytes([0x00, 0xFF, 0x2F, 0x00])
+    if not any(isinstance(m, MetaMessage) and m.type == 'end_of_track' for m in track):
+        track.append(MetaMessage('end_of_track', time=0))
     
-    # Track chunk
-    midi_data += struct.pack('>4sI', b'MTrk', len(track_events))
-    midi_data += track_events
-    
-    return midi_data
+    return mid
 
-def convert_all_tracks(input_dir, output_dir):
+def convert_all_tracks(fdmus_path, output_dir, track_indices=None):
     """Convert all XMIDI tracks"""
-    input_dir = Path(input_dir)
+    with open(fdmus_path, 'rb') as f:
+        data = f.read()
+    
+    count = struct.unpack('<I', data[6:10])[0]
+    offsets = [struct.unpack('<I', data[10 + i*4:14 + i*4])[0] for i in range(count)]
+    
+    if track_indices is None:
+        track_indices = range(count)
+    
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     converted = 0
     
-    for track_file in sorted(input_dir.glob("track_*.bin")):
-        if track_file.stat().st_size < 100:
+    for track_idx in track_indices:
+        if track_idx >= count:
             continue
         
-        with open(track_file, 'rb') as f:
-            data = f.read()
+        start = offsets[track_idx]
+        end = offsets[track_idx+1] if track_idx+1 < count else len(data)
+        track_data = data[start:end]
         
-        midi_data = convert_xmidi_to_midi(data)
+        evnt_pos = track_data.find(b'EVNT')
+        if evnt_pos < 0:
+            continue
         
-        if midi_data:
-            track_id = track_file.stem.split('_')[1]
-            midi_file = output_dir / f"track_{track_id}.mid"
-            midi_file.write_bytes(midi_data)
-            print(f"  [{track_id}] {len(data)} -> {len(midi_data)} bytes")
-            converted += 1
-        else:
-            print(f"  [SKIP] {track_file.name}")
+        chunk_size = struct.unpack('>I', track_data[evnt_pos+4:evnt_pos+8])[0]
+        evnt_data = track_data[evnt_pos+8:evnt_pos+8+chunk_size]
+        
+        # Parse XMIDI
+        events = parse_xmidi_v3(evnt_data)
+        
+        if not events:
+            continue
+        
+        # Build MIDI
+        mid = build_midi_v3(events)
+        
+        # Save
+        midi_file = output_dir / f"track_{track_idx:03d}.mid"
+        mid.save(midi_file)
+        print(f"Track {track_idx:3d}: {len(evnt_data)} bytes -> {len(events)} events -> {midi_file.name}")
+        converted += 1
     
     print(f"\nConverted {converted} tracks to {output_dir}")
 
-def main():
-    input_dir = Path("output/fdmus_tracks")
+if __name__ == "__main__":
+    fdmus_path = Path("game/FDMUS.DAT")
     output_dir = Path("output/fdmus_midi_v3")
     
-    if not input_dir.exists():
-        print("Error: Input directory not found")
-        return
-    
-    print("Converting XMIDI to standard MIDI (v3 - fixed running status)...")
-    convert_all_tracks(input_dir, output_dir)
-    
-    print(f"\nMIDI files saved to: {output_dir}")
-
-if __name__ == "__main__":
-    main()
+    print("XMIDI to MIDI Converter V3")
+    print("=" * 60)
+    convert_all_tracks(fdmus_path, output_dir)

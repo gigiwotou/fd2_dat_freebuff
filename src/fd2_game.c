@@ -660,6 +660,13 @@ static void state_intro_enter(fd2_game_t* game) {
     data->ani_data = NULL;
     data->scroll_buf = NULL;
 
+    /* Set FDMUS.DAT path for audio playback */
+    const char* fdmus_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDMUS);
+    fd2_audio_set_fdmus_path(&game->audio, fdmus_path);
+
+    /* Play title screen music (track 11 from FDMUS.DAT, infinite loop) */
+    fd2_audio_play_music(&game->audio, 11, -1);
+
     /* ---- Phase 0: Show title screen (sub_1F894 start) ---- */
 
     /* Load palette from FDOTHER resource 75 (original: sub_111BA(FDOTHER_DAT,76)) */
@@ -1584,6 +1591,10 @@ static void state_menu_enter(fd2_game_t* game) {
     data->selected = false;
     data->blink_visible = true;
 
+    /* Note: Original game does NOT play new music when entering MENU.
+     * The intro music (Track 11) continues playing into the menu.
+     * Track 1 from FDMUS.DAT is invalid (only 3 bytes), so we skip it. */
+
     /* Set up palette for menu
      * Per IDA 0x1FCE4: FDOTHER_DAT = sub_111BA("FDOTHER.DAT", FDOTHER_DAT, 8)
      * But verification shows: FDOTHER[7] = 768-byte palette
@@ -1599,7 +1610,7 @@ static void state_menu_enter(fd2_game_t* game) {
     /* Draw initial menu with selection on first item */
     menu_draw(game, 0, data->num_items);
 
-    printf("state_menu: entered\n");
+    printf("state_menu: entered (intro music continues playing)\n");
 }
 
 static fd2_state_t state_menu_update(fd2_game_t* game) {

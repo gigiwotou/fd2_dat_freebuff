@@ -11,24 +11,38 @@ extern "C" {
 /* ========================================================================
  * FD2 Audio System
  *
- * The original game uses Miles Sound System (AIL) for MIDI playback
- * via FDMUS.DAT and digital audio via ADRV688.DIG / *.DIG drivers.
+ * Based on IDA MCP analysis of the original game:
+ *   - sub_3AEEE: AIL_start_sequence (MIDI music from FDMUS.DAT)
+ *   - sub_39798: AIL_start_sample (digital SFX)
+ *   - sub_43270: MIDI event parser with tempo*16 storage
  *
- * Phase 1 (current): Stub implementation - no sound, API ready.
- * Phase 2: SDL_mixer for MIDI (MidiFile from FDMUS.DAT) + WAV/OGG SFX.
- * Phase 3: Full AIL-compatible MIDI with proper bank/instrument mapping.
+ * Implementation uses platform-native MIDI:
+ *   - Windows: winmm.dll MIDI API
+ *   - Linux/macOS: SDL_mixer (future)
  * ======================================================================== */
+
+/* Maximum MIDI track size (64KB per track from FDMUS.DAT) */
+#define FD2_MAX_MIDI_SIZE (64 * 1024)
 
 /* ---- Audio State ---- */
 typedef struct fd2_audio {
     bool    initialized;
     bool    muted;
-    int     music_volume;     /* 0-128 (SDL_mixer scale) */
+    int     music_volume;     /* 0-128 */
     int     sfx_volume;       /* 0-128 */
 
-    /* Internal (SDL_mixer objects, hidden behind void* for header compat) */
-    void*   current_music;    /* Mix_Music* or NULL */
-    int     music_playing;    /* Track ID currently playing */
+    /* Music playback state */
+    void*   midi_handle;      /* HMIDIOUT handle (Windows) */
+    int     music_playing;    /* Track ID currently playing, -1 = none */
+    int     music_loops;      /* Loop count: -1=infinite, 0=once, N=N+1 */
+    int     current_loop;     /* Current loop iteration */
+
+    /* MIDI data buffer (raw MIDI from FDMUS.DAT, already converted) */
+    unsigned char* midi_data; /* Converted MIDI data */
+    unsigned int   midi_size; /* Size of MIDI data */
+
+    /* Resource manager path to FDMUS.DAT */
+    const char* fdmus_path;   /* Path to FDMUS.DAT */
 } fd2_audio_t;
 
 /* ---- Lifecycle ---- */
@@ -43,6 +57,12 @@ int fd2_audio_init(fd2_audio_t* audio);
  * Shut down and free all audio resources.
  */
 void fd2_audio_shutdown(fd2_audio_t* audio);
+
+/*
+ * Set the path to FDMUS.DAT for music playback.
+ * Called by resources system after FDMUS.DAT is loaded.
+ */
+void fd2_audio_set_fdmus_path(fd2_audio_t* audio, const char* path);
 
 /* ---- Music ---- */
 
