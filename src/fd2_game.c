@@ -2047,6 +2047,7 @@ static void state_battle_enter(fd2_game_t* game) {
         
         /* Load icon for this character */
         int cache_idx = fd2_icon_get(icon_id);
+        printf("    fd2_icon_get(%d) = %d\n", icon_id, cache_idx);
         if (cache_idx >= 0) {
             sprite->cache_idx = cache_idx;
             sprite->segment = 0;
@@ -2323,17 +2324,19 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             map_sprite_t* sprite = &data->sprites[i];
             if (!sprite->loaded || !sprite->pixels) continue;
             
-            /* Convert tile position to screen coordinates */
+            /* Convert tile position to screen coordinates
+             * Per IDA sub_1C2DA: sprite Y offset = -6 pixels
+             * 2736 / 456 = 6, where 2736 is the offset in IDA code */
             int screen_x = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
-            int screen_y = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
+            int screen_y = sprite->tile_y * MAP_TILE_SIZE - data->camera_y - 6;
             
             /* Draw sprite with top-left anchor (精灵左上角对齐tile左上角) */
             int draw_x = screen_x;
             int draw_y = screen_y;
             
-            // printf("  render sprite[%d]: tile=(%d,%d) screen=(%d,%d) draw=(%d,%d) size=(%d,%d) camera=(%d,%d)\n",
-            //        i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
-            //        sprite->width, sprite->height, data->camera_x, data->camera_y);
+            printf("  render sprite[%d]: tile=(%d,%d) screen=(%d,%d) draw=(%d,%d) size=(%d,%d) camera=(%d,%d)\n",
+                   i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
+                   sprite->width, sprite->height, data->camera_x, data->camera_y);
             
             if (is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height)) {
                 /* Create temporary sprite_frame_t for rendering */
@@ -2345,6 +2348,10 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
                 
                 fd2_sprite_render(&frame, game->render.screen, FD2_SCREEN_W,
                                   draw_x, draw_y);
+                printf("  [DRAWN] sprite[%d] at screen (%d,%d)\n", i, draw_x, draw_y);
+            } else {
+                printf("  [SKIPPED] sprite[%d] not visible at (%d,%d) size (%d,%d)\n",
+                       i, draw_x, draw_y, sprite->width, sprite->height);
             }
         }
 
@@ -2544,8 +2551,8 @@ static int load_battle_save(const char* save_path, battle_save_data_t* save) {
     /* Copy temp map data */
     memcpy(save->temp_map_data, buffer + BATTLE_SAVE_TEMP_MAP_OFFSET, BATTLE_SAVE_TEMP_MAP_SIZE);
     
-    /* Get character count */
-    save->n6_0 = buffer[BATTLE_SAVE_STATE_OFFSET + 13];  /* Offset 12484 */
+    /* Get character count - per IDA sub_10010: n6_0 = *(unsigned __int8 *)(v5 + 12484) */
+    save->n6_0 = buffer[BATTLE_SAVE_STATE_OFFSET + 33];  /* Offset 12484 */
     
     /* Copy character data (80 bytes per character) */
     if (save->n6_0 > 0 && save->n6_0 <= 64) {
