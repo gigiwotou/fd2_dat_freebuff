@@ -5,7 +5,7 @@
 本文档通过 IDA MCP 分析所有加载 FDOTHER.DAT 资源的函数，并详细分类每个资源的实际用途：
 - **图片绘制**：使用 `sub_4E98D`、`sub_2EB9F` 等函数渲染到屏幕
 - **音效播放**：使用 `sub_25A96` 播放数字音效
-- **XMIDI 音乐**：使用 `sub_25B45` 播放 MIDI 音乐序列
+- **XMIDI 音乐**：使用 `sub_25977` 播放 FDMUS.DAT 中的 XMIDI 音乐序列
 
 ## 核心函数说明
 
@@ -26,14 +26,17 @@ _BYTE *sub_111BA(a1, a2, a3, a4, 文件名, 旧指针, 索引);
 | `sub_11EB0` | 滚动/过渡效果 |
 
 ### 音频播放函数
-| 函数 | AIL API | 用途 | 句柄 |
-|------|---------|------|------|
-| `sub_25A96` | AIL_start_sample | 播放数字音效 (sample) | dword_53EE4 |
-| `sub_25B45` | AIL_start_sequence | 播放 XMIDI 音乐序列 (sequence) | dword_53EE8 |
+| 函数 | AIL API | 用途 | 句柄 | 数据源 |
+|------|---------|------|------|--------|
+| `sub_25A96` | AIL_start_sample | 播放数字音效 (sample) | dword_53EE4 | FDOTHER.DAT |
+| `sub_25B45` | AIL_start_sample | 播放扩展数字音效 (sample) | dword_53EE8 | FDOTHER.DAT 等 |
+| `sub_25977` | AIL_start_sequence | 播放 XMIDI 音乐序列 | dword_53ED0 | FDMUS.DAT |
 
 **重要区别**：
 - **数字音效 (sample)**: PCM/WAV 格式的音频数据，通过 AIL_start_sample 播放
 - **XMIDI 音乐 (sequence)**: MIDI 格式的音乐序列，通过 AIL_start_sequence 播放
+- sub_25A96 和 sub_25B45 **都使用 AIL_start_sample**，区别仅在于使用的句柄不同
+- 真正的 XMIDI 音乐播放由 `sub_25977` 处理，使用 `sub_3AEEE` (AIL_start_sequence)
 
 ---
 

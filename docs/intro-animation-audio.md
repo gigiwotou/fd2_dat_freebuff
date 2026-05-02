@@ -89,10 +89,40 @@ sub_39AAE(dword_53EE8, a7);
 sub_39798(dword_53EE8);
 ```
 
+**AIL API 映射**:
+- `sub_39805` → `AIL_stop_sample(dword_53EE8)`
+- `sub_39521` → `AIL_init_sample(dword_53EE8)`
+- `sub_39694` → `AIL_set_sample_address(dword_53EE8, buffer, size)`
+- `sub_39AAE` → `AIL_set_sample_loop_count(dword_53EE8, loops)`
+- `sub_39798` → `AIL_start_sample(dword_53EE8)`
+
 **全局变量**:
 - `dword_53EE8` = Sample handle 2 (用于扩展音效/特殊音频)
 
-### 2.3 音频句柄初始化 — `sub_25BF4` (main 函数, 地址 0x25BF4)
+**重要发现**: sub_25B45 也使用 AIL_start_sample，不是 XMIDI sequence 播放！
+
+### 2.3 `sub_25977` — XMIDI 音乐播放函数 (地址 0x25977)
+
+真正的 XMIDI 音乐播放函数，调用 `sub_3AEEE` (AIL_start_sequence)。
+
+```c
+int __fastcall sub_25977(__int32 a1, int a2, int a3, int a4, int n16, int arg4);
+// n16 = FDMUS.DAT 中的音乐索引，-1 表示停止
+```
+
+**工作流程**:
+1. 从 FDMUS.DAT 加载音乐资源: `sub_111BA(..., "FDMUS.DAT", FDMUS_DAT, n16)`
+2. 设置音乐数据: `sub_3ADF5(dword_53ED0, FDMUS_DAT, 0)`
+3. 开始播放: `sub_3AEEE(dword_53ED0)` → `AIL_start_sequence`
+4. 设置音量: `sub_3B124(dword_53ED0, 127, 2000)` (全音量, 2秒淡入)
+
+**全局变量**:
+- `dword_53ED0` = XMIDI sequence handle (由 sub_3ACA3 分配)
+- `FDMUS_DAT` = FDMUS.DAT 加载指针
+
+**调用者**: sub_10010, sub_19df7, sub_1a30b, sub_22e5c, sub_25bf4, sub_25ebb, sub_26152, sub_2670e, sub_2a43e, sub_2aa00, sub_31529, sub_31c49, sub_3231b
+
+### 2.4 音频句柄初始化 — `sub_25BF4` (main 函数, 地址 0x25BF4)
 
 ```c
 // 初始化两个 sample handle
@@ -100,7 +130,7 @@ sub_392D0(&dword_53EE4);    // AIL_allocate_sample_handle(&dword_53EE4)
 sub_392D0(&dword_53EE8);    // AIL_allocate_sample_handle(&dword_53EE8)
 ```
 
-### 2.4 `sub_20421` — ANI 动画播放函数 (地址 0x20421)
+### 2.5 `sub_20421` — ANI 动画播放函数 (地址 0x20421)
 
 负责播放 ANI.DAT 中的动画，**同时处理音频播放**。
 
@@ -276,21 +306,27 @@ sub_1F894 (开场动画主函数, 0x1F894)
    - 条件: `sub_20421` 的参数 `arg_0 == 1` 且是第一帧 (`esi == 0`)
    - 其他 ANI (#0, #3, #4, #5, #6, #7, #8) 都不播放背景音乐
 
-2. **所有音频都通过 `sub_25A96` 的 sample API 播放，而非 sequence API**
+2. **所有 FDOTHER.DAT 音频都通过 Sample API 播放，而非 Sequence API**
    - 音频数据存储在 FDOTHER.DAT #78 中
+   - sub_25A96 和 sub_25B45 都使用 AIL_start_sample
    - 不是直接播放 FDMUS.DAT 中的 XMIDI 曲目
 
-3. **音频从对应资源条目的起点开始播放**
+3. **XMIDI 音乐由独立函数 sub_25977 处理**
+   - 使用 sub_3AEEE (AIL_start_sequence) 播放
+   - 数据源为 FDMUS.DAT，非 FDOTHER.DAT
+   - 句柄为 dword_53ED0 (非 dword_53EE4/53EE8)
+
+4. **音频从对应资源条目的起点开始播放**
    - index=0: 从头播放
    - index=1: 从条目1起点播放
    - index=-1: 停止所有播放
 
-4. **两种 sample handle 的设计**
-   - `dword_53EE4` (handle #1): 常规音效 (sub_25A96)
-   - `dword_53EE8` (handle #2): 扩展音效 (sub_25B45)
-   - 可能用于同时播放不同音频或优先级控制
+5. **三种音频句柄的设计**
+   - `dword_53EE4` (handle #1): 常规音效 (sub_25A96, AIL_start_sample)
+   - `dword_53EE8` (handle #2): 扩展音效 (sub_25B45, AIL_start_sample)
+   - `dword_53ED0` (handle #3): XMIDI 音乐 (sub_25977, AIL_start_sequence)
 
-5. **ANI 内嵌音频字节码**
+6. **ANI 内嵌音频字节码**
    - `sub_36FF4` 函数解码 ANI.DAT 中的音频字节码
    - 字节码通过函数指针表 `funcs_37012` 执行不同操作
 
@@ -302,8 +338,12 @@ sub_1F894 (开场动画主函数, 0x1F894)
 |------|------|------|
 | 开场动画主函数 | `0x1F894` | sub_1F894 |
 | ANI 播放函数 | `0x20421` | sub_20421 |
-| 音效播放函数 | `0x25A96` | sub_25A96 (handle #1) |
-| 扩展音效函数 | `0x25B45` | sub_25B45 (handle #2) |
+| 音效播放函数 | `0x25A96` | sub_25A96 (handle #1, AIL_start_sample) |
+| 扩展音效函数 | `0x25B45` | sub_25B45 (handle #2, AIL_start_sample) |
+| XMIDI 音乐函数 | `0x25977` | sub_25977 (handle #3, AIL_start_sequence) |
+| AIL_start_sequence 包装 | `0x3AEEE` | sub_3AEEE |
+| AIL_set_sequence_address 包装 | `0x3ADF5` | sub_3ADF5 |
+| AIL_set_sequence_volume 包装 | `0x3B124` | sub_3B124 |
 | 音频字节码解码 | `0x36FF4` | sub_36FF4 |
 | 音频初始化 | `0x25BF4` | main 函数 |
 | AIL_stop_sample 包装 | `0x39805` | sub_39805 |
@@ -312,11 +352,13 @@ sub_1F894 (开场动画主函数, 0x1F894)
 | AIL_set_sample_loop_count 包装 | `0x39AAE` | sub_39AAE |
 | AIL_start_sample 包装 | `0x39798` | sub_39798 |
 | AIL_allocate_sample_handle 包装 | `0x392D0` | sub_392D0 |
+| AIL_allocate_sequence_handle | `0x3ACA3` | sub_3ACA3 |
 | 屏幕刷新 | `0x4E381` | sub_4E381 |
 | 淡出效果 | `0x2DF01` | sub_2DF01 |
 | 淡入效果 | `0x11D40` | sub_11D40 |
 | 按键检测 | `0x10620` | sub_10620 |
 | Sample handle #1 | `0x53EE4` | dword_53EE4 |
 | Sample handle #2 | `0x53EE8` | dword_53EE8 |
+| Sequence handle #3 | `0x53ED0` | dword_53ED0 |
 | 音频启用标志 | `0x53EF1` | byte_53EF1 |
 | AIL Debug 字符串 | `0x50313` | "AIL_DEBUG" |
