@@ -2325,19 +2325,47 @@ typedef struct {
     u32 checksum;
 } battle_save_data_t;
 
-/* Decryption function (based on IDA sub_4DF28) */
+/* Decryption function (based on IDA sub_4DF28)
+ * char __cdecl sub_4DF28(char *a1, int a2)
+ *   v2 = a1; v3 = a1;
+ *   n165 = 165;
+ *   do {
+ *     v6 = *v2++;
+ *     n165 = __ROL2__(n165 - 28652, 3);
+ *     result = n165 ^ v6;
+ *     *v3++ = result;
+ *     --a2;
+ *   } while (a2);
+ */
+static u16 rol16(u16 value, int shift) {
+    shift &= 15;
+    return (value << shift) | (value >> (16 - shift));
+}
+
 static void decrypt_battle_save(u8* data, int size) {
-    /* Simple XOR decryption based on original game logic */
+    u16 n165 = 165;
     for (int i = 0; i < size; i++) {
-        data[i] ^= 0x55;
+        n165 = rol16(n165 - 28652, 3);
+        data[i] = (u8)(n165 ^ data[i]);
     }
 }
 
-/* Checksum calculation (based on IDA sub_4DF09) */
-static u32 calculate_battle_save_checksum(u8* data, int size) {
-    u32 checksum = 0;
-    for (int i = 0; i < size - 4; i++) {
-        checksum += data[i];
+/* Checksum calculation (based on IDA sub_4DF09)
+ * int __cdecl sub_4DF09(_BYTE *a1, int n22987)
+ *   v3 = n22987 - 4;
+ *   v4 = 0;
+ *   do {
+ *     LOBYTE(v5) = *a1++;
+ *     v4 += v5;
+ *     --v3;
+ *   } while (v3);
+ *   return v4;
+ */
+static int calculate_battle_save_checksum(u8* data, int size) {
+    int checksum = 0;
+    int count = size - 4;
+    for (int i = 0; i < count; i++) {
+        checksum += (signed char)data[i];
     }
     return checksum;
 }
