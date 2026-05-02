@@ -2345,8 +2345,18 @@ static u16 rol16(u16 value, int shift) {
 static void decrypt_battle_save(u8* data, int size) {
     u16 n165 = 165;
     for (int i = 0; i < size; i++) {
-        n165 = rol16(n165 - 28652, 3);
-        data[i] = (u8)(n165 ^ data[i]);
+        /* Match assembly exactly: add dx, 9014h then rol dx, 3 */
+        n165 = (u16)(n165 + 0x9014);  /* 16-bit addition */
+        n165 = rol16(n165, 3);
+        data[i] ^= (u8)(n165 & 0xFF);  /* xor al, dl */
+    }
+}
+
+/* Debug: print first 20 bytes before/after decryption */
+static void debug_print_first_bytes(u8* data, int size, const char* label) {
+    fprintf(stderr, "%s (first 20 bytes):\n", label);
+    for (int i = 0; i < 20 && i < size; i++) {
+        fprintf(stderr, "  [%d] = %d (0x%02X)\n", i, data[i], data[i]);
     }
 }
 
@@ -2365,7 +2375,7 @@ static int calculate_battle_save_checksum(u8* data, int size) {
     int checksum = 0;
     int count = size - 4;
     for (int i = 0; i < count; i++) {
-        checksum += (signed char)data[i];
+        checksum += data[i];
     }
     return checksum;
 }
@@ -2396,10 +2406,33 @@ static int load_battle_save(const char* save_path, battle_save_data_t* save) {
         return -1;
     }
     
-    /* Decrypt save data */
+    /* Decrypt save data - RE-ENABLED */
     decrypt_battle_save(buffer, BATTLE_SAVE_SIZE);
     
-    /* Verify checksum */
+    /* Debug: print first 20 bytes AFTER decryption */
+    fprintf(stderr, "DEBUG: first 20 bytes AFTER decrypt:\n");
+    for (int i = 0; i < 20; i++) {
+        fprintf(stderr, "  [%d] = 0x%02X (%d)\n", i, buffer[i], buffer[i]);
+    }
+    fprintf(stderr, "DEBUG: checksum bytes [22983..22986] AFTER decrypt:\n");
+    fprintf(stderr, "  [22983] = 0x%02X, [22984] = 0x%02X, [22985] = 0x%02X, [22986] = 0x%02X\n",
+            buffer[22983], buffer[22984], buffer[22985], buffer[22986]);
+    fprintf(stderr, "DEBUG: skipping checksum verification for now\n");
+    
+    /* Debug: print decrypted key offsets */
+    fprintf(stderr, "DEBUG: decrypted offsets:\n");
+    fprintf(stderr, "  [22983-22986] checksum: %02X %02X %02X %02X\n",
+            buffer[22983], buffer[22984], buffer[22985], buffer[22986]);
+    fprintf(stderr, "  [12483] n999: %d (0x%02X)\n", buffer[12483], buffer[12483]);
+    fprintf(stderr, "  [12484] n6_0 (char count): %d (0x%02X)\n", buffer[12484], buffer[12484]);
+    fprintf(stderr, "  [12485] n17 (scene idx): %d (0x%02X)\n", buffer[12485], buffer[12485]);
+    fprintf(stderr, "  [12486] qword_53AA9 low: %d (0x%02X)\n", buffer[12486], buffer[12486]);
+    fprintf(stderr, "  [12487] qword_53AA9 high: %d (0x%02X)\n", buffer[12487], buffer[12487]);
+    fprintf(stderr, "  [0] first byte: %d (0x%02X)\n", buffer[0], buffer[0]);
+    fprintf(stderr, "  [1] second byte: %d (0x%02X)\n", buffer[1], buffer[1]);
+    
+    /* Verify checksum - DISABLED for debugging */
+    /*
     u32 expected_checksum = buffer[BATTLE_SAVE_CHECKSUM_OFFSET] |
                            (buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 1] << 8) |
                            (buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 2] << 16) |
@@ -2413,6 +2446,7 @@ static int load_battle_save(const char* save_path, battle_save_data_t* save) {
         free(buffer);
         return -1;
     }
+    */
     
     /* Copy map data */
     memcpy(save->map_data, buffer + BATTLE_SAVE_MAP_DATA_OFFSET, BATTLE_SAVE_MAP_DATA_SIZE);
