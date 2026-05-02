@@ -1947,6 +1947,11 @@ typedef struct {
     bool character_icon_loaded;
     int character_tile_x;   /* Character tile X coordinate */
     int character_tile_y;   /* Character tile Y coordinate */
+    
+    /* Battle save data (from Continue) */
+    bool from_save;
+    int saved_num_fighters;
+    u8 saved_char_positions[64][2];  /* x, y for each character */
 } state_battle_data_t;
 
 static void state_battle_enter(fd2_game_t* game) {
@@ -1955,16 +1960,13 @@ static void state_battle_enter(fd2_game_t* game) {
     data->camera_x = 0;
     data->camera_y = 0;
     data->character_icon_loaded = false;
-    data->character_tile_x = 5;
-    data->character_tile_y = 5;
+    data->character_tile_x = 0;
+    data->character_tile_y = 0;
     data->sprites = NULL;
     data->sprite_count = 0;
     data->max_sprites = 0;
-    
-    data->character_icon_id = 0;
-    data->character_segment = 0;
-    data->character_direction = 0;
-    data->character_frame = 0;
+    data->from_save = false;
+    data->saved_num_fighters = 0;
 
     /* Load battle resources */
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
@@ -1989,40 +1991,67 @@ static void state_battle_enter(fd2_game_t* game) {
             printf("state_battle: palette applied\n");
         }
 
-        /* Initialize FDICON.B24 and load character icon */
-        const char* fdicon_path = fd2_game_data_path(game, "FDICON.B24");
-        if (fdicon_path && fd2_icon_init(fdicon_path) == 0) {
-            printf("state_battle: FDICON.B24 initialized (%d icons)\n", fd2_icon_get_count());
-
-            /* Load character icon */
-            data->character_icon_cache_idx = fd2_icon_get(data->character_icon_id);
-            if (data->character_icon_cache_idx >= 0) {
-                printf("state_battle: character icon %d loaded (cache index %d)\n",
-                       data->character_icon_id, data->character_icon_cache_idx);
-
-                /* Decode segment 0 (front, frame 0) into sprite frame */
+        /* Initialize FDICON.B24 and load character icons */
+    const char* fdicon_path = fd2_game_data_path(game, "FDICON.B24");
+    if (fdicon_path && fd2_icon_init(fdicon_path) == 0) {
+        printf("state_battle: FDICON.B24 initialized (%d icons)\n", fd2_icon_get_count());
+    } else {
+        printf("state_battle: FDICON.B24 initialization failed\n");
+    }
+    
+    /* Allocate sprite array for all map characters */
+    int max_chars = data->map.scene.char_pos_count;
+    if (max_chars > 0) {
+        data->sprites = (map_sprite_t*)calloc(max_chars, sizeof(map_sprite_t));
+        data->max_sprites = max_chars;
+        data->sprite_count = 0;
+        
+        printf("state_battle: allocating %d map character sprites\n", max_chars);
+        
+        /* Create sprites for each character from map data */
+        for (int i = 0; i < max_chars && data->sprite_count < max_chars; i++) {
+            fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
+            
+            /* Skip empty positions */
+            if (char_pos->x == 0 && char_pos->y == 0) continue;
+            
+            map_sprite_t* sprite = &data->sprites[data->sprite_count];
+            sprite->tile_x = char_pos->x;
+            sprite->tile_y = char_pos->y;
+            sprite->icon_id = char_pos->portrait_id;
+            sprite->direction = 0;
+            sprite->anim_frame = 0;
+            sprite->loaded = false;
+            sprite->pixels = NULL;
+            
+            /* Load icon for this character */
+            int cache_idx = fd2_icon_get(char_pos->portrait_id);
+            if (cache_idx >= 0) {
+                sprite->cache_idx = cache_idx;
+                sprite->segment = 0;
                 int icon_width = 24;
                 int icon_height = 24;
-                data->character_icon_frame.pixels = (u8*)calloc(1, icon_width * icon_height);
-                if (data->character_icon_frame.pixels) {
-                    if (fd2_icon_decode_segment(data->character_icon_cache_idx,
-                                               data->character_segment,
-                                               icon_width, icon_height,
-                                               data->character_icon_frame.pixels) == 0) {
-                        data->character_icon_frame.width = icon_width;
-                        data->character_icon_frame.height = icon_height;
-                        data->character_icon_frame.pixel_data_size = icon_width * icon_height;
-                        data->character_icon_loaded = true;
-                        printf("state_battle: character icon decoded (%dx%d)\n", icon_width, icon_height);
+                sprite->pixels = (u8*)calloc(1, icon_width * icon_height);
+                if (sprite->pixels) {
+                    if (fd2_icon_decode_segment(cache_idx, 0, icon_width, icon_height,
+                                               sprite->pixels) == 0) {
+                        sprite->width = icon_width;
+                        sprite->height = icon_height;
+                        sprite->loaded = true;
                     } else {
-                        free(data->character_icon_frame.pixels);
-                        data->character_icon_frame.pixels = NULL;
+                        free(sprite->pixels);
+                        sprite->pixels = NULL;
                     }
                 }
+            } else {
+                sprite->cache_idx = -1;
             }
-        } else {
-            printf("state_battle: FDICON.B24 initialization failed\n");
+            
+            data->sprite_count++;
         }
+        
+        printf("state_battle: created %d character sprites\n", data->sprite_count);
+    }
 
         /* Center camera on character tile position */
         data->camera_x = data->character_tile_x * MAP_TILE_SIZE - FD2_SCREEN_W / 2;
@@ -2082,127 +2111,6 @@ static void state_battle_enter(fd2_game_t* game) {
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
                        data->camera_x, data->camera_y);
 
-        /* Draw character icon at tile position converted to screen coordinates */
-        if (data->character_icon_loaded && data->character_icon_frame.pixels) {
-            int screen_x = tile_to_screen_x(data->character_tile_x, data->camera_x);
-            int screen_y = tile_to_screen_y(data->character_tile_y, data->camera_y);
-            int draw_x = screen_x - data->character_icon_frame.width / 2;
-            int draw_y = screen_y - data->character_icon_frame.height / 2;
-            
-            printf("DEBUG: character tile=(%d,%d) camera=(%d,%d) screen=(%d,%d) draw=(%d,%d)\n",
-                   data->character_tile_x, data->character_tile_y,
-                   data->camera_x, data->camera_y,
-                   screen_x, screen_y, draw_x, draw_y);
-            printf("DEBUG: map_image_size=%dx%d, map_tiles=%dx%d\n",
-                   data->map.map_image_width, data->map.map_image_height,
-                   data->map.width, data->map.height);
-            
-            if (is_sprite_visible(draw_x, draw_y, 
-                                  data->character_icon_frame.width,
-                                  data->character_icon_frame.height)) {
-                fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
-                                  draw_x, draw_y);
-                printf("state_battle: character icon drawn at tile(%d,%d) screen(%d,%d)\n", 
-                       data->character_tile_x, data->character_tile_y, screen_x, screen_y);
-            } else {
-                printf("state_battle: character NOT VISIBLE at screen(%d,%d)\n", screen_x, screen_y);
-            }
-        } else {
-            printf("DEBUG: character icon NOT loaded: %s, pixels=%p\n",
-                   data->character_icon_loaded ? "yes" : "no",
-                   (void*)data->character_icon_frame.pixels);
-        }
-
-        /* Draw all map characters from scene data */
-        if (data->map.scene.loaded && data->map.scene.char_pos_count > 0) {
-            printf("state_battle: drawing %d map characters\n", data->map.scene.char_pos_count);
-            printf("  camera=(%d,%d), MAP_TILE_SIZE=%d\n", data->camera_x, data->camera_y, MAP_TILE_SIZE);
-            
-            int drawn_count = 0;
-            int skipped_zero = 0;
-            int failed_icon = 0;
-            int offscreen = 0;
-            
-            for (int i = 0; i < data->map.scene.char_pos_count; i++) {
-                fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
-                
-                printf("  Char %d: pos=(%d,%d), portrait=%d\n", i, char_pos->x, char_pos->y, char_pos->portrait_id);
-                
-                /* Skip characters at (0,0) - likely unused slots */
-                if (char_pos->x == 0 && char_pos->y == 0) {
-                    printf("    -> SKIP: at (0,0)\n");
-                    skipped_zero++;
-                    continue;
-                }
-                
-                /* Load character icon using portrait_id */
-                int icon_id = char_pos->portrait_id;
-                int cache_idx = fd2_icon_get(icon_id);
-                
-                if (cache_idx < 0) {
-                    printf("    -> FAIL: portrait %d not in FDICON.B24\n", icon_id);
-                    failed_icon++;
-                    continue;
-                }
-                
-                /* Decode segment 0 (front, frame 0) */
-                int sprite_width = 24;
-                int sprite_height = 24;
-                u8* sprite_pixels = (u8*)calloc(1, sprite_width * sprite_height);
-                if (!sprite_pixels) continue;
-                
-                if (fd2_icon_decode_segment(cache_idx, 0, sprite_width, sprite_height, sprite_pixels) != 0) {
-                    printf("    -> FAIL: decode segment failed\n");
-                    free(sprite_pixels);
-                    failed_icon++;
-                    continue;
-                }
-                
-                /* DEBUG: Count non-zero pixels and sample first 10 pixels */
-                int non_zero_count = 0;
-                int first_nonzero = -1;
-                for (int p = 0; p < sprite_width * sprite_height; p++) {
-                    if (sprite_pixels[p] != 0) {
-                        non_zero_count++;
-                        if (first_nonzero < 0) first_nonzero = p;
-                    }
-                }
-                printf("    -> Decoded pixels: %d non-zero/%d total, first@%d\n",
-                       non_zero_count, sprite_width * sprite_height, first_nonzero);
-                
-                /* Convert map tile coordinates to screen coordinates */
-                int screen_x = char_pos->x * MAP_TILE_SIZE - data->camera_x;
-                int screen_y = char_pos->y * MAP_TILE_SIZE - data->camera_y;
-                int draw_x = screen_x - sprite_width / 2;
-                int draw_y = screen_y - sprite_height / 2;
-                
-                printf("    -> screen=(%d,%d), draw=(%d,%d)\n", screen_x, screen_y, draw_x, draw_y);
-                
-                /* Render sprite if visible */
-                if (is_sprite_visible(draw_x, draw_y, sprite_width, sprite_height)) {
-                    fd2_sprite_frame_t sprite_frame;
-                    sprite_frame.pixels = sprite_pixels;
-                    sprite_frame.width = sprite_width;
-                    sprite_frame.height = sprite_height;
-                    sprite_frame.pixel_data_size = sprite_width * sprite_height;
-                    
-                    fd2_sprite_render(&sprite_frame, game->render.screen, FD2_SCREEN_W, draw_x, draw_y);
-                    
-                    printf("    -> DRAWN at tile(%d,%d) screen(%d,%d) pixels=%d\n", 
-                           char_pos->x, char_pos->y, screen_x, screen_y, non_zero_count);
-                    drawn_count++;
-                } else {
-                    printf("    -> OFFSCREEN at (%d,%d)\n", screen_x, screen_y);
-                    offscreen++;
-                }
-                
-                free(sprite_pixels);
-            }
-            
-            printf("state_battle: character stats - drawn=%d, skipped(0,0)=%d, failed_icon=%d, offscreen=%d\n",
-                   drawn_count, skipped_zero, failed_icon, offscreen);
-        }
-
         fd2_render_present(&game->render);
         printf("state_battle: map rendered with camera at (%d, %d)\n", 
                data->camera_x, data->camera_y);
@@ -2249,18 +2157,26 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
                        data->camera_x, data->camera_y);
 
-        /* Draw character icon at map position converted to screen coordinates */
-        if (data->character_icon_loaded && data->character_icon_frame.pixels) {
-            /* Character stays at fixed map position, camera moves */
-            int screen_x = data->character_tile_x * MAP_TILE_SIZE - data->camera_x;
-            int screen_y = data->character_tile_y * MAP_TILE_SIZE - data->camera_y;
-            int draw_x = screen_x - data->character_icon_frame.width / 2;
-            int draw_y = screen_y - data->character_icon_frame.height / 2;
+        /* Draw all map character sprites */
+        for (int i = 0; i < data->sprite_count; i++) {
+            map_sprite_t* sprite = &data->sprites[i];
+            if (!sprite->loaded || !sprite->pixels) continue;
             
-            if (is_sprite_visible(draw_x, draw_y, 
-                                  data->character_icon_frame.width,
-                                  data->character_icon_frame.height)) {
-                fd2_sprite_render(&data->character_icon_frame, game->render.screen, FD2_SCREEN_W,
+            /* Convert tile position to screen coordinates */
+            int screen_x = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
+            int screen_y = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
+            int draw_x = screen_x - sprite->width / 2;
+            int draw_y = screen_y - sprite->height / 2;
+            
+            if (is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height)) {
+                /* Create temporary sprite_frame_t for rendering */
+                fd2_sprite_frame_t frame;
+                frame.pixels = sprite->pixels;
+                frame.width = sprite->width;
+                frame.height = sprite->height;
+                frame.pixel_data_size = sprite->width * sprite->height;
+                
+                fd2_sprite_render(&frame, game->render.screen, FD2_SCREEN_W,
                                   draw_x, draw_y);
             }
         }
@@ -2274,6 +2190,13 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
 static void state_battle_exit(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)game->state_data;
     if (data) {
+        /* Free sprite pixel data */
+        for (int i = 0; i < data->sprite_count; i++) {
+            if (data->sprites[i].pixels) {
+                free(data->sprites[i].pixels);
+            }
+        }
+        free(data->sprites);
         fd2_map_free(&data->map);
         free(data);
     }
@@ -2502,6 +2425,9 @@ typedef struct {
     battle_save_data_t save_data;
     int load_step;
     int load_failure;
+    /* Character positions extracted from save */
+    int num_fighters;
+    u8 char_positions[64][2];  /* x, y for each character */
 } state_continue_data_t;
 
 static void state_continue_enter(fd2_game_t* game) {
@@ -2523,6 +2449,22 @@ static void state_continue_enter(fd2_game_t* game) {
         fprintf(stderr, "state_continue: failed to load battle save\n");
         data->load_failure = 1;
         return;
+    }
+    
+    /* Extract character positions from save data
+     * Character data is at offset 4771, 80 bytes per character
+     * Bytes 0-1: X coordinate, Bytes 2-3: Y coordinate */
+    int num_chars = data->save_data.n6_0;
+    if (num_chars > 0 && num_chars <= 64) {
+        data->num_fighters = num_chars;
+        for (int i = 0; i < num_chars; i++) {
+            u8* char_data = data->save_data.char_data + i * BATTLE_SAVE_CHAR_DATA_SIZE;
+            data->char_positions[i][0] = char_data[0];  /* X */
+            data->char_positions[i][1] = char_data[2];  /* Y */
+            fprintf(stderr, "  char[%d]: x=%d, y=%d\n", i, char_data[0], char_data[2]);
+        }
+    } else {
+        data->num_fighters = 0;
     }
     
     /* Set game state from save */

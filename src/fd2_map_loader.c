@@ -688,8 +688,7 @@ void fd2_map_render(const fd2_map_t* map,
         return;
     }
 
-    /* Clear screen */
-    memset(screen, 0, screen_w * screen_h);
+    /* REMOVED: memset(screen, 0, screen_w * screen_h); - causes sprite flickering */
 
     /* Copy map image to screen with scroll offset */
     for (int sy = 0; sy < screen_h; sy++) {
