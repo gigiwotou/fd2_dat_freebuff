@@ -1843,7 +1843,9 @@ static void state_cutscene_exit(fd2_game_t* game) {
  *   Character positions use 24-pixel grid.
  * ======================================================================== */
 
-#define MAP_TILE_SIZE 24  /* Map tile size in pixels (24x24 per FDSHAP.DAT) */
+/* Map tile size in pixels (from IDA sub_2B4FB: 28x30 per tile) */
+#define MAP_TILE_SIZE_X 28
+#define MAP_TILE_SIZE_Y 30
 
 typedef struct {
     int tile_x;           /* Map tile X coordinate */
@@ -1861,11 +1863,11 @@ typedef struct {
 
 /* Convert map tile coordinates to screen coordinates based on camera offset */
 static inline int tile_to_screen_x(int tile_x, int camera_x) {
-    return tile_x * MAP_TILE_SIZE - camera_x;
+    return tile_x * MAP_TILE_SIZE_X - camera_x;
 }
 
 static inline int tile_to_screen_y(int tile_y, int camera_y) {
-    return tile_y * MAP_TILE_SIZE - camera_y;
+    return tile_y * MAP_TILE_SIZE_Y - camera_y;
 }
 
 /* Check if a sprite at screen position is visible on screen */
@@ -2054,8 +2056,8 @@ static void state_battle_enter(fd2_game_t* game) {
     }
 
         /* Center camera on character tile position */
-        data->camera_x = data->character_tile_x * MAP_TILE_SIZE - FD2_SCREEN_W / 2;
-        data->camera_y = data->character_tile_y * MAP_TILE_SIZE - FD2_SCREEN_H / 2;
+        data->camera_x = data->character_tile_x * MAP_TILE_SIZE_X - FD2_SCREEN_W / 2;
+        data->camera_y = data->character_tile_y * MAP_TILE_SIZE_Y - FD2_SCREEN_H / 2;
         
         /* Clamp camera to map bounds */
         /* Calculate camera position to center on map characters
@@ -2081,8 +2083,8 @@ static void state_battle_enter(fd2_game_t* game) {
                 int center_tile_y = (min_y + max_y) / 2;
                 
                 /* Convert to pixel coordinates and center on screen */
-                data->camera_x = center_tile_x * MAP_TILE_SIZE - FD2_SCREEN_W / 2;
-                data->camera_y = center_tile_y * MAP_TILE_SIZE - FD2_SCREEN_H / 2;
+                data->camera_x = center_tile_x * MAP_TILE_SIZE_X - FD2_SCREEN_W / 2;
+                data->camera_y = center_tile_y * MAP_TILE_SIZE_Y - FD2_SCREEN_H / 2;
                 
                 /* Clamp to map bounds */
                 int max_cam_x = data->map.map_image_width - FD2_SCREEN_W;
@@ -2163,8 +2165,8 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             if (!sprite->loaded || !sprite->pixels) continue;
             
             /* Convert tile position to screen coordinates */
-            int screen_x = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
-            int screen_y = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
+            int screen_x = sprite->tile_x * MAP_TILE_SIZE_X - data->camera_x;
+            int screen_y = sprite->tile_y * MAP_TILE_SIZE_Y - data->camera_y;
             int draw_x = screen_x - sprite->width / 2;
             int draw_y = screen_y - sprite->height / 2;
             
