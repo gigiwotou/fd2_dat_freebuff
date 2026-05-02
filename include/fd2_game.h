@@ -88,8 +88,9 @@ typedef struct fd2_game {
 
     /* ---- Battle save data (from Continue) ---- */
     int              from_save;        /* Whether entering battle from save file */
-    int              save_char_count;  /* Number of characters in save */
-    u8               save_char_positions[64][2];  /* Real-time x, y from FD2.SAV */
+    int              save_char_count;  /* Number of characters in save (n6_0) */
+    u8               save_char_positions[64][2];  /* Real-time x, y from FD2.SAV (n8_1 offsets 0,1) */
+    u8               save_char_icons[64];         /* Icon IDs from FD2.SAV (n8_1 offset 7) */
 
     /* ---- Timing ---- */
     u32              frame_count;      /* Global frame counter */
