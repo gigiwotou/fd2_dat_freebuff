@@ -622,9 +622,19 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
                  * byte[2] = Y coordinate
                  * byte[4] = portrait ID
                  */
-                map->scene.char_positions[i].x = char_pos_data[offset];
-                map->scene.char_positions[i].y = char_pos_data[offset + 2];
-                map->scene.char_positions[i].portrait_id = char_pos_data[offset + 4];
+                u8 byte0 = char_pos_data[offset];
+                u8 byte1 = char_pos_data[offset + 1];
+                u8 byte2 = char_pos_data[offset + 2];
+                u8 byte3 = char_pos_data[offset + 3];
+                u8 byte4 = char_pos_data[offset + 4];
+                u8 byte5 = char_pos_data[offset + 5];
+                
+                printf("  char[%d] raw bytes: [%02x %02x %02x %02x %02x %02x]\n",
+                       i, byte0, byte1, byte2, byte3, byte4, byte5);
+                
+                map->scene.char_positions[i].x = byte0;
+                map->scene.char_positions[i].y = byte2;
+                map->scene.char_positions[i].portrait_id = byte4;
                 map->scene.char_pos_count++;
                 
                 /* Mark character type based on position in file */

@@ -2135,8 +2135,8 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         return FD2_STATE_MENU;
     }
 
-    /* Arrow keys scroll the map (camera movement) - DISABLED for now
-    int scroll_speed = 8;
+    /* Arrow keys scroll the map (camera movement) */
+    int scroll_speed = 4;
     if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
         data->camera_y -= scroll_speed;
         if (data->camera_y < 0) data->camera_y = 0;
@@ -2157,7 +2157,15 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         if (max_x < 0) max_x = 0;
         if (data->camera_x > max_x) data->camera_x = max_x;
     }
-    */
+    
+    /* Debug: print camera position */
+    static int print_counter = 0;
+    if (print_counter++ % 60 == 0) {
+        printf("camera: (%d,%d) max:(%d,%d)\n", 
+               data->camera_x, data->camera_y,
+               data->map.map_image_width - FD2_SCREEN_W,
+               data->map.map_image_height - FD2_SCREEN_H);
+    }
 
     /* Render map with current camera position */
     if (data->map.loaded && data->map.map_rendered) {
@@ -2172,12 +2180,14 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             /* Convert tile position to screen coordinates */
             int screen_x = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
             int screen_y = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
-            int draw_x = screen_x - sprite->width / 2;
-            int draw_y = screen_y - sprite->height / 2;
             
-            printf("  render sprite[%d]: tile=(%d,%d) screen=(%d,%d) draw=(%d,%d) size=(%d,%d) camera=(%d,%d)\n",
-                   i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
-                   sprite->width, sprite->height, data->camera_x, data->camera_y);
+            /* Draw sprite with top-left anchor (精灵左上角对齐tile左上角) */
+            int draw_x = screen_x;
+            int draw_y = screen_y;
+            
+            // printf("  render sprite[%d]: tile=(%d,%d) screen=(%d,%d) draw=(%d,%d) size=(%d,%d) camera=(%d,%d)\n",
+            //        i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
+            //        sprite->width, sprite->height, data->camera_x, data->camera_y);
             
             if (is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height)) {
                 /* Create temporary sprite_frame_t for rendering */
