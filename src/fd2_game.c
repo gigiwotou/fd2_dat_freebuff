@@ -2025,6 +2025,9 @@ static void state_battle_enter(fd2_game_t* game) {
             sprite->loaded = false;
             sprite->pixels = NULL;
             
+            printf("  sprite[%d]: tile=(%d,%d), portrait_id=%d\n", 
+                   data->sprite_count, char_pos->x, char_pos->y, char_pos->portrait_id);
+            
             /* Load icon for this character */
             int cache_idx = fd2_icon_get(char_pos->portrait_id);
             if (cache_idx >= 0) {
@@ -2052,6 +2055,8 @@ static void state_battle_enter(fd2_game_t* game) {
         }
         
         printf("state_battle: created %d character sprites\n", data->sprite_count);
+        printf("state_battle: sprite_count=%d, char_pos_count=%d\n", 
+               data->sprite_count, data->map.scene.char_pos_count);
     }
 
         /* Center camera on character tile position */
@@ -2130,7 +2135,7 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         return FD2_STATE_MENU;
     }
 
-    /* Arrow keys scroll the map (camera movement) */
+    /* Arrow keys scroll the map (camera movement) - DISABLED for now
     int scroll_speed = 8;
     if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
         data->camera_y -= scroll_speed;
@@ -2152,6 +2157,7 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         if (max_x < 0) max_x = 0;
         if (data->camera_x > max_x) data->camera_x = max_x;
     }
+    */
 
     /* Render map with current camera position */
     if (data->map.loaded && data->map.map_rendered) {
@@ -2168,6 +2174,10 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             int screen_y = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
             int draw_x = screen_x - sprite->width / 2;
             int draw_y = screen_y - sprite->height / 2;
+            
+            printf("  render sprite[%d]: tile=(%d,%d) screen=(%d,%d) draw=(%d,%d) size=(%d,%d) camera=(%d,%d)\n",
+                   i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
+                   sprite->width, sprite->height, data->camera_x, data->camera_y);
             
             if (is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height)) {
                 /* Create temporary sprite_frame_t for rendering */
