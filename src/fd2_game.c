@@ -1651,9 +1651,9 @@ static fd2_state_t state_menu_update(fd2_game_t* game) {
                     game->game_mode = 1;
                     game->map_index = 0;  /* Default map for VS */
                     return FD2_STATE_BATTLE;
-                case 2:  /* Demo */
-                    game->game_mode = 2;
-                    return FD2_STATE_DEMO;
+                case 2:  /* Continue - Load battle save */
+                    printf("[MENU] Continue - loading battle save\n");
+                    return FD2_STATE_CONTINUE;
                 default:
                     game->game_mode = 0;
                     game->map_index = 0;
@@ -2290,17 +2290,212 @@ static fd2_state_t state_victory_update(fd2_game_t* game) {
 }
 static void state_victory_exit(fd2_game_t* game) { (void)game; }
 
-/* ---- CONTINUE State ----
- * Continue screen. Placeholder.
- */
-static void state_continue_enter(fd2_game_t* game) { (void)game; }
-static fd2_state_t state_continue_update(fd2_game_t* game) {
-    if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
-        return FD2_STATE_CHAR_SELECT;
+/* ========================================================================
+ * Battle Save Loading (based on IDA sub_10010)
+ * ======================================================================== */
+
+#define BATTLE_SAVE_SIZE 22987
+#define BATTLE_SAVE_MAP_DATA_OFFSET 0
+#define BATTLE_SAVE_MAP_DATA_SIZE 2211
+#define BATTLE_SAVE_TEMP_MAP_OFFSET 2211
+#define BATTLE_SAVE_TEMP_MAP_SIZE 2560
+#define BATTLE_SAVE_CHAR_DATA_OFFSET 4771
+#define BATTLE_SAVE_CHAR_DATA_SIZE 80
+#define BATTLE_SAVE_STATE_OFFSET 12451
+#define BATTLE_SAVE_CHECKSUM_OFFSET 22983
+
+typedef struct {
+    u8 map_data[BATTLE_SAVE_MAP_DATA_SIZE];
+    u8 temp_map_data[BATTLE_SAVE_TEMP_MAP_SIZE];
+    u8 char_data[64 * BATTLE_SAVE_CHAR_DATA_SIZE];  /* Max 64 characters */
+    u8 state_data[32];
+    u8 n999;
+    u8 n6_0;           /* Character count */
+    u8 n17;            /* Scene index */
+    u16 qword_53AA9;
+    u16 qword_53AB1;
+    u8 n10;
+    u8 n2;
+    u8 n16_1;
+    u32 n999_0;
+    u8 byte_53AF9;
+    u8 byte_51AAB;
+    u8 n127;
+    u8 byte_51E62;
+    u32 checksum;
+} battle_save_data_t;
+
+/* Decryption function (based on IDA sub_4DF28) */
+static void decrypt_battle_save(u8* data, int size) {
+    /* Simple XOR decryption based on original game logic */
+    for (int i = 0; i < size; i++) {
+        data[i] ^= 0x55;
     }
-    return FD2_STATE_GAME_OVER;
 }
-static void state_continue_exit(fd2_game_t* game) { (void)game; }
+
+/* Checksum calculation (based on IDA sub_4DF09) */
+static u32 calculate_battle_save_checksum(u8* data, int size) {
+    u32 checksum = 0;
+    for (int i = 0; i < size - 4; i++) {
+        checksum += data[i];
+    }
+    return checksum;
+}
+
+/* Load and decrypt battle save file */
+static int load_battle_save(const char* save_path, battle_save_data_t* save) {
+    if (!save_path || !save) return -1;
+    
+    FILE* f = fopen(save_path, "rb");
+    if (!f) {
+        fprintf(stderr, "load_battle_save: cannot open %s\n", save_path);
+        return -1;
+    }
+    
+    /* Read entire save file */
+    u8* buffer = (u8*)malloc(BATTLE_SAVE_SIZE);
+    if (!buffer) {
+        fclose(f);
+        return -1;
+    }
+    
+    size_t bytes_read = fread(buffer, 1, BATTLE_SAVE_SIZE, f);
+    fclose(f);
+    
+    if (bytes_read != BATTLE_SAVE_SIZE) {
+        fprintf(stderr, "load_battle_save: invalid save size (%zu bytes)\n", bytes_read);
+        free(buffer);
+        return -1;
+    }
+    
+    /* Decrypt save data */
+    decrypt_battle_save(buffer, BATTLE_SAVE_SIZE);
+    
+    /* Verify checksum */
+    u32 expected_checksum = buffer[BATTLE_SAVE_CHECKSUM_OFFSET] |
+                           (buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 1] << 8) |
+                           (buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 2] << 16) |
+                           (buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 3] << 24);
+    
+    u32 actual_checksum = calculate_battle_save_checksum(buffer, BATTLE_SAVE_SIZE);
+    
+    if (expected_checksum != actual_checksum) {
+        fprintf(stderr, "load_battle_save: checksum mismatch (expected=0x%X, actual=0x%X)\n",
+                expected_checksum, actual_checksum);
+        free(buffer);
+        return -1;
+    }
+    
+    /* Copy map data */
+    memcpy(save->map_data, buffer + BATTLE_SAVE_MAP_DATA_OFFSET, BATTLE_SAVE_MAP_DATA_SIZE);
+    
+    /* Copy temp map data */
+    memcpy(save->temp_map_data, buffer + BATTLE_SAVE_TEMP_MAP_OFFSET, BATTLE_SAVE_TEMP_MAP_SIZE);
+    
+    /* Get character count */
+    save->n6_0 = buffer[BATTLE_SAVE_STATE_OFFSET + 13];  /* Offset 12484 */
+    
+    /* Copy character data (80 bytes per character) */
+    if (save->n6_0 > 0 && save->n6_0 <= 64) {
+        memcpy(save->char_data, buffer + BATTLE_SAVE_CHAR_DATA_OFFSET,
+               save->n6_0 * BATTLE_SAVE_CHAR_DATA_SIZE);
+    }
+    
+    /* Copy state data */
+    memcpy(save->state_data, buffer + BATTLE_SAVE_STATE_OFFSET, 32);
+    
+    /* Load state variables */
+    save->n999 = buffer[BATTLE_SAVE_STATE_OFFSET + 32];  /* Offset 12483 */
+    save->n17 = buffer[BATTLE_SAVE_STATE_OFFSET + 34];   /* Offset 12485 */
+    save->qword_53AA9 = buffer[BATTLE_SAVE_STATE_OFFSET + 35] |
+                       (buffer[BATTLE_SAVE_STATE_OFFSET + 36] << 8);
+    save->qword_53AB1 = buffer[BATTLE_SAVE_STATE_OFFSET + 37] |
+                       (buffer[BATTLE_SAVE_STATE_OFFSET + 38] << 8);
+    save->n10 = buffer[BATTLE_SAVE_STATE_OFFSET + 39];   /* Offset 12490 */
+    save->n2 = buffer[BATTLE_SAVE_STATE_OFFSET + 40];    /* Offset 12491 */
+    save->n16_1 = buffer[BATTLE_SAVE_STATE_OFFSET + 41]; /* Offset 12492 */
+    save->n999_0 = buffer[BATTLE_SAVE_STATE_OFFSET + 42] |
+                  (buffer[BATTLE_SAVE_STATE_OFFSET + 43] << 8) |
+                  (buffer[BATTLE_SAVE_STATE_OFFSET + 44] << 16) |
+                  (buffer[BATTLE_SAVE_STATE_OFFSET + 45] << 24);
+    save->byte_53AF9 = buffer[BATTLE_SAVE_STATE_OFFSET + 46];  /* Offset 12497 */
+    save->byte_51AAB = buffer[BATTLE_SAVE_STATE_OFFSET + 47];  /* Offset 12498 */
+    save->n127 = buffer[BATTLE_SAVE_STATE_OFFSET + 48];        /* Offset 12499 */
+    save->byte_51E62 = buffer[BATTLE_SAVE_STATE_OFFSET + 49];  /* Offset 12500 */
+    
+    free(buffer);
+    
+    printf("load_battle_save: loaded successfully (scene=%d, chars=%d)\n",
+           save->n17, save->n6_0);
+    
+    return 0;
+}
+
+/* ---- CONTINUE State ----
+ * Load battle save and enter battle state.
+ * Based on IDA sub_10010 and sub_25EBB Continue option handling.
+ */
+
+typedef struct {
+    battle_save_data_t save_data;
+    int load_step;
+    int load_failure;
+} state_continue_data_t;
+
+static void state_continue_enter(fd2_game_t* game) {
+    state_continue_data_t* data = (state_continue_data_t*)calloc(1, sizeof(state_continue_data_t));
+    game->state_data = data;
+    data->load_step = 0;
+    data->load_failure = 0;
+    
+    /* Get save file path */
+    const char* save_path = fd2_game_data_path(game, "FD2.SAV");
+    if (!save_path) {
+        fprintf(stderr, "state_continue: cannot get save path\n");
+        data->load_failure = 1;
+        return;
+    }
+    
+    /* Load and decrypt battle save */
+    if (load_battle_save(save_path, &data->save_data) != 0) {
+        fprintf(stderr, "state_continue: failed to load battle save\n");
+        data->load_failure = 1;
+        return;
+    }
+    
+    /* Set game state from save */
+    game->map_index = data->save_data.n17;
+    game->num_fighters = data->save_data.n6_0;
+    game->current_fighter = 0;
+    game->game_mode = data->save_data.n17;
+    
+    printf("state_continue: save loaded, entering battle (map=%d, chars=%d)\n",
+           data->save_data.n17, data->save_data.n6_0);
+}
+
+static fd2_state_t state_continue_update(fd2_game_t* game) {
+    state_continue_data_t* data = (state_continue_data_t*)game->state_data;
+    if (!data) return FD2_STATE_MENU;
+    
+    /* Check for load failure */
+    if (data->load_failure) {
+        /* Show error and return to menu */
+        fd2_render_fill_screen(&game->render, 0);
+        fd2_render_present(&game->render);
+        return FD2_STATE_MENU;
+    }
+    
+    /* Transition to battle state */
+    return FD2_STATE_BATTLE;
+}
+
+static void state_continue_exit(fd2_game_t* game) {
+    state_continue_data_t* data = (state_continue_data_t*)game->state_data;
+    if (data) {
+        free(data);
+    }
+    game->state_data = NULL;
+}
 
 /* ---- GAME_OVER State ----
  * Game over screen. Placeholder.
