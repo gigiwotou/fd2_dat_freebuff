@@ -17,7 +17,7 @@ if /I "%~1"=="mingw64" (
 )
 
 set GCC=%MSYS2_PREFIX%\bin\gcc.exe
-set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -mconsole -static-libgcc
+set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -DFD2_DEBUG -mconsole -static-libgcc
 set LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
 set SDL_LDFLAGS=-lmingw32 -lSDL2main -lSDL2
 

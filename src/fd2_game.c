@@ -2009,27 +2009,45 @@ static void state_battle_enter(fd2_game_t* game) {
         
         printf("state_battle: allocating %d map character sprites\n", max_chars);
         
+        /* Mark if we're loading from save with real-time positions */
+        data->from_save = game->from_save;
+        data->saved_num_fighters = game->save_char_count;
+        
         /* Create sprites for each character from map data */
         for (int i = 0; i < max_chars && data->sprite_count < max_chars; i++) {
             fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
             
+            int tile_x, tile_y, portrait_id;
+            
+            /* If loading from save, use real-time positions from FD2.SAV */
+            if (game->from_save && i < game->save_char_count) {
+                tile_x = game->save_char_positions[i][0];
+                tile_y = game->save_char_positions[i][1];
+                portrait_id = char_pos->portrait_id;
+                printf("  sprite[%d] (from SAVE): tile=(%d,%d), portrait_id=%d\n", 
+                       data->sprite_count, tile_x, tile_y, portrait_id);
+            } else {
+                tile_x = char_pos->x;
+                tile_y = char_pos->y;
+                portrait_id = char_pos->portrait_id;
+                printf("  sprite[%d] (default): tile=(%d,%d), portrait_id=%d\n", 
+                       data->sprite_count, tile_x, tile_y, portrait_id);
+            }
+            
             /* Skip empty positions */
-            if (char_pos->x == 0 && char_pos->y == 0) continue;
+            if (tile_x == 0 && tile_y == 0) continue;
             
             map_sprite_t* sprite = &data->sprites[data->sprite_count];
-            sprite->tile_x = char_pos->x;
-            sprite->tile_y = char_pos->y;
-            sprite->icon_id = char_pos->portrait_id;
+            sprite->tile_x = tile_x;
+            sprite->tile_y = tile_y;
+            sprite->icon_id = portrait_id;
             sprite->direction = 0;
             sprite->anim_frame = 0;
             sprite->loaded = false;
             sprite->pixels = NULL;
             
-            printf("  sprite[%d]: tile=(%d,%d), portrait_id=%d\n", 
-                   data->sprite_count, char_pos->x, char_pos->y, char_pos->portrait_id);
-            
             /* Load icon for this character */
-            int cache_idx = fd2_icon_get(char_pos->portrait_id);
+            int cache_idx = fd2_icon_get(portrait_id);
             if (cache_idx >= 0) {
                 sprite->cache_idx = cache_idx;
                 sprite->segment = 0;
@@ -2171,6 +2189,138 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
     if (data->map.loaded && data->map.map_rendered) {
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
                        data->camera_x, data->camera_y);
+
+#ifdef FD2_DEBUG
+        /* Simple bitmap font for debug text rendering (6x7) */
+         static const unsigned char font_6x7[10][7] = {
+             /* 0 */ {0x7C, 0x46, 0x4E, 0x5E, 0x6E, 0x46, 0x7C},
+             /* 1 */ {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x3C},
+             /* 2 */ {0x7C, 0x46, 0x06, 0x3C, 0x60, 0x46, 0x7E},
+             /* 3 */ {0x7C, 0x46, 0x06, 0x3C, 0x06, 0x46, 0x7C},
+             /* 4 */ {0x46, 0x4E, 0x5E, 0x6E, 0x7E, 0x46, 0x7E},
+             /* 5 */ {0x7E, 0x60, 0x7C, 0x06, 0x46, 0x46, 0x7C},
+             /* 6 */ {0x3C, 0x60, 0x7C, 0x4E, 0x4E, 0x46, 0x7C},
+             /* 7 */ {0x7E, 0x06, 0x0C, 0x18, 0x18, 0x30, 0x30},
+             /* 8 */ {0x7C, 0x4E, 0x7C, 0x4E, 0x4E, 0x46, 0x7C},
+             /* 9 */ {0x7C, 0x4E, 0x7E, 0x06, 0x4E, 0x46, 0x7C}
+         };
+        
+        /* Function to draw a single character */
+        void draw_char_6x7(u8* screen, int screen_w, int screen_h, 
+                           int x, int y, char c, u8 color) {
+            if (c < '0' || c > '9') return;
+            int digit = c - '0';
+            const unsigned char* char_data = font_6x7[digit];
+            
+            for (int row = 0; row < 7; row++) {
+                unsigned char row_data = char_data[row];
+                for (int col = 0; col < 6; col++) {
+                    if (row_data & (1 << (7 - col))) {  /* Check bits 7,6,5,4,3,2 */
+                        int px = x + col;
+                        int py = y + row;
+                        if (px >= 0 && px < screen_w && py >= 0 && py < screen_h) {
+                            screen[py * screen_w + px] = color;
+                        }
+                    }
+                }
+            }
+        }
+        
+        /* Function to draw a number */
+        void draw_number(u8* screen, int screen_w, int screen_h,
+                        int x, int y, int num, u8 color) {
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%d", num);
+            
+            int char_x = x;
+            for (int i = 0; buf[i] != '\0'; i++) {
+                if (buf[i] == '-') {
+                    /* Draw minus sign */
+                    for (int dx = 0; dx < 6; dx++) {
+                        int px = char_x + dx;
+                        if (px >= 0 && px < screen_w && y + 3 >= 0 && y + 3 < screen_h) {
+                            screen[(y + 3) * screen_w + px] = color;
+                        }
+                    }
+                    char_x += 7;
+                } else {
+                    draw_char_6x7(screen, screen_w, screen_h, char_x, y, buf[i], color);
+                    char_x += 7;
+                }
+            }
+        }
+        
+        /* DEBUG: Draw tile grid lines and coordinates */
+        int start_tile_x = data->camera_x / MAP_TILE_SIZE;
+        int start_tile_y = data->camera_y / MAP_TILE_SIZE;
+        int end_tile_x = (data->camera_x + FD2_SCREEN_W) / MAP_TILE_SIZE + 1;
+        int end_tile_y = (data->camera_y + FD2_SCREEN_H) / MAP_TILE_SIZE + 1;
+        
+        /* Temporarily set palette index 255 to pink (R=255, G=0, B=255) for debug text */
+        u8 saved_palette_r = game->render.palette[255 * 3];
+        u8 saved_palette_g = game->render.palette[255 * 3 + 1];
+        u8 saved_palette_b = game->render.palette[255 * 3 + 2];
+        game->render.palette[255 * 3] = 63;     /* R=255 in 6-bit */
+        game->render.palette[255 * 3 + 1] = 0;  /* G=0 */
+        game->render.palette[255 * 3 + 2] = 63; /* B=255 in 6-bit */
+        
+        for (int ty = start_tile_y; ty <= end_tile_y; ty++) {
+            for (int tx = start_tile_x; tx <= end_tile_x; tx++) {
+                int screen_x = tx * MAP_TILE_SIZE - data->camera_x;
+                int screen_y = ty * MAP_TILE_SIZE - data->camera_y;
+                
+                /* Draw grid line (white color = 255) */
+                for (int x = 0; x < MAP_TILE_SIZE; x++) {
+                    if (screen_x + x >= 0 && screen_x + x < FD2_SCREEN_W && 
+                        screen_y >= 0 && screen_y < FD2_SCREEN_H) {
+                        game->render.screen[screen_y * FD2_SCREEN_W + screen_x + x] = 255;
+                    }
+                }
+                for (int y = 0; y < MAP_TILE_SIZE; y++) {
+                    if (screen_x >= 0 && screen_x < FD2_SCREEN_W && 
+                        screen_y + y >= 0 && screen_y + y < FD2_SCREEN_H) {
+                        game->render.screen[(screen_y + y) * FD2_SCREEN_W + screen_x] = 255;
+                    }
+                }
+                
+                /* Draw tile coordinate text */
+                int text_x = screen_x + 6;
+                int text_y = screen_y + 4;
+                u8 text_color = 255;  /* Pink: R=255, G=0, B=255 */
+                
+                /* Draw X coordinate */
+                draw_number(game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H, 
+                           text_x, text_y, tx, text_color);
+                
+                /* Draw Y coordinate below X */
+                draw_number(game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H, 
+                           text_x, text_y + 8, ty, 240);
+                
+                /* Draw separator line between X and Y */
+                for (int i = 0; i < 15 && text_x + i < FD2_SCREEN_W; i++) {
+                    int py = text_y + 7;
+                    if (text_x + i >= 0 && text_x + i < FD2_SCREEN_W && 
+                        py >= 0 && py < FD2_SCREEN_H) {
+                        game->render.screen[py * FD2_SCREEN_W + text_x + i] = 200;
+                    }
+                }
+            }
+        }
+        
+        /* DEBUG: Print camera and center tile info every 30 frames */
+        static int debug_frame = 0;
+        if (debug_frame++ % 30 == 0) {
+            int center_tile_x = (data->camera_x + FD2_SCREEN_W / 2) / MAP_TILE_SIZE;
+            int center_tile_y = (data->camera_y + FD2_SCREEN_H / 2) / MAP_TILE_SIZE;
+            printf("DEBUG: camera=(%d,%d) center_tile=(%d,%d)\n",
+                   data->camera_x, data->camera_y, center_tile_x, center_tile_y);
+        }
+        
+        /* Restore original palette */
+        game->render.palette[255 * 3] = saved_palette_r;
+        game->render.palette[255 * 3 + 1] = saved_palette_g;
+        game->render.palette[255 * 3 + 2] = saved_palette_b;
+#endif /* FD2_DEBUG */
 
         /* Draw all map character sprites */
         for (int i = 0; i < data->sprite_count; i++) {
@@ -2493,6 +2643,11 @@ static void state_continue_enter(fd2_game_t* game) {
     game->num_fighters = data->save_data.n6_0;
     game->current_fighter = 0;
     game->game_mode = data->save_data.n17;
+    
+    /* Save character positions to game context for battle state to use */
+    game->from_save = 1;
+    game->save_char_count = data->num_fighters;
+    memcpy(game->save_char_positions, data->char_positions, sizeof(game->save_char_positions));
     
     printf("state_continue: save loaded, entering battle (map=%d, chars=%d)\n",
            data->save_data.n17, data->save_data.n6_0);

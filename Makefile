@@ -61,7 +61,7 @@ else
 endif
 
 # Common compiler flags
-CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -O2 $(PLATFORM_CFLAGS)
+CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -O2 -DFD2_DEBUG $(PLATFORM_CFLAGS)
 LDFLAGS = -lSDL2 -lm $(PLATFORM_LDFLAGS)
 
 # Release flags (no console window, no debug output)

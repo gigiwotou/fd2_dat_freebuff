@@ -86,6 +86,11 @@ typedef struct fd2_game {
     int              difficulty;       /* dword_53BEF */
     int              map_index;        /* Current battle map index (e.g., 97 for first story level) */
 
+    /* ---- Battle save data (from Continue) ---- */
+    int              from_save;        /* Whether entering battle from save file */
+    int              save_char_count;  /* Number of characters in save */
+    u8               save_char_positions[64][2];  /* Real-time x, y from FD2.SAV */
+
     /* ---- Timing ---- */
     u32              frame_count;      /* Global frame counter */
     u32              last_tick;        /* Last frame timestamp (SDL_GetTicks) */
