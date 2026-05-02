@@ -375,13 +375,17 @@ int fd2_sprite_render(const fd2_sprite_frame_t* frame,
     int dst_y = y;
     int copy_width = frame->width;
     int copy_height = frame->height;
+    int src_x_offset = 0;  /* Offset into source sprite when clipped */
+    int src_y_offset = 0;  /* Offset into source sprite when clipped */
     
     /* Clip to destination bounds */
     if (dst_x < 0) {
+        src_x_offset = -dst_x;  /* Skip the clipped left portion */
         copy_width += dst_x;
         dst_x = 0;
     }
     if (dst_y < 0) {
+        src_y_offset = -dst_y;  /* Skip the clipped top portion */
         copy_height += dst_y;
         dst_y = 0;
     }
@@ -403,7 +407,7 @@ int fd2_sprite_render(const fd2_sprite_frame_t* frame,
     
     /* Copy pixels row by row, skip transparent pixels (value == 0) */
     uint8_t* dst = dest + dst_y * dest_width + dst_x;
-    const uint8_t* src = frame->pixels;
+    const uint8_t* src = frame->pixels + src_y_offset * frame->width + src_x_offset;
     
     for (int row = 0; row < copy_height; row++) {
         for (int col = 0; col < copy_width; col++) {
