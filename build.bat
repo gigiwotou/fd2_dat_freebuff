@@ -33,13 +33,13 @@ set EXE_EXT=.exe
 
 :: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
-set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o
+set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game_core.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_states.o %OBJ_DIR%\fd2_states_intro.o %OBJ_DIR%\fd2_menu.o %OBJ_DIR%\fd2_battle.o %OBJ_DIR%\fd2_battle_sprite.o %OBJ_DIR%\fd2_battle_cursor.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_continue.o %OBJ_DIR%\fd2_cutscene.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
-set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_scene.o %OBJ_RELEASE_DIR%\fd2_game.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o
+set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_scene.o %OBJ_RELEASE_DIR%\fd2_game_core.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o %OBJ_RELEASE_DIR%\fd2_states.o %OBJ_RELEASE_DIR%\fd2_states_intro.o %OBJ_RELEASE_DIR%\fd2_menu.o %OBJ_RELEASE_DIR%\fd2_battle.o %OBJ_RELEASE_DIR%\fd2_battle_sprite.o %OBJ_RELEASE_DIR%\fd2_battle_cursor.o %OBJ_RELEASE_DIR%\fd2_save_load.o %OBJ_RELEASE_DIR%\fd2_continue.o %OBJ_RELEASE_DIR%\fd2_cutscene.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
@@ -104,7 +104,7 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_scene.c %OBJ_DIR%\fd2_scene.o
     if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_game.c %OBJ_DIR%\fd2_game.o
+    call :compile %SRC_DIR%\fd2_game_core.c %OBJ_DIR%\fd2_game_core.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_map_loader.c %OBJ_DIR%\fd2_map_loader.o
     if errorlevel 1 goto :error
@@ -113,6 +113,24 @@ if "%TARGET%"=="all" (
     call :compile %SRC_DIR%\fd2_sprite.c %OBJ_DIR%\fd2_sprite.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_states.c %OBJ_DIR%\fd2_states.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_states_intro.c %OBJ_DIR%\fd2_states_intro.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_menu.c %OBJ_DIR%\fd2_menu.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_battle.c %OBJ_DIR%\fd2_battle.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_battle_sprite.c %OBJ_DIR%\fd2_battle_sprite.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_battle_cursor.c %OBJ_DIR%\fd2_battle_cursor.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_save_load.c %OBJ_DIR%\fd2_save_load.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_continue.c %OBJ_DIR%\fd2_continue.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_cutscene.c %OBJ_DIR%\fd2_cutscene.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
     if errorlevel 1 goto :error
@@ -184,7 +202,7 @@ call :compile %SRC_DIR%\fd2_afm.c %OBJ_DIR%\fd2_afm.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_scene.c %OBJ_DIR%\fd2_scene.o
 if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_game.c %OBJ_DIR%\fd2_game.o
+call :compile %SRC_DIR%\fd2_game_core.c %OBJ_DIR%\fd2_game_core.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_map_loader.c %OBJ_DIR%\fd2_map_loader.o
 if errorlevel 1 goto :error
@@ -193,6 +211,24 @@ if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_sprite.c %OBJ_DIR%\fd2_sprite.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_states.c %OBJ_DIR%\fd2_states.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_states_intro.c %OBJ_DIR%\fd2_states_intro.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_menu.c %OBJ_DIR%\fd2_menu.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_battle.c %OBJ_DIR%\fd2_battle.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_battle_sprite.c %OBJ_DIR%\fd2_battle_sprite.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_battle_cursor.c %OBJ_DIR%\fd2_battle_cursor.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_save_load.c %OBJ_DIR%\fd2_save_load.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_continue.c %OBJ_DIR%\fd2_continue.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_cutscene.c %OBJ_DIR%\fd2_cutscene.o
 if errorlevel 1 goto :error
 
 echo Linking %TARGET_GAME%
@@ -220,7 +256,7 @@ call :compile_release %SRC_DIR%\fd2_afm.c %OBJ_RELEASE_DIR%\fd2_afm.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_scene.c %OBJ_RELEASE_DIR%\fd2_scene.o
 if errorlevel 1 goto :error
-call :compile_release %SRC_DIR%\fd2_game.c %OBJ_RELEASE_DIR%\fd2_game.o
+call :compile_release %SRC_DIR%\fd2_game_core.c %OBJ_RELEASE_DIR%\fd2_game_core.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_map_loader.c %OBJ_RELEASE_DIR%\fd2_map_loader.o
 if errorlevel 1 goto :error
@@ -229,6 +265,24 @@ if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_sprite.c %OBJ_RELEASE_DIR%\fd2_sprite.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\main.c %OBJ_RELEASE_DIR%\main.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_states.c %OBJ_RELEASE_DIR%\fd2_states.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_states_intro.c %OBJ_RELEASE_DIR%\fd2_states_intro.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_menu.c %OBJ_RELEASE_DIR%\fd2_menu.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle.c %OBJ_RELEASE_DIR%\fd2_battle.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_sprite.c %OBJ_RELEASE_DIR%\fd2_battle_sprite.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_cursor.c %OBJ_RELEASE_DIR%\fd2_battle_cursor.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_save_load.c %OBJ_RELEASE_DIR%\fd2_save_load.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_continue.c %OBJ_RELEASE_DIR%\fd2_continue.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_cutscene.c %OBJ_RELEASE_DIR%\fd2_cutscene.o
 if errorlevel 1 goto :error
 
 echo Linking %TARGET_GAME_RELEASE% (Release Mode)
