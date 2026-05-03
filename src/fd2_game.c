@@ -1953,6 +1953,9 @@ typedef struct {
     int cursor_blink;     /* Cursor blink timer (from IDA: n999) */
     int cursor_frame_id;  /* Cursor image frame ID (IDA: n242, 242 or 1) */
     
+    /* Debug: toggle debug grid overlay with P key */
+    bool debug_grid_enabled;
+    
     /* Cursor image data (from IDA: dword_53A81, FDOTHER.DAT) */
     const u8* fdother_data;       /* FDOTHER.DAT base pointer (IDA: dword_53A81) */
     u32 fdother_data_size;        /* FDOTHER.DAT data size */
@@ -2398,10 +2401,6 @@ static void state_battle_enter(fd2_game_t* game) {
                 if (data->camera_x > max_cam_x) data->camera_x = max_cam_x;
                 if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
                 
-                printf("state_battle: camera centered on %d chars\n", valid_count);
-                printf("  bounding box: (%d,%d) to (%d,%d)\n", min_x, min_y, max_x, max_y);
-                printf("  center tile: (%d,%d), camera: (%d,%d)\n", 
-                       center_tile_x, center_tile_y, data->camera_x, data->camera_y);
             }
         } else {
             /* Default: no characters, center on map */
@@ -2416,8 +2415,6 @@ static void state_battle_enter(fd2_game_t* game) {
                        data->camera_x, data->camera_y);
 
         fd2_render_present(&game->render);
-        printf("state_battle: map rendered with camera at (%d, %d)\n", 
-               data->camera_x, data->camera_y);
     } else {
         fprintf(stderr, "state_battle: failed to load map %d, showing black screen\n", map_id);
         fd2_render_fill_screen(&game->render, 0);
@@ -2621,7 +2618,8 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             }
         }
         
-        /* DEBUG: Print camera and center tile info every 30 frames */
+        /* DEBUG: Print camera and center tile info every 30 frames (disabled - too verbose) */
+        /*
         static int debug_frame = 0;
         if (debug_frame++ % 30 == 0) {
             int center_tile_x = (data->camera_x + FD2_SCREEN_W / 2) / MAP_TILE_SIZE;
@@ -2629,6 +2627,7 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             printf("DEBUG: camera=(%d,%d) center_tile=(%d,%d)\n",
                    data->camera_x, data->camera_y, center_tile_x, center_tile_y);
         }
+        */
         
         /* Draw cursor on map (from IDA sub_1ACF3, sub_1AEB1)
          * Cursor is drawn at cursor tile position with blink effect
@@ -2636,10 +2635,6 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
          * Uses RLE image from FDOTHER.DAT */
         int cursor_screen_x = data->cursor_x * MAP_TILE_SIZE - data->camera_x;
         int cursor_screen_y = data->cursor_y * MAP_TILE_SIZE - data->camera_y;
-        
-        printf("cursor render: pos=(%d,%d) screen=(%d,%d) camera=(%d,%d) loaded=%d\n",
-               data->cursor_x, data->cursor_y, cursor_screen_x, cursor_screen_y,
-               data->camera_x, data->camera_y, data->cursor_image_data ? 1 : 0);
         
         /* Only draw cursor if it's on screen */
         if (cursor_screen_x >= -MAP_TILE_SIZE && cursor_screen_x < FD2_SCREEN_W &&
@@ -2747,9 +2742,6 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
                 
                 fd2_sprite_render(&frame, game->render.screen, FD2_SCREEN_W,
                                   draw_x, draw_y);
-            } else {
-                printf("  [SKIPPED] sprite[%d] not visible at (%d,%d) size (%d,%d)\n",
-                       i, draw_x, draw_y, sprite->width, sprite->height);
             }
         }
 
