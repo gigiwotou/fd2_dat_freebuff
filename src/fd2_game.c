@@ -2325,6 +2325,45 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
     /* Update cursor blink timer */
     data->cursor_blink++;
     
+    /* Handle cursor confirm action (Enter/Space) from IDA sub_117E7
+     * When n44 == 57 (Enter) or n44 == 28 (Space):
+     *   1. Call sub_12C0D() - find character at cursor position
+     *   2. If found (return != -1):
+     *      - Check: v16[7] != 121 && v16[31] != 10
+     *      - If n2 == 2 && v16[5] >= 0 && !v16[38]: trigger battle (sub_18890)
+     *      - Else: normal interaction (sub_17AED)
+     *   3. Call sub_11CAC(0), sub_1E292(v13), funcs_1197B[n17](v13)
+     */
+    if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
+        /* Find character at cursor position (from IDA sub_12C0D)
+         * Iterate through all sprites, find one matching cursor tile coords
+         */
+        int char_idx = -1;
+        for (int i = 0; i < data->sprite_count; i++) {
+            if (data->sprites[i].loaded &&
+                data->sprites[i].tile_x == data->cursor_x &&
+                data->sprites[i].tile_y == data->cursor_y) {
+                char_idx = i;
+                break;
+            }
+        }
+        
+        if (char_idx != -1) {
+            map_sprite_t* sprite = &data->sprites[char_idx];
+            printf("cursor confirm: found sprite[%d] at (%d,%d)\n",
+                   char_idx, sprite->tile_x, sprite->tile_y);
+            
+            /* TODO: Implement full battle/interaction logic from IDA:
+             * - Check sprite conditions (type, flags, etc.)
+             * - Trigger battle or normal interaction
+             * - For now, just log the interaction
+             */
+        } else {
+            printf("cursor confirm: no sprite at (%d,%d)\n",
+                   data->cursor_x, data->cursor_y);
+        }
+    }
+    
     /* Debug: print cursor position */
     static int print_counter = 0;
     if (print_counter++ % 60 == 0) {
