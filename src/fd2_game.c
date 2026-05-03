@@ -2253,8 +2253,10 @@ static void state_battle_enter(fd2_game_t* game) {
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDSHAP);
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
     
-    /* Load FDOTHER data for cursor images (IDA: dword_53A81) */
-    data->fdother_data = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 0, &data->fdother_data_size);
+    /* Load FDOTHER data for cursor images (IDA: dword_53A81)
+     * Per IDA 3396A.c: sub_25A96(..., FDOTHER_DAT__0, 1, 1)
+     * Cursor image is at FDOTHER.DAT internal resource index 1 */
+    data->fdother_data = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 1, &data->fdother_data_size);
     if (data->fdother_data) {
         printf("state_battle: FDOTHER.DAT loaded (%u bytes)\n", data->fdother_data_size);
         load_cursor_image(data);
