@@ -1851,9 +1851,8 @@ typedef struct {
     int tile_y;           /* Map tile Y coordinate */
     int icon_id;          /* FDICON.B24 icon index */
     int cache_idx;        /* fd2_icon_get cache index */
-    int sprite_type;      /* Sprite type index (each type has 12 segments) */
-    int anim_frame;       /* 0-11 animation frame counter */
     int direction;        /* 0=down, 1=left, 2=up, 3=right */
+    int anim_frame;       /* 0-2 animation frame within direction */
     int anim_timer;       /* Frame counter for animation timing */
     u8* pixels;           /* Decoded sprite pixel data */
     int width;
@@ -1888,16 +1887,17 @@ static bool load_map_sprite_icon(map_sprite_t* sprite, int icon_id) {
     
     sprite->icon_id = icon_id;
     sprite->cache_idx = cache_idx;
-    sprite->sprite_type = icon_id;
+    sprite->direction = 0;
     sprite->anim_frame = 0;
+    sprite->anim_timer = 0;
     
     sprite->width = 24;
     sprite->height = 24;
     sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
     if (!sprite->pixels) return false;
     
-    /* Per IDA sub_1C2DA: segment = sprite_type * 12 + anim_frame */
-    int segment = sprite->sprite_type * 12 + sprite->anim_frame;
+    /* Per IDA sub_1C2DA: segment = icon_id * 12 + direction * 3 + anim_frame */
+    int segment = icon_id * 12 + 0 * 3 + 0;  /* direction=0, anim_frame=0 */
     if (fd2_icon_decode_segment(cache_idx, segment,
                                 sprite->width, sprite->height,
                                 sprite->pixels) != 0) {
@@ -1914,16 +1914,23 @@ static bool load_map_sprite_icon(map_sprite_t* sprite, int icon_id) {
 static void update_map_sprite_animation(map_sprite_t* sprite) {
     if (!sprite || !sprite->loaded) return;
     
-    /* Update animation frame counter (cycle through 0-11) */
+    /* Update animation frame counter (cycle 0->1->2->0->1->2...)
+     * Per IDA: each direction has 3 frames */
     sprite->anim_timer++;
     if (sprite->anim_timer >= 8) {  /* Update every 8 frames */
         sprite->anim_timer = 0;
-        sprite->anim_frame = (sprite->anim_frame + 1) % 12;
+        sprite->anim_frame = (sprite->anim_frame + 1) % 3;
     }
     
-    /* Decode current animation frame segment (0-11)
-     * Per IDA: each icon in FDICON.B24 has 12 segments for animation */
-    fd2_icon_decode_segment(sprite->cache_idx, sprite->anim_frame,
+    /* Per IDA sub_1C2DA: segment = icon_id * 12 + direction * 3 + anim_frame
+     * Each sprite has 12 frames: 3 frames per direction (4 directions)
+     * Direction 0: frames 0-2 (down)
+     * Direction 1: frames 3-5 (left)
+     * Direction 2: frames 6-8 (up)
+     * Direction 3: frames 9-11 (right) */
+    int segment = sprite->icon_id * 12 + sprite->direction * 3 + sprite->anim_frame;
+    
+    fd2_icon_decode_segment(sprite->cache_idx, segment,
                             sprite->width, sprite->height,
                             sprite->pixels);
 }
@@ -2048,7 +2055,6 @@ static void state_battle_enter(fd2_game_t* game) {
         sprite->tile_x = tile_x;
         sprite->tile_y = tile_y;
         sprite->icon_id = icon_id;
-        sprite->sprite_type = icon_id;
         sprite->cache_idx = -1;
         sprite->direction = 0;
         sprite->anim_frame = 0;
@@ -2066,14 +2072,11 @@ static void state_battle_enter(fd2_game_t* game) {
         printf("    fd2_icon_get(%d) = %d\n", icon_id, cache_idx);
         if (cache_idx >= 0) {
             sprite->cache_idx = cache_idx;
-            sprite->sprite_type = icon_id;
             sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
             if (sprite->pixels) {
-                /* Per IDA sub_1C2DA: segment = sprite_type * 12 + anim_frame
-                 * But fd2_icon_decode_segment expects segment 0-11 within the cached icon
-                 * sprite_type = icon_id (for segment calculation in sub_1C2DA)
-                 * anim_frame starts at 0 */
-                int segment = 0;  /* Animation frame 0-11 within this icon */
+                /* Per IDA sub_1C2DA: segment = icon_id * 12 + direction * 3 + anim_frame
+                 * anim_frame starts at 0, direction starts at 0 */
+                int segment = icon_id * 12 + 0;
                 printf("    decoding icon=%d cache=%d segment=%d for sprite[%d]\n", 
                        icon_id, cache_idx, segment, data->sprite_count);
                 if (fd2_icon_decode_segment(cache_idx, segment, sprite->width, sprite->height,
