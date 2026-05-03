@@ -1940,9 +1940,18 @@ static void move_sprite_to_tile(map_sprite_t* sprite, int new_tile_x, int new_ti
 
 typedef struct {
     fd2_map_t map;
-    int camera_x;         /* Camera offset in map pixels */
-    int camera_y;         /* Camera offset in map pixels */
+    int camera_x;         /* Camera offset in map pixels (from IDA: dword_53AA9 * MAP_TILE_SIZE) */
+    int camera_y;         /* Camera offset in map pixels (from IDA: dword_53AAD * MAP_TILE_SIZE) */
 
+    /* Cursor system (from IDA: sub_117E7, sub_11B48, sub_11B9B, sub_11C59, sub_11BFA) */
+    int cursor_x;         /* Cursor tile X coordinate (IDA: dword_53AB1) */
+    int cursor_y;         /* Cursor tile Y coordinate (IDA: dword_53AB5) */
+    int scroll_x;         /* Horizontal scroll offset (IDA: dword_53AA9) */
+    int scroll_y;         /* Vertical scroll offset (IDA: dword_53AAD) */
+    int move_counter_x;   /* Horizontal move counter (IDA: n10) */
+    int move_counter_y;   /* Vertical move counter (IDA: n2_1) */
+    int cursor_blink;     /* Cursor blink timer (from IDA: n999) */
+    
     /* Character sprite on map */
     map_sprite_t* sprites;
     int sprite_count;
@@ -1965,11 +1974,126 @@ typedef struct {
     u8 saved_char_positions[64][2];  /* x, y for each character */
 } state_battle_data_t;
 
+/* ========================================================================
+ * Cursor System (from IDA: sub_11B48, sub_11B9B, sub_11C59, sub_11BFA)
+ * 
+ * IDA Variables:
+ *   dword_53AB1: cursor X coordinate (tile)
+ *   dword_53AB5: cursor Y coordinate (tile)
+ *   dword_53AA9: horizontal scroll offset
+ *   dword_53AAD: vertical scroll offset
+ *   n10: horizontal move counter
+ *   n2_1: vertical move counter
+ *   dword_53AC1: map width (tiles)
+ *   dword_53AC5: map height (tiles)
+ * 
+ * Scroll Logic:
+ *   - Up: if (n2_1 < 2 && dword_53AAD) { scroll_y--; cursor_y--; } 
+ *         else { n2_1--; cursor_y--; }
+ *   - Down: if (n2_1 <= 5 || scroll_y == map_height - 8) { n2_1++; cursor_y++; }
+ *           else { scroll_y++; cursor_y++; }
+ *   - Left: if (n10 < 2 && scroll_x) { scroll_x--; cursor_x--; }
+ *           else { n10--; cursor_x--; }
+ *   - Right: if (n10 <= 10 || scroll_x == map_width - 13) { n10++; cursor_x++; }
+ *            else { scroll_x++; cursor_x++; }
+ * 
+ * Visible Area: ~13 columns x 8 rows
+ * ======================================================================== */
+
+/* Move cursor up (from IDA sub_11B48) */
+static void cursor_move_up(state_battle_data_t* data, int map_height) {
+    if (data->cursor_y > 0) {
+        if (data->move_counter_y < 2 && data->scroll_y > 0) {
+            /* Adjust scroll offset */
+            data->cursor_y--;
+            data->scroll_y--;
+        } else {
+            /* Adjust move counter */
+            data->cursor_y--;
+            data->move_counter_y--;
+        }
+    }
+}
+
+/* Move cursor down (from IDA sub_11B9B) */
+static void cursor_move_down(state_battle_data_t* data, int map_height) {
+    if (data->cursor_y < map_height - 1) {
+        if (data->move_counter_y <= 5 || data->scroll_y == map_height - 8) {
+            /* Adjust move counter or at scroll boundary */
+            data->cursor_y++;
+            data->move_counter_y++;
+        } else {
+            /* Adjust scroll offset */
+            data->cursor_y++;
+            data->scroll_y++;
+        }
+    }
+}
+
+/* Move cursor left (from IDA sub_11C59) */
+static void cursor_move_left(state_battle_data_t* data, int map_width) {
+    if (data->cursor_x > 0) {
+        if (data->move_counter_x < 2 && data->scroll_x > 0) {
+            /* Adjust scroll offset */
+            data->cursor_x--;
+            data->scroll_x--;
+        } else {
+            /* Adjust move counter */
+            data->cursor_x--;
+            data->move_counter_x--;
+        }
+    }
+}
+
+/* Move cursor right (from IDA sub_11BFA) */
+static void cursor_move_right(state_battle_data_t* data, int map_width) {
+    if (data->cursor_x < map_width - 1) {
+        if (data->move_counter_x <= 10 || data->scroll_x == map_width - 13) {
+            /* Adjust move counter or at scroll boundary */
+            data->cursor_x++;
+            data->move_counter_x++;
+        } else {
+            /* Adjust scroll offset */
+            data->cursor_x++;
+            data->scroll_x++;
+        }
+    }
+}
+
+/* Update camera position based on cursor scroll (from IDA logic) */
+static void update_camera_from_cursor(state_battle_data_t* data) {
+    /* Camera follows the scroll offset */
+    data->camera_x = data->scroll_x * MAP_TILE_SIZE;
+    data->camera_y = data->scroll_y * MAP_TILE_SIZE;
+    
+    /* Clamp camera to map bounds */
+    int max_cam_x = data->map.map_image_width - FD2_SCREEN_W;
+    int max_cam_y = data->map.map_image_height - FD2_SCREEN_H;
+    if (max_cam_x < 0) max_cam_x = 0;
+    if (max_cam_y < 0) max_cam_y = 0;
+    if (data->camera_x < 0) data->camera_x = 0;
+    if (data->camera_y < 0) data->camera_y = 0;
+    if (data->camera_x > max_cam_x) data->camera_x = max_cam_x;
+    if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
+}
+
 static void state_battle_enter(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)calloc(1, sizeof(state_battle_data_t));
     game->state_data = data;
+    
+    /* Initialize cursor system (from IDA sub_205DA) */
+    data->cursor_x = 0;         /* IDA: dword_53AB1 = 0 */
+    data->cursor_y = 0;         /* IDA: dword_53AB5 = 0 */
+    data->scroll_x = 0;         /* IDA: dword_53AA9 = 0 */
+    data->scroll_y = 0;         /* IDA: dword_53AAD = 0 */
+    data->move_counter_x = 0;   /* IDA: n10 = 0 */
+    data->move_counter_y = 0;   /* IDA: n2_1 = 0 */
+    data->cursor_blink = 0;     /* IDA: n999 = 0 */
+    
+    /* Initialize camera (from cursor scroll) */
     data->camera_x = 0;
     data->camera_y = 0;
+    
     data->character_icon_loaded = false;
     data->character_tile_x = 0;
     data->character_tile_y = 0;
@@ -2177,36 +2301,38 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         update_map_sprite_animation(&data->sprites[i]);
     }
 
-    /* Arrow keys scroll the map (camera movement) */
-    int scroll_speed = 4;
+    /* Cursor movement with arrow keys (from IDA sub_117E7, sub_11B48, sub_11B9B, sub_11C59, sub_11BFA) */
+    int map_width = data->map.width;
+    int map_height = data->map.height;
+    
     if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
-        data->camera_y -= scroll_speed;
-        if (data->camera_y < 0) data->camera_y = 0;
+        cursor_move_up(data, map_height);
+        update_camera_from_cursor(data);
     }
     if (fd2_action_pressed(&game->input, FD2_ACTION_DOWN)) {
-        data->camera_y += scroll_speed;
-        int max_y = data->map.map_image_height - FD2_SCREEN_H;
-        if (max_y < 0) max_y = 0;
-        if (data->camera_y > max_y) data->camera_y = max_y;
+        cursor_move_down(data, map_height);
+        update_camera_from_cursor(data);
     }
     if (fd2_action_pressed(&game->input, FD2_ACTION_LEFT)) {
-        data->camera_x -= scroll_speed;
-        if (data->camera_x < 0) data->camera_x = 0;
+        cursor_move_left(data, map_width);
+        update_camera_from_cursor(data);
     }
     if (fd2_action_pressed(&game->input, FD2_ACTION_RIGHT)) {
-        data->camera_x += scroll_speed;
-        int max_x = data->map.map_image_width - FD2_SCREEN_W;
-        if (max_x < 0) max_x = 0;
-        if (data->camera_x > max_x) data->camera_x = max_x;
+        cursor_move_right(data, map_width);
+        update_camera_from_cursor(data);
     }
     
-    /* Debug: print camera position */
+    /* Update cursor blink timer */
+    data->cursor_blink++;
+    
+    /* Debug: print cursor position */
     static int print_counter = 0;
     if (print_counter++ % 60 == 0) {
-        printf("camera: (%d,%d) max:(%d,%d)\n", 
-               data->camera_x, data->camera_y,
-               data->map.map_image_width - FD2_SCREEN_W,
-               data->map.map_image_height - FD2_SCREEN_H);
+        printf("cursor: (%d,%d) scroll:(%d,%d) move:(%d,%d) camera:(%d,%d)\n", 
+               data->cursor_x, data->cursor_y,
+               data->scroll_x, data->scroll_y,
+               data->move_counter_x, data->move_counter_y,
+               data->camera_x, data->camera_y);
     }
 
     /* Render map with current camera position */
@@ -2338,6 +2464,51 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             int center_tile_y = (data->camera_y + FD2_SCREEN_H / 2) / MAP_TILE_SIZE;
             printf("DEBUG: camera=(%d,%d) center_tile=(%d,%d)\n",
                    data->camera_x, data->camera_y, center_tile_x, center_tile_y);
+        }
+        
+        /* Draw cursor on map (from IDA sub_1ACF3, sub_1AEB1)
+         * Cursor is drawn at cursor tile position with blink effect
+         * Blink cycle: ~30 frames visible, then briefly hidden */
+        int cursor_screen_x = data->cursor_x * MAP_TILE_SIZE - data->camera_x;
+        int cursor_screen_y = data->cursor_y * MAP_TILE_SIZE - data->camera_y;
+        
+        /* Only draw cursor if it's on screen */
+        if (cursor_screen_x >= -MAP_TILE_SIZE && cursor_screen_x < FD2_SCREEN_W &&
+            cursor_screen_y >= -MAP_TILE_SIZE && cursor_screen_y < FD2_SCREEN_H) {
+            /* Cursor blink: visible when (cursor_blink % 30) < 25 */
+            bool cursor_visible = (data->cursor_blink % 30) < 25;
+            
+            if (cursor_visible) {
+                /* Draw cursor as a semi-transparent overlay on the tile
+                 * Use palette index 15 (yellow highlight) for visibility */
+                u8 cursor_color = 15;
+                
+                /* Draw cursor border (24x24 tile outline) */
+                for (int x = 0; x < MAP_TILE_SIZE; x++) {
+                    int px = cursor_screen_x + x;
+                    /* Top border */
+                    if (px >= 0 && px < FD2_SCREEN_W && cursor_screen_y >= 0 && cursor_screen_y < FD2_SCREEN_H) {
+                        game->render.screen[cursor_screen_y * FD2_SCREEN_W + px] = cursor_color;
+                    }
+                    /* Bottom border */
+                    int bottom_y = cursor_screen_y + MAP_TILE_SIZE - 1;
+                    if (px >= 0 && px < FD2_SCREEN_W && bottom_y >= 0 && bottom_y < FD2_SCREEN_H) {
+                        game->render.screen[bottom_y * FD2_SCREEN_W + px] = cursor_color;
+                    }
+                }
+                for (int y = 0; y < MAP_TILE_SIZE; y++) {
+                    int py = cursor_screen_y + y;
+                    /* Left border */
+                    if (cursor_screen_x >= 0 && cursor_screen_x < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
+                        game->render.screen[py * FD2_SCREEN_W + cursor_screen_x] = cursor_color;
+                    }
+                    /* Right border */
+                    int right_x = cursor_screen_x + MAP_TILE_SIZE - 1;
+                    if (right_x >= 0 && right_x < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
+                        game->render.screen[py * FD2_SCREEN_W + right_x] = cursor_color;
+                    }
+                }
+            }
         }
         
         /* Restore original palette */
