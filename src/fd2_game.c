@@ -1850,10 +1850,9 @@ typedef struct {
     int tile_x;           /* Map tile X coordinate */
     int tile_y;           /* Map tile Y coordinate */
     int icon_id;          /* FDICON.B24 icon index */
-    int direction;        /* 0=front, 1=left, 2=back, 3=right */
-    int anim_frame;       /* 0-2 animation frame */
     int cache_idx;        /* fd2_icon_get cache index */
-    int segment;          /* Current segment (0-11) */
+    int sprite_type;      /* Sprite type index (each type has 12 segments) */
+    int anim_frame;       /* 0-11 animation frame counter */
     u8* pixels;           /* Decoded sprite pixel data */
     int width;
     int height;
@@ -1887,16 +1886,17 @@ static bool load_map_sprite_icon(map_sprite_t* sprite, int icon_id) {
     
     sprite->icon_id = icon_id;
     sprite->cache_idx = cache_idx;
-    sprite->direction = 0;
+    sprite->sprite_type = icon_id;
     sprite->anim_frame = 0;
-    sprite->segment = 0;
     
     sprite->width = 24;
     sprite->height = 24;
     sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
     if (!sprite->pixels) return false;
     
-    if (fd2_icon_decode_segment(cache_idx, sprite->segment,
+    /* Per IDA sub_1C2DA: segment = sprite_type * 12 + anim_frame */
+    int segment = sprite->sprite_type * 12 + sprite->anim_frame;
+    if (fd2_icon_decode_segment(cache_idx, segment,
                                 sprite->width, sprite->height,
                                 sprite->pixels) != 0) {
         free(sprite->pixels);
@@ -1908,14 +1908,14 @@ static bool load_map_sprite_icon(map_sprite_t* sprite, int icon_id) {
     return true;
 }
 
-/* Helper: update map sprite animation frame */
+/* Helper: update map sprite animation frame based on IDA logic */
 static void update_map_sprite_animation(map_sprite_t* sprite) {
     if (!sprite || !sprite->loaded) return;
     
-    sprite->anim_frame = (sprite->anim_frame + 1) % 3;
-    sprite->segment = sprite->direction * 3 + sprite->anim_frame;
+    /* Per IDA sub_1C2DA: segment = sprite_type * 12 + anim_frame */
+    int segment = sprite->sprite_type * 12 + sprite->anim_frame;
     
-    fd2_icon_decode_segment(sprite->cache_idx, sprite->segment,
+    fd2_icon_decode_segment(sprite->cache_idx, segment,
                             sprite->width, sprite->height,
                             sprite->pixels);
 }
@@ -2037,7 +2037,7 @@ static void state_battle_enter(fd2_game_t* game) {
         sprite->tile_x = tile_x;
         sprite->tile_y = tile_y;
         sprite->icon_id = icon_id;
-        sprite->direction = 0;
+        sprite->sprite_type = icon_id;
         sprite->anim_frame = 0;
         sprite->loaded = false;
         sprite->pixels = NULL;
@@ -2050,12 +2050,12 @@ static void state_battle_enter(fd2_game_t* game) {
         printf("    fd2_icon_get(%d) = %d\n", icon_id, cache_idx);
         if (cache_idx >= 0) {
             sprite->cache_idx = cache_idx;
-            sprite->segment = 0;
             int icon_width = 24;
             int icon_height = 24;
             sprite->pixels = (u8*)calloc(1, icon_width * icon_height);
             if (sprite->pixels) {
-                if (fd2_icon_decode_segment(cache_idx, 0, icon_width, icon_height,
+                int segment = icon_id * 12 + 0;
+                if (fd2_icon_decode_segment(cache_idx, segment, icon_width, icon_height,
                                            sprite->pixels) == 0) {
                     sprite->width = icon_width;
                     sprite->height = icon_height;
