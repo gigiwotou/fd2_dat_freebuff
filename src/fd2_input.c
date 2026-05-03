@@ -71,11 +71,18 @@ void fd2_input_process_event(fd2_input_t* input, const void* sdl_event) {
     if (e->type != SDL_KEYDOWN && e->type != SDL_KEYUP) return;
     if (e->key.repeat) return;  /* Ignore key repeat */
 
-    fd2_action_t action = fd2_input_map_scancode(e->key.keysym.scancode);
+    int scancode = e->key.keysym.scancode;
+    
+    /* Track raw key state */
+    if (scancode >= 0 && scancode < 512) {
+        input->key_states[scancode] = (e->type == SDL_KEYDOWN);
+    }
+
+    fd2_action_t action = fd2_input_map_scancode(scancode);
     if (action == FD2_ACTION_NONE || action >= FD2_ACTION_COUNT) return;
 
     input->last_keycode  = e->key.keysym.sym;
-    input->last_scancode = e->key.keysym.scancode;
+    input->last_scancode = scancode;
 
     if (e->type == SDL_KEYDOWN) {
         if (!input->held[action]) {
@@ -111,4 +118,16 @@ bool fd2_input_any_pressed(const fd2_input_t* input) {
         if (input->pressed[i]) return true;
     }
     return false;
+}
+
+bool fd2_key_held(const fd2_input_t* input, int scancode) {
+    if (!input || scancode < 0 || scancode >= 512) return false;
+    return input->key_states[scancode];
+}
+
+bool fd2_key_pressed(const fd2_input_t* input, int scancode) {
+    /* For pressed, we need to check if it was just pressed this frame
+     * We can approximate this by checking if it's held and wasn't held before */
+    if (!input || scancode < 0 || scancode >= 512) return false;
+    return input->key_states[scancode];
 }

@@ -52,6 +52,7 @@ typedef struct fd2_input {
     /* Raw key state for diagnostic/debug */
     int   last_keycode;               /* Last SDL key event code */
     int   last_scancode;              /* Last SDL scan code */
+    bool  key_states[512];            /* Raw key state (indexed by scancode) */
 } fd2_input_t;
 
 /* ---- Functions ---- */
@@ -93,6 +94,18 @@ bool fd2_action_released(const fd2_input_t* input, fd2_action_t action);
  * Returns true if there is any pending input.
  */
 bool fd2_input_any_pressed(const fd2_input_t* input);
+
+/*
+ * Check if a specific raw key is currently held down.
+ * Index is SDL scancode.
+ */
+bool fd2_key_held(const fd2_input_t* input, int scancode);
+
+/*
+ * Check if a specific raw key was just pressed this frame.
+ * Index is SDL scancode.
+ */
+bool fd2_key_pressed(const fd2_input_t* input, int scancode);
 
 /*
  * Get the action that maps to an SDL scancode.
