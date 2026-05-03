@@ -2171,50 +2171,62 @@ static int decode_rle_image(
 }
 
 /* Load cursor image from FDOTHER.DAT
- * Per IDA 1ACF3.c:
- *   sub_4E98D((__int16 *)(*(_DWORD *)(dword_53A81 + 526) + dword_53A81), ...)
- * dword_53A81 is the ENTIRE raw FDOTHER.DAT file loaded as one block.
- * Offset 526 within it is a relative offset pointer into the same block. */
-static int load_cursor_image(state_battle_data_t* data) {
-    if (!data->fdother_data || data->fdother_data_size == 0) {
-        printf("load_cursor_image: FDOTHER data not loaded\n");
+ * Per analysis:
+ * - Resource 0 in FDOTHER.DAT contains the cursor image
+ * - Header: width(2)=24 + height(2)=24 + internal_offset_table(16-bit)
+ * - Frame 0 RLE data at internal offset 0x14 (20) */
+static int load_cursor_image(fd2_game_t* game, state_battle_data_t* data) {
+    /* Get raw FDOTHER.DAT data */
+    const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
+    if (!fdother_dat || !fdother_dat->data) {
+        printf("load_cursor_image: raw FDOTHER.DAT data not available\n");
         return -1;
     }
     
-    /* Check header size for offset pointer at 526 */
-    if (data->fdother_data_size < 530) {
-        printf("load_cursor_image: FDOTHER data too small (%u bytes, need >=530)\n", data->fdother_data_size);
+    /* Resource 0: 24x24 cursor image */
+    u32 res0_start = fdother_dat->resources[0].start;
+    u32 res0_size = fdother_dat->resources[0].size;
+    printf("load_cursor_image: Resource 0 at file offset %u (0x%04X), size=%u\n", 
+           res0_start, res0_start, res0_size);
+    
+    if (res0_size < 24) {
+        printf("load_cursor_image: Resource 0 too small\n");
         return -1;
     }
     
-    /* Get relative offset at position 526 */
-    u32 image_offset = *(const u32*)(data->fdother_data + 526);
-    printf("load_cursor_image: raw image_offset at 526 = %u (0x%04X)\n", image_offset, image_offset);
+    const u8* res0_data = fdother_dat->data + res0_start;
     
-    if (image_offset == 0 || image_offset >= data->fdother_data_size) {
-        printf("load_cursor_image: invalid image offset %u (data size %u)\n", image_offset, data->fdother_data_size);
-        return -1;
-    }
-    
-    /* Cursor image data is at base + offset */
-    const u8* image_data = data->fdother_data + image_offset;
-    
-    /* Read image header (width, height) */
-    u16 width = *(const u16*)(image_data);
-    u16 height = *(const u16*)(image_data + 2);
-    
-    printf("load_cursor_image: image data at offset %u, dimensions=%dx%d\n", 
-           image_offset, width, height);
+    /* Header: width(2) + height(2) */
+    u16 width = *(const u16*)(res0_data);
+    u16 height = *(const u16*)(res0_data + 2);
+    printf("load_cursor_image: cursor dimensions=%dx%d\n", width, height);
     
     if (width == 0 || height == 0 || width > 256 || height > 256) {
-        printf("load_cursor_image: invalid image dimensions %dx%d\n", width, height);
+        printf("load_cursor_image: invalid dimensions %dx%d\n", width, height);
         return -1;
     }
     
-    /* Store cursor image info */
-    data->cursor_image_data = image_data + 4;  /* Skip header */
+    /* Internal offset table: 16-bit offsets starting at byte 4
+     * First entry (0x14=20) points to frame 0 RLE data */
+    u16 frame0_offset = *(const u16*)(res0_data + 4);
+    printf("load_cursor_image: frame 0 internal offset=%u (0x%02X)\n", frame0_offset, frame0_offset);
+    
+    if (frame0_offset >= res0_size) {
+        printf("load_cursor_image: invalid frame offset %u\n", frame0_offset);
+        return -1;
+    }
+    
+    /* Frame 0 RLE data */
+    data->cursor_image_data = res0_data + frame0_offset;
     data->cursor_image_width = width;
     data->cursor_image_height = height;
+    
+    /* Print first few bytes of cursor RLE data */
+    printf("load_cursor_image: first 8 bytes of RLE data: ");
+    for (int i = 0; i < 8; i++) {
+        printf("%02X ", data->cursor_image_data[i]);
+    }
+    printf("\n");
     
     return 0;
 }
@@ -2265,7 +2277,7 @@ static void state_battle_enter(fd2_game_t* game) {
         data->fdother_data = fdother_dat->data;
         data->fdother_data_size = fdother_dat->file_size;
         printf("state_battle: FDOTHER.DAT raw file loaded (%u bytes)\n", data->fdother_data_size);
-        if (load_cursor_image(data) == 0) {
+        if (load_cursor_image(game, data) == 0) {
             printf("state_battle: cursor image loaded OK, %dx%d\n", 
                    data->cursor_image_width, data->cursor_image_height);
         } else {
@@ -2355,27 +2367,16 @@ static void state_battle_enter(fd2_game_t* game) {
         
         /* Load icon for this character */
         int cache_idx = fd2_icon_get(icon_id);
-        printf("    fd2_icon_get(%d) = %d\n", icon_id, cache_idx);
         if (cache_idx >= 0) {
             sprite->cache_idx = cache_idx;
             sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
             if (sprite->pixels) {
                 /* Each icon in FDICON.B24 has 12 segments (animation frames 0-11) */
                 int segment = 0;
-                printf("    decoding icon=%d cache=%d segment=%d for sprite[%d]\n", 
-                       icon_id, cache_idx, segment, data->sprite_count);
                 if (fd2_icon_decode_segment(cache_idx, segment, sprite->width, sprite->height,
                                            sprite->pixels) == 0) {
-                    /* Check if pixel data is non-zero */
-                    int non_zero = 0;
-                    for (int p = 0; p < sprite->width * sprite->height; p++) {
-                        if (sprite->pixels[p] != 0) non_zero++;
-                    }
-                    printf("    decode OK, non-zero pixels=%d/%d, setting loaded=true\n", 
-                           non_zero, sprite->width * sprite->height);
                     sprite->loaded = true;
                 } else {
-                    printf("    decode FAILED\n");
                     free(sprite->pixels);
                     sprite->pixels = NULL;
                 }

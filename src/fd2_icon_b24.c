@@ -214,9 +214,6 @@ int fd2_icon_get(int icon_id) {
     int cache_index = g_cached_count;
     g_cached_count++;
 
-    printf("fd2_icon_get: loaded icon %d -> cache index %d (size=%u, buffer_start=%d)\n",
-           icon_id, cache_index, data_size, buffer_start);
-
     return cache_index;
 }
 
