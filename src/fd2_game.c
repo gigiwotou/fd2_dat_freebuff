@@ -2487,8 +2487,6 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         
         if (char_idx != -1) {
             map_sprite_t* sprite = &data->sprites[char_idx];
-            printf("cursor confirm: found sprite[%d] at (%d,%d)\n",
-                   char_idx, sprite->tile_x, sprite->tile_y);
             
             /* TODO: Implement full battle/interaction logic from IDA:
              * - Check sprite conditions (type, flags, etc.)
@@ -2499,16 +2497,6 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             printf("cursor confirm: no sprite at (%d,%d)\n",
                    data->cursor_x, data->cursor_y);
         }
-    }
-    
-    /* Debug: print cursor position */
-    static int print_counter = 0;
-    if (print_counter++ % 60 == 0) {
-        printf("cursor: (%d,%d) scroll:(%d,%d) move:(%d,%d) camera:(%d,%d)\n", 
-               data->cursor_x, data->cursor_y,
-               data->scroll_x, data->scroll_y,
-               data->move_counter_x, data->move_counter_y,
-               data->camera_x, data->camera_y);
     }
 
     /* Render map with current camera position */
@@ -2649,55 +2637,80 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         int cursor_screen_x = data->cursor_x * MAP_TILE_SIZE - data->camera_x;
         int cursor_screen_y = data->cursor_y * MAP_TILE_SIZE - data->camera_y;
         
+        printf("cursor render: pos=(%d,%d) screen=(%d,%d) camera=(%d,%d) loaded=%d\n",
+               data->cursor_x, data->cursor_y, cursor_screen_x, cursor_screen_y,
+               data->camera_x, data->camera_y, data->cursor_image_data ? 1 : 0);
+        
         /* Only draw cursor if it's on screen */
         if (cursor_screen_x >= -MAP_TILE_SIZE && cursor_screen_x < FD2_SCREEN_W &&
             cursor_screen_y >= -MAP_TILE_SIZE && cursor_screen_y < FD2_SCREEN_H) {
             /* Cursor blink: visible when (cursor_blink % 30) < 25 */
             bool cursor_visible = (data->cursor_blink % 30) < 25;
             
-            if (cursor_visible && data->cursor_image_data) {
-                /* Decode and draw cursor RLE image
-                 * From IDA: n242 controls frame ID (242 or 1) */
-                data->cursor_frame_id = (data->move_counter_y <= 5 || data->move_counter_x >= 3) ?
-                    ((data->move_counter_y > 5 && data->move_counter_x > 9) ? 1 : data->cursor_frame_id) : 242;
-                
-                /* Temporary buffer for decoded cursor image (24x24 = 576 max) */
-                u8 cursor_pixels[576];
-                int img_w = data->cursor_image_width;
-                int img_h = data->cursor_image_height;
-                
-                /* Decode RLE cursor image */
-                decode_rle_image(
-                    data->cursor_image_data,
-                    cursor_pixels,
-                    img_w,
-                    img_w,
-                    img_h
-                );
-                
-                /* Blit cursor image to screen at cursor position */
-                int start_x = cursor_screen_x;
-                int start_y = cursor_screen_y;
-                
-                for (int y = 0; y < img_h; y++) {
-                    for (int x = 0; x < img_w; x++) {
-                        int sx = start_x + x;
-                        int sy = start_y + y;
-                        
-                        /* Check bounds */
-                        if (sx >= 0 && sx < FD2_SCREEN_W && sy >= 0 && sy < FD2_SCREEN_H) {
-                            u8 pixel = cursor_pixels[y * img_w + x];
-                            /* Skip transparent pixels (palette index 0) */
-                            if (pixel != 0) {
-                                game->render.screen[sy * FD2_SCREEN_W + sx] = pixel;
+            if (cursor_visible) {
+                if (data->cursor_image_data) {
+                    /* Decode and draw cursor RLE image
+                     * From IDA: n242 controls frame ID (242 or 1) */
+                    data->cursor_frame_id = (data->move_counter_y <= 5 || data->move_counter_x >= 3) ?
+                        ((data->move_counter_y > 5 && data->move_counter_x > 9) ? 1 : data->cursor_frame_id) : 242;
+                    
+                    /* Temporary buffer for decoded cursor image (24x24 = 576 max) */
+                    u8 cursor_pixels[576];
+                    int img_w = data->cursor_image_width;
+                    int img_h = data->cursor_image_height;
+                    
+                    /* Decode RLE cursor image */
+                    decode_rle_image(
+                        data->cursor_image_data,
+                        cursor_pixels,
+                        img_w,
+                        img_w,
+                        img_h
+                    );
+                    
+                    /* Blit cursor image to screen at cursor position */
+                    int start_x = cursor_screen_x;
+                    int start_y = cursor_screen_y;
+                    
+                    for (int y = 0; y < img_h; y++) {
+                        for (int x = 0; x < img_w; x++) {
+                            int sx = start_x + x;
+                            int sy = start_y + y;
+                            
+                            /* Check bounds */
+                            if (sx >= 0 && sx < FD2_SCREEN_W && sy >= 0 && sy < FD2_SCREEN_H) {
+                                u8 pixel = cursor_pixels[y * img_w + x];
+                                /* Skip transparent pixels (palette index 0) */
+                                if (pixel != 0) {
+                                    game->render.screen[sy * FD2_SCREEN_W + sx] = pixel;
+                                }
                             }
                         }
                     }
+                } else {
+                    /* Fallback: draw simple yellow border cursor if RLE image not loaded */
+                    u8 cursor_color = 15;
+                    for (int x = 0; x < MAP_TILE_SIZE; x++) {
+                        int px = cursor_screen_x + x;
+                        if (px >= 0 && px < FD2_SCREEN_W && cursor_screen_y >= 0 && cursor_screen_y < FD2_SCREEN_H) {
+                            game->render.screen[cursor_screen_y * FD2_SCREEN_W + px] = cursor_color;
+                        }
+                        int bottom_y = cursor_screen_y + MAP_TILE_SIZE - 1;
+                        if (px >= 0 && px < FD2_SCREEN_W && bottom_y >= 0 && bottom_y < FD2_SCREEN_H) {
+                            game->render.screen[bottom_y * FD2_SCREEN_W + px] = cursor_color;
+                        }
+                    }
+                    for (int y = 0; y < MAP_TILE_SIZE; y++) {
+                        int py = cursor_screen_y + y;
+                        if (cursor_screen_x >= 0 && cursor_screen_x < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
+                            game->render.screen[py * FD2_SCREEN_W + cursor_screen_x] = cursor_color;
+                        }
+                        int right_x = cursor_screen_x + MAP_TILE_SIZE - 1;
+                        if (right_x >= 0 && right_x < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
+                            game->render.screen[py * FD2_SCREEN_W + right_x] = cursor_color;
+                        }
+                    }
                 }
-                
-                printf("cursor draw: frame=%d pos=(%d,%d) screen=(%d,%d) size=%dx%d\n",
-                       data->cursor_frame_id, data->cursor_x, data->cursor_y,
-                       cursor_screen_x, cursor_screen_y, img_w, img_h);
             }
         }
         
@@ -2722,13 +2735,7 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             int draw_x = screen_x;
             int draw_y = screen_y;
             
-            printf("  render sprite[%d]: tile=(%d,%d) screen=(%d,%d) draw=(%d,%d) size=(%d,%d) camera=(%d,%d)\n",
-                   i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
-                   sprite->width, sprite->height, data->camera_x, data->camera_y);
-            
             int visible = is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height);
-            printf("  visible=%d (sx=%d sy=%d w=%d h=%d screen=%dx%d)\n",
-                   visible, draw_x, draw_y, sprite->width, sprite->height, FD2_SCREEN_W, FD2_SCREEN_H);
             
             if (visible) {
                 /* Create temporary sprite_frame_t for rendering */
@@ -2740,7 +2747,6 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
                 
                 fd2_sprite_render(&frame, game->render.screen, FD2_SCREEN_W,
                                   draw_x, draw_y);
-                printf("  [DRAWN] sprite[%d] at screen (%d,%d)\n", i, draw_x, draw_y);
             } else {
                 printf("  [SKIPPED] sprite[%d] not visible at (%d,%d) size (%d,%d)\n",
                        i, draw_x, draw_y, sprite->width, sprite->height);
