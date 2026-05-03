@@ -2171,38 +2171,39 @@ static int decode_rle_image(
 }
 
 /* Load cursor image from FDOTHER.DAT
- * From IDA: dword_53A81 points to FDOTHER data
- * Image data offset stored at dword_53A81 + 526 */
+ * Per IDA 1ACF3.c:
+ *   sub_4E98D((__int16 *)(*(_DWORD *)(dword_53A81 + 526) + dword_53A81), ...)
+ * dword_53A81 is the ENTIRE raw FDOTHER.DAT file loaded as one block.
+ * Offset 526 within it is a relative offset pointer into the same block. */
 static int load_cursor_image(state_battle_data_t* data) {
     if (!data->fdother_data || data->fdother_data_size == 0) {
         printf("load_cursor_image: FDOTHER data not loaded\n");
         return -1;
     }
     
-    /* Get image data offset from FDOTHER header (offset 526 = 0x20E) */
+    /* Check header size for offset pointer at 526 */
     if (data->fdother_data_size < 530) {
-        printf("load_cursor_image: FDOTHER data too small\n");
+        printf("load_cursor_image: FDOTHER data too small (%u bytes, need >=530)\n", data->fdother_data_size);
         return -1;
     }
     
+    /* Get relative offset at position 526 */
     u32 image_offset = *(const u32*)(data->fdother_data + 526);
-    if (image_offset + 4 >= data->fdother_data_size) {
-        printf("load_cursor_image: invalid image offset %u\n", image_offset);
+    printf("load_cursor_image: raw image_offset at 526 = %u (0x%04X)\n", image_offset, image_offset);
+    
+    if (image_offset == 0 || image_offset >= data->fdother_data_size) {
+        printf("load_cursor_image: invalid image offset %u (data size %u)\n", image_offset, data->fdother_data_size);
         return -1;
     }
     
+    /* Cursor image data is at base + offset */
     const u8* image_data = data->fdother_data + image_offset;
     
     /* Read image header (width, height) */
-    if (data->fdother_data_size < image_offset + 4) {
-        printf("load_cursor_image: incomplete image header\n");
-        return -1;
-    }
-    
     u16 width = *(const u16*)(image_data);
     u16 height = *(const u16*)(image_data + 2);
     
-    printf("load_cursor_image: FDOTHER offset=%u, size=%dx%d\n", 
+    printf("load_cursor_image: image data at offset %u, dimensions=%dx%d\n", 
            image_offset, width, height);
     
     if (width == 0 || height == 0 || width > 256 || height > 256) {
@@ -2254,14 +2255,24 @@ static void state_battle_enter(fd2_game_t* game) {
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
     
     /* Load FDOTHER data for cursor images (IDA: dword_53A81)
-     * Per IDA 3396A.c: sub_25A96(..., FDOTHER_DAT__0, 1, 1)
-     * Cursor image is at FDOTHER.DAT internal resource index 1 */
-    data->fdother_data = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 1, &data->fdother_data_size);
-    if (data->fdother_data) {
-        printf("state_battle: FDOTHER.DAT loaded (%u bytes)\n", data->fdother_data_size);
-        load_cursor_image(data);
+     * Per IDA 3396A.c line 28: sub_111BA(..., aFdotherDat, 0, 88)
+     * This loads the ENTIRE raw FDOTHER.DAT file as one block.
+     * Then 1ACF3.c line 35 reads offset 526 from the raw file:
+     *   *(_DWORD *)(dword_53A81 + 526) + dword_53A81
+     * We need the raw file data, not a specific resource index. */
+    const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
+    if (fdother_dat && fdother_dat->data) {
+        data->fdother_data = fdother_dat->data;
+        data->fdother_data_size = fdother_dat->file_size;
+        printf("state_battle: FDOTHER.DAT raw file loaded (%u bytes)\n", data->fdother_data_size);
+        if (load_cursor_image(data) == 0) {
+            printf("state_battle: cursor image loaded OK, %dx%d\n", 
+                   data->cursor_image_width, data->cursor_image_height);
+        } else {
+            printf("state_battle: cursor image load FAILED\n");
+        }
     } else {
-        printf("state_battle: FDOTHER.DAT not available\n");
+        printf("state_battle: FDOTHER.DAT raw file not available\n");
     }
 
     /* Load map using new map loader */
