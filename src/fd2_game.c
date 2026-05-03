@@ -2440,6 +2440,14 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         return FD2_STATE_MENU;
     }
 
+    /* Debug: 每60帧输出一次状态信息 */
+    static int debug_counter = 0;
+    debug_counter++;
+    if (debug_counter % 60 == 1) {
+        printf("[BATTLE] 状态运行中 - map.loaded=%d, map_rendered=%d\n", 
+               data->map.loaded, data->map.map_rendered);
+    }
+
     if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
         return FD2_STATE_MENU;
     }
@@ -2447,6 +2455,7 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
     /* Toggle debug grid overlay with L key (debug builds only) */
 #ifdef FD2_DEBUG
     if (fd2_action_pressed(&game->input, FD2_ACTION_DEBUG_GRID)) {
+        printf("[DEBUG] L键被按下！\n");
         data->debug_grid_enabled = !data->debug_grid_enabled;
         printf("[DEBUG] 网格切换: %s\n", data->debug_grid_enabled ? "开启" : "关闭");
     }
