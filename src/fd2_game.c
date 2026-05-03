@@ -155,6 +155,13 @@ int fd2_game_init(fd2_game_t* game, const char* data_dir) {
         }
     }
 
+    /* Disable IME text input to prevent interference with game controls.
+     * On Windows with Chinese/Japanese IME, pressing keys can trigger
+     * IME composition mode which causes SDL to stop generating
+     * regular KEYDOWN/KEYUP events. */
+    SDL_SetHint(SDL_HINT_IME_INTERNAL_EDITING, "0");
+    SDL_StopTextInput();
+
     /* Initialize subsystems */
     if (fd2_render_init(&game->render, FD2_RENDER_SCALE) != 0) {
         fprintf(stderr, "fd2_game_init: render init failed\n");
@@ -2428,21 +2435,20 @@ static void state_battle_enter(fd2_game_t* game) {
 
 static fd2_state_t state_battle_update(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)game->state_data;
-    if (!data) return FD2_STATE_MENU;
+    if (!data) {
+        printf("state_battle: data is NULL, returning to menu\n");
+        return FD2_STATE_MENU;
+    }
 
     if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
         return FD2_STATE_MENU;
     }
 
-    /* Toggle debug grid overlay with P key (debug builds only) */
+    /* Toggle debug grid overlay with G key (debug builds only) */
 #ifdef FD2_DEBUG
-    {
-        static bool p_was_pressed = false;
-        bool p_is_pressed = fd2_key_held(&game->input, SDL_SCANCODE_P);
-        if (p_is_pressed && !p_was_pressed) {
-            data->debug_grid_enabled = !data->debug_grid_enabled;
-        }
-        p_was_pressed = p_is_pressed;
+    if (fd2_action_pressed(&game->input, FD2_ACTION_DEBUG_GRID)) {
+        data->debug_grid_enabled = !data->debug_grid_enabled;
+        printf("debug_grid: %s\n", data->debug_grid_enabled ? "ON" : "OFF");
     }
 #endif
 
@@ -2520,123 +2526,44 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
 #ifdef FD2_DEBUG
         /* Only draw debug grid overlay when enabled (toggle with P key) */
         if (data->debug_grid_enabled) {
-            /* Simple 6x7 bitmap font for digits 0-9 */
-            static const unsigned char font_6x7[10][7] = {
-                {0x7C, 0x46, 0x4E, 0x5E, 0x6E, 0x46, 0x7C},
-                {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x3C},
-                {0x7C, 0x46, 0x06, 0x3C, 0x60, 0x46, 0x7E},
-                {0x7C, 0x46, 0x06, 0x3C, 0x06, 0x46, 0x7C},
-                {0x46, 0x4E, 0x5E, 0x6E, 0x7E, 0x46, 0x7E},
-                {0x7E, 0x60, 0x7C, 0x06, 0x46, 0x46, 0x7C},
-                {0x3C, 0x60, 0x7C, 0x4E, 0x4E, 0x46, 0x7C},
-                {0x7E, 0x06, 0x0C, 0x18, 0x18, 0x30, 0x30},
-                {0x7C, 0x4E, 0x7C, 0x4E, 0x4E, 0x46, 0x7C},
-                {0x7C, 0x4E, 0x7E, 0x06, 0x4E, 0x46, 0x7C}
-            };
+            printf("DEBUG: drawing grid overlay\n");
             
-            /* Draw tile grid lines and coordinates */
+            /* Draw simple white grid lines (no text for now) */
             int start_tile_x = data->camera_x / MAP_TILE_SIZE;
             int start_tile_y = data->camera_y / MAP_TILE_SIZE;
             int end_tile_x = (data->camera_x + FD2_SCREEN_W) / MAP_TILE_SIZE + 1;
             int end_tile_y = (data->camera_y + FD2_SCREEN_H) / MAP_TILE_SIZE + 1;
             
-            /* Temporarily set palette index 255 to pink for debug text */
-            u8 saved_palette_r = game->render.palette[255 * 3];
-            u8 saved_palette_g = game->render.palette[255 * 3 + 1];
-            u8 saved_palette_b = game->render.palette[255 * 3 + 2];
-            game->render.palette[255 * 3] = 63;
-            game->render.palette[255 * 3 + 1] = 0;
-            game->render.palette[255 * 3 + 2] = 63;
-            
-            u8 text_color = 255;
+            printf("DEBUG: grid tiles X=%d..%d, Y=%d..%d\n", 
+                   start_tile_x, end_tile_x, start_tile_y, end_tile_y);
             
             for (int ty = start_tile_y; ty <= end_tile_y; ty++) {
                 for (int tx = start_tile_x; tx <= end_tile_x; tx++) {
                     int screen_x = tx * MAP_TILE_SIZE - data->camera_x;
                     int screen_y = ty * MAP_TILE_SIZE - data->camera_y;
                     
-                    /* Draw grid line */
-                    for (int x = 0; x < MAP_TILE_SIZE; x++) {
-                        if (screen_x + x >= 0 && screen_x + x < FD2_SCREEN_W && 
-                            screen_y >= 0 && screen_y < FD2_SCREEN_H) {
-                            game->render.screen[screen_y * FD2_SCREEN_W + screen_x + x] = 255;
-                        }
-                    }
-                    for (int y = 0; y < MAP_TILE_SIZE; y++) {
-                        if (screen_x >= 0 && screen_x < FD2_SCREEN_W && 
-                            screen_y + y >= 0 && screen_y + y < FD2_SCREEN_H) {
-                            game->render.screen[(screen_y + y) * FD2_SCREEN_W + screen_x] = 255;
+                    /* Draw simple white grid lines (color 63 = white in default palette) */
+                    u8 grid_color = 63;
+                    
+                    /* Horizontal line (top of tile) */
+                    if (screen_y >= 0 && screen_y < FD2_SCREEN_H) {
+                        int x_start = (screen_x < 0) ? 0 : screen_x;
+                        int x_end = (screen_x + MAP_TILE_SIZE > FD2_SCREEN_W) ? FD2_SCREEN_W : (screen_x + MAP_TILE_SIZE);
+                        for (int x = x_start; x < x_end; x++) {
+                            game->render.screen[screen_y * FD2_SCREEN_W + x] = grid_color;
                         }
                     }
                     
-                    /* Draw tile coordinate text (inline - no nested functions) */
-                    int text_x = screen_x + 6;
-                    int text_y = screen_y + 4;
-                    
-                    /* Draw X coordinate digits */
-                    char xbuf[20];
-                    snprintf(xbuf, sizeof(xbuf), "%d", tx);
-                    int char_x = text_x;
-                    for (int i = 0; xbuf[i] != '\0'; i++) {
-                        if (xbuf[i] >= '0' && xbuf[i] <= '9') {
-                            int digit = xbuf[i] - '0';
-                            const unsigned char* char_data = font_6x7[digit];
-                            for (int row = 0; row < 7; row++) {
-                                unsigned char row_data = char_data[row];
-                                for (int col = 0; col < 6; col++) {
-                                    if (row_data & (1 << (7 - col))) {
-                                        int px = char_x + col;
-                                        int py = text_y + row;
-                                        if (px >= 0 && px < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
-                                            game->render.screen[py * FD2_SCREEN_W + px] = text_color;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        char_x += 7;
-                    }
-                    
-                    /* Draw Y coordinate below X */
-                    char ybuf[20];
-                    snprintf(ybuf, sizeof(ybuf), "%d", ty);
-                    char_x = text_x;
-                    int y_text_y = text_y + 8;
-                    for (int i = 0; ybuf[i] != '\0'; i++) {
-                        if (ybuf[i] >= '0' && ybuf[i] <= '9') {
-                            int digit = ybuf[i] - '0';
-                            const unsigned char* char_data = font_6x7[digit];
-                            for (int row = 0; row < 7; row++) {
-                                unsigned char row_data = char_data[row];
-                                for (int col = 0; col < 6; col++) {
-                                    if (row_data & (1 << (7 - col))) {
-                                        int px = char_x + col;
-                                        int py = y_text_y + row;
-                                        if (px >= 0 && px < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
-                                            game->render.screen[py * FD2_SCREEN_W + px] = 240;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        char_x += 7;
-                    }
-                    
-                    /* Draw separator line between X and Y */
-                    for (int i = 0; i < 15 && text_x + i < FD2_SCREEN_W; i++) {
-                        int py = text_y + 7;
-                        if (text_x + i >= 0 && text_x + i < FD2_SCREEN_W && 
-                            py >= 0 && py < FD2_SCREEN_H) {
-                            game->render.screen[py * FD2_SCREEN_W + text_x + i] = 200;
+                    /* Vertical line (left of tile) */
+                    if (screen_x >= 0 && screen_x < FD2_SCREEN_W) {
+                        int y_start = (screen_y < 0) ? 0 : screen_y;
+                        int y_end = (screen_y + MAP_TILE_SIZE > FD2_SCREEN_H) ? FD2_SCREEN_H : (screen_y + MAP_TILE_SIZE);
+                        for (int y = y_start; y < y_end; y++) {
+                            game->render.screen[y * FD2_SCREEN_W + screen_x] = grid_color;
                         }
                     }
                 }
             }
-            
-            /* Restore original palette */
-            game->render.palette[255 * 3] = saved_palette_r;
-            game->render.palette[255 * 3 + 1] = saved_palette_g;
-            game->render.palette[255 * 3 + 2] = saved_palette_b;
         }
 #endif /* FD2_DEBUG */
         
