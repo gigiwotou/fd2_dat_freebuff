@@ -11,20 +11,6 @@
 extern "C" {
 #endif
 
-typedef enum {
-    BATTLE_STATE_IDLE,
-    BATTLE_STATE_CHAR_SELECTED,
-    BATTLE_STATE_MENU,
-    BATTLE_STATE_SUBMENU,
-    BATTLE_STATE_TARGET_SELECT,
-    BATTLE_STATE_ANIMATING,
-} battle_interaction_state_t;
-
-typedef struct {
-    char text[32];
-    int action_id;
-} menu_item_t;
-
 typedef struct {
     int tile_x;
     int tile_y;
@@ -75,21 +61,18 @@ typedef struct {
     int character_tile_x;
     int character_tile_y;
 
-    battle_interaction_state_t interaction_state;
-    int selected_char_idx;
-    int menu_selected_idx;
-    int menu_item_count;
-    menu_item_t menu_items[16];
-    int submenu_selected_idx;
-    int submenu_item_count;
-    menu_item_t submenu_items[16];
-    int target_tile_x;
-    int target_tile_y;
-
     bool from_save;
     int saved_num_fighters;
     u8 saved_char_positions[64][2];
+
+    /* Character selection state - based on IDA sub_12C0D */
+    int selected_char_idx;
+    int cursor_char_frame_id;
 } state_battle_data_t;
+
+/* Character query - based on IDA sub_12C0D */
+int battle_find_char_at_cursor(state_battle_data_t* data);
+int battle_check_char_valid(state_battle_data_t* data, int char_idx);
 
 /* Sprite system */
 void battle_render_sprites(map_sprite_t* sprites, int sprite_count,
@@ -112,13 +95,6 @@ int decode_rle_image(const u8* src, u8* dst, int dst_stride, int width, int heig
 int load_cursor_image(fd2_game_t* game, state_battle_data_t* data);
 void battle_render_cursor(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
 void battle_render_debug_grid(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
-
-/* Menu system */
-void battle_init_main_menu(state_battle_data_t* data, int char_idx);
-void battle_render_menu(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
-void battle_menu_move_up(state_battle_data_t* data);
-void battle_menu_move_down(state_battle_data_t* data);
-void battle_render_text_box(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
 
 /* Battle state */
 void state_battle_enter(fd2_game_t* game);
