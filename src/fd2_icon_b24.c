@@ -368,7 +368,44 @@ int fd2_icon_decode_segment(int cache_index, int segment, int width, int height,
                 }
                 width_remaining -= count;
             } else if (!bit7 && bit6) {
-                /* 0x40-0x7F: FILL with next byte */
+                /* 0x40-0x7F: ALTERNATE - write same value at every other pixel position
+                 * Per IDA sub_4E98D lines 85-95 (executed when bit7=0, bit6=1):
+                 *   count_1 = (count_1 >> 2) + 1;   // count_1 = (opcode & 0x3F) + 1
+                 *   count = count - count_1 - count_1;  // count -= 2 * count_1
+                 *   value = *src++;  // read fill color
+                 *   do {
+                 *     v14 = dst + 1;
+                 *     *v14 = value;  // write at dst+1, dst+3, dst+5...
+                 *     dst = v14 + 1;  // dst += 2
+                 *     --count_1;
+                 *   } while (count_1);
+                 *
+                 * Writes 'count' pixels at odd offsets from current position.
+                 * Even offsets remain unchanged (transparent).
+                 * Total positions consumed = count * 2.
+                 */
+                if (src_ptr >= seg_data_len) {
+                    break;
+                }
+                unsigned char fill_value = seg_data[src_ptr++];
+                
+                for (int i = 0; i < count; i++) {
+                    dst_ptr++;  /* Skip to odd position (dst+1) */
+                    if (dst_ptr < width * height) {
+                        pixels[dst_ptr] = fill_value;
+                    }
+                    dst_ptr++;  /* Advance to next even position (dst+2) */
+                }
+                width_remaining -= count * 2;  /* ALTERNATE consumes 2 positions per pixel */
+            } else {
+                /* 0x00-0x3F: FILL with next byte
+                 * Per IDA sub_4E98D lines 75-83 (executed when bit7=0, bit6=0):
+                 *   count_1 = (count_1 >> 2) + 1;
+                 *   count -= count_1;
+                 *   value = *src++;  // read fill color
+                 *   memset(dst, value, count_1);  // continuous fill
+                 *   dst += count_1;
+                 */
                 if (src_ptr >= seg_data_len) {
                     break;
                 }
@@ -380,34 +417,6 @@ int fd2_icon_decode_segment(int cache_index, int segment, int width, int height,
                     }
                 }
                 width_remaining -= count;
-            } else {
-                /* 0x00-0x3F: ALTERNATE - write same value at alternating pixel positions
-                 * Per IDA sub_4E98D lines 83-95:
-                 *   count = count - count_1 - count_1;
-                 *   value = *src++;
-                 *   do {
-                 *     v14 = dst + 1;
-                 *     *v14 = value;
-                 *     dst = v14 + 1;   // dst += 2
-                 *     --count_1;
-                 *   } while ( count_1 );
-                 * 
-                 * Writes 'count' pixels, each separated by 1 pixel gap.
-                 * Total pixels consumed = count * 2
-                 */
-                if (src_ptr >= seg_data_len) {
-                    break;
-                }
-                unsigned char fill_value = seg_data[src_ptr++];
-                
-                for (int i = 0; i < count; i++) {
-                    dst_ptr++;  /* Skip one pixel gap */
-                    if (dst_ptr < width * height) {
-                        pixels[dst_ptr] = fill_value;
-                        dst_ptr++;  /* Skip to next write position */
-                    }
-                }
-                width_remaining -= count * 2;  /* ALTERNATE consumes 2x pixel positions */
             }
         }
     }
