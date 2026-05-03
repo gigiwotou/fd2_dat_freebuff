@@ -1853,6 +1853,8 @@ typedef struct {
     int cache_idx;        /* fd2_icon_get cache index */
     int sprite_type;      /* Sprite type index (each type has 12 segments) */
     int anim_frame;       /* 0-11 animation frame counter */
+    int direction;        /* 0=down, 1=left, 2=up, 3=right */
+    int anim_timer;       /* Frame counter for animation timing */
     u8* pixels;           /* Decoded sprite pixel data */
     int width;
     int height;
@@ -1912,10 +1914,16 @@ static bool load_map_sprite_icon(map_sprite_t* sprite, int icon_id) {
 static void update_map_sprite_animation(map_sprite_t* sprite) {
     if (!sprite || !sprite->loaded) return;
     
-    /* Per IDA sub_1C2DA: segment = sprite_type * 12 + anim_frame */
-    int segment = sprite->sprite_type * 12 + sprite->anim_frame;
+    /* Update animation frame counter (cycle through 0-11) */
+    sprite->anim_timer++;
+    if (sprite->anim_timer >= 8) {  /* Update every 8 frames */
+        sprite->anim_timer = 0;
+        sprite->anim_frame = (sprite->anim_frame + 1) % 12;
+    }
     
-    fd2_icon_decode_segment(sprite->cache_idx, segment,
+    /* Decode current animation frame segment (0-11)
+     * Per IDA: each icon in FDICON.B24 has 12 segments for animation */
+    fd2_icon_decode_segment(sprite->cache_idx, sprite->anim_frame,
                             sprite->width, sprite->height,
                             sprite->pixels);
 }
@@ -2040,9 +2048,11 @@ static void state_battle_enter(fd2_game_t* game) {
         sprite->tile_x = tile_x;
         sprite->tile_y = tile_y;
         sprite->icon_id = icon_id;
-        sprite->sprite_type = 0;
+        sprite->sprite_type = icon_id;
         sprite->cache_idx = -1;
+        sprite->direction = 0;
         sprite->anim_frame = 0;
+        sprite->anim_timer = 0;
         sprite->loaded = false;
         sprite->pixels = NULL;
         sprite->width = 24;
@@ -2163,6 +2173,11 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
 
     if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
         return FD2_STATE_MENU;
+    }
+
+    /* Update all sprite animations */
+    for (int i = 0; i < data->sprite_count; i++) {
+        update_map_sprite_animation(&data->sprites[i]);
     }
 
     /* Arrow keys scroll the map (camera movement) */
