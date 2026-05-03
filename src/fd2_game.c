@@ -2535,8 +2535,6 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
 #ifdef FD2_DEBUG
         /* Only draw debug grid overlay when enabled (toggle with L key) */
         if (data->debug_grid_enabled) {
-            printf("[DEBUG] 正在绘制网格覆盖层\n");
-            
             /* Draw simple white grid lines (no text for now) */
             int start_tile_x = data->camera_x / MAP_TILE_SIZE;
             int start_tile_y = data->camera_y / MAP_TILE_SIZE;
