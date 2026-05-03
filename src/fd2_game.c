@@ -2129,38 +2129,41 @@ static int decode_rle_image(
             u8 opcode = *p++;
             int count = (opcode & 0x3F) + 1;
             
-            if (opcode & 0x80) {
-                /* Bit7=1: Data operations */
-                if (opcode & 0x40) {
-                    /* Bit7=1, Bit6=1: SKIP - transparent pixels */
-                    col += count;
-                } else {
-                    /* Bit7=1, Bit6=0: COPY - raw data */
-                    int i;
-                    for (i = 0; i < count && col < width; i++) {
-                        dst_row[col++] = *p++;
+            int bit7 = (opcode >> 7) & 1;
+            int bit6 = (opcode >> 6) & 1;
+            
+            if (bit7 && bit6) {
+                /* bit7=1, bit6=1: SKIP - transparent pixels
+                 * Per IDA: dst += count_1; (just advance pointer) */
+                col += count;
+            } else if (bit7 && !bit6) {
+                /* bit7=1, bit6=0: COPY - copy raw pixel data
+                 * Per IDA: qmemcpy(dst, src, count_1); src += count_1; */
+                int i;
+                for (i = 0; i < count && col < width; i++) {
+                    dst_row[col++] = *p++;
+                }
+            } else if (!bit7 && bit6) {
+                /* bit7=0, bit6=1: ALTERNATE - fill every other pixel
+                 * Per IDA 4E98D lines 86-95:
+                 *   count = count - count - count;  (double count)
+                 *   then fill at odd positions: *dst++ = value; dst++; */
+                u8 color = *p++;
+                int i;
+                for (i = 0; i < count && col < width; i++) {
+                    col++;  /* skip even position */
+                    if (col < width) {
+                        dst_row[col] = color;
                     }
+                    col++;  /* advance past written pixel */
                 }
             } else {
-                /* Bit7=0: Fill operations */
-                if (opcode & 0x40) {
-                    /* Bit7=0, Bit6=1: ALTERNATE - write at odd offsets (1,3,5...) */
-                    u8 color = *p++;
-                    int i;
-                    for (i = 0; i < count && col < width; i++) {
-                        col++;  /* skip even position */
-                        if (col < width) {
-                            dst_row[col] = color;
-                        }
-                        col++;  /* advance to next even position */
-                    }
-                } else {
-                    /* Bit7=0, Bit6=0: FILL - continuous fill */
-                    u8 color = *p++;
-                    int i;
-                    for (i = 0; i < count && col < width; i++) {
-                        dst_row[col++] = color;
-                    }
+                /* bit7=0, bit6=0: FILL - fill with single color
+                 * Per IDA 4E98D line 79: memset(dst, value, count_1); */
+                u8 color = *p++;
+                int i;
+                for (i = 0; i < count && col < width; i++) {
+                    dst_row[col++] = color;
                 }
             }
         }
@@ -2170,60 +2173,85 @@ static int decode_rle_image(
     return 0;
 }
 
-/* Load cursor image from FDOTHER.DAT
- * Per analysis:
- * - Resource 0 in FDOTHER.DAT contains the cursor image
- * - Header: width(2)=24 + height(2)=24 + internal_offset_table(16-bit)
- * - Frame 0 RLE data at internal offset 0x14 (20) */
+/* Load cursor image from FDOTHER.DAT index 1, sub-resource 0
+ * 
+ * FDOTHER.DAT structure (LLLLLL format):
+ *   - Bytes 0-5: "LLLLLL" magic
+ *   - Bytes 6-9: resource count (DWORD, little-endian)
+ *   - Bytes 10+: resource offset table (4 bytes per entry)
+ * 
+ * Index 1 internal structure:
+ *   - Each entry is 8 bytes: [start_offset (DWORD)][end_offset (DWORD)]
+ *   - Sub-resource 0 starts at offset 312, size 484 bytes
+ *   - Cursor format: [width (2 bytes)][height (2 bytes)][RLE data]
+ * 
+ * Per Python analysis: sub-resource 0 is 24x20 pixels, RLE compressed */
 static int load_cursor_image(fd2_game_t* game, state_battle_data_t* data) {
-    /* Get raw FDOTHER.DAT data */
-    const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
-    if (!fdother_dat || !fdother_dat->data) {
-        printf("load_cursor_image: raw FDOTHER.DAT data not available\n");
+    (void)game;
+    
+    const u8* fdother_raw = data->fdother_data;
+    u32 fdother_size = data->fdother_data_size;
+    
+    printf("load_cursor_image: FDOTHER raw data at %p, size=%u\n", 
+           (void*)fdother_raw, fdother_size);
+    
+    if (fdother_size < 10) {
+        printf("load_cursor_image: FDOTHER data too small\n");
         return -1;
     }
     
-    /* Resource 0: 24x24 cursor image */
-    u32 res0_start = fdother_dat->resources[0].start;
-    u32 res0_size = fdother_dat->resources[0].size;
-    printf("load_cursor_image: Resource 0 at file offset %u (0x%04X), size=%u\n", 
-           res0_start, res0_start, res0_size);
-    
-    if (res0_size < 24) {
-        printf("load_cursor_image: Resource 0 too small\n");
+    if (memcmp(fdother_raw, "LLLLLL", 6) != 0) {
+        printf("load_cursor_image: invalid header\n");
         return -1;
     }
     
-    const u8* res0_data = fdother_dat->data + res0_start;
+    u32 resource_count = *(const u32*)(fdother_raw + 6);
+    printf("load_cursor_image: FDOTHER resource count=%u\n", resource_count);
     
-    /* Header: width(2) + height(2) */
-    u16 width = *(const u16*)(res0_data);
-    u16 height = *(const u16*)(res0_data + 2);
+    if (resource_count < 2) {
+        printf("load_cursor_image: not enough resources\n");
+        return -1;
+    }
+    
+    /* Get index 1 offset from resource table (at offset 10) */
+    u32 res1_offset = *(const u32*)(fdother_raw + 10);
+    u32 res2_offset = *(const u32*)(fdother_raw + 14);
+    printf("load_cursor_image: resource 1 at offset %u (0x%04X)\n",
+           res1_offset, res1_offset);
+    
+    /* Index 1 internal: 8 bytes per entry (start + end offsets) */
+    const u8* res1_data = fdother_raw + res1_offset;
+    u32 res1_size = res2_offset - res1_offset;
+    printf("load_cursor_image: resource 1 size=%u bytes\n", res1_size);
+    
+    /* Sub-resource 0: entry at offset 0-7 */
+    u32 sub0_start = *(const u32*)(res1_data + 0);
+    u32 sub0_end = *(const u32*)(res1_data + 4);
+    printf("load_cursor_image: sub0 start=%u, end=%u\n", sub0_start, sub0_end);
+    
+    if (sub0_start >= res1_size || sub0_end > res1_size) {
+        printf("load_cursor_image: invalid sub0 offsets\n");
+        return -1;
+    }
+    
+    /* Cursor image: width + height header followed by RLE data */
+    const u8* cursor_data = res1_data + sub0_start;
+    u16 width = *(const u16*)(cursor_data + 0);
+    u16 height = *(const u16*)(cursor_data + 2);
+    
     printf("load_cursor_image: cursor dimensions=%dx%d\n", width, height);
     
-    if (width == 0 || height == 0 || width > 256 || height > 256) {
-        printf("load_cursor_image: invalid dimensions %dx%d\n", width, height);
+    if (width == 0 || height == 0 || width > 64 || height > 64) {
+        printf("load_cursor_image: invalid dimensions\n");
         return -1;
     }
     
-    /* Internal offset table: 16-bit offsets starting at byte 4
-     * First entry (0x14=20) points to frame 0 RLE data */
-    u16 frame0_offset = *(const u16*)(res0_data + 4);
-    printf("load_cursor_image: frame 0 internal offset=%u (0x%02X)\n", frame0_offset, frame0_offset);
-    
-    if (frame0_offset >= res0_size) {
-        printf("load_cursor_image: invalid frame offset %u\n", frame0_offset);
-        return -1;
-    }
-    
-    /* Frame 0 RLE data */
-    data->cursor_image_data = res0_data + frame0_offset;
+    data->cursor_image_data = cursor_data + 4;
     data->cursor_image_width = width;
     data->cursor_image_height = height;
     
-    /* Print first few bytes of cursor RLE data */
-    printf("load_cursor_image: first 8 bytes of RLE data: ");
-    for (int i = 0; i < 8; i++) {
+    printf("load_cursor_image: first 16 RLE bytes: ");
+    for (int i = 0; i < 16; i++) {
         printf("%02X ", data->cursor_image_data[i]);
     }
     printf("\n");
@@ -2267,24 +2295,42 @@ static void state_battle_enter(fd2_game_t* game) {
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
     
     /* Load FDOTHER data for cursor images (IDA: dword_53A81)
-     * Per IDA 3396A.c line 28: sub_111BA(..., aFdotherDat, 0, 88)
-     * This loads the ENTIRE raw FDOTHER.DAT file as one block.
-     * Then 1ACF3.c line 35 reads offset 526 from the raw file:
+     * Per IDA 1F894.c lines 124-126:
+     *   push    6
+     *   push    _FDOTHER.DAT_
+     *   call    sub_111BA
+     *   mov     _FDOTHER_DAT__7, eax
+     * 
+     * sub_111BA loads a SINGLE resource index from FDOTHER.DAT.
+     * From Python analysis of FDOTHER.DAT:
+     *   - Resource 5 (offset 149644): "LMI1" header with 230 resources (0xE6)
+     *   - This resource contains internal resource table starting at offset 6
+     * 
+     * Then 1ACF3.c line 35 accesses cursor at offset 526:
      *   *(_DWORD *)(dword_53A81 + 526) + dword_53A81
-     * We need the raw file data, not a specific resource index. */
+     * where 526 = 4*130 + 6 (resource index 130 within resource 5) */
     const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
-    if (fdother_dat && fdother_dat->data) {
-        data->fdother_data = fdother_dat->data;
-        data->fdother_data_size = fdother_dat->file_size;
-        printf("state_battle: FDOTHER.DAT raw file loaded (%u bytes)\n", data->fdother_data_size);
-        if (load_cursor_image(game, data) == 0) {
-            printf("state_battle: cursor image loaded OK, %dx%d\n", 
-                   data->cursor_image_width, data->cursor_image_height);
+    if (fdother_dat) {
+        /* Load FDOTHER resource index 5 (contains nested resource table with 230 entries) */
+        u32 resource5_size = 0;
+        const u8* resource5_data = fd2_dat_get_resource(fdother_dat, 5, &resource5_size);
+        
+        if (resource5_data && resource5_size > 0) {
+            data->fdother_data = resource5_data;
+            data->fdother_data_size = resource5_size;
+            printf("state_battle: FDOTHER resource index 5 loaded (%u bytes)\n", resource5_size);
+            
+            if (load_cursor_image(game, data) == 0) {
+                printf("state_battle: cursor image loaded OK, %dx%d\n", 
+                       data->cursor_image_width, data->cursor_image_height);
+            } else {
+                printf("state_battle: cursor image load FAILED\n");
+            }
         } else {
-            printf("state_battle: cursor image load FAILED\n");
+            printf("state_battle: FDOTHER resource index 5 not found\n");
         }
     } else {
-        printf("state_battle: FDOTHER.DAT raw file not available\n");
+        printf("state_battle: FDOTHER.DAT not available\n");
     }
 
     /* Load map using new map loader */
