@@ -39,6 +39,7 @@ typedef enum {
     FD2_ACTION_START,     /* Enter/Space - confirm */
     FD2_ACTION_COIN,      /* Insert coin (for future use) */
     FD2_ACTION_ESCAPE,    /* Back/quit */
+    FD2_ACTION_DEBUG_GRID, /* G key - toggle debug grid overlay */
 
     FD2_ACTION_COUNT
 } fd2_action_t;

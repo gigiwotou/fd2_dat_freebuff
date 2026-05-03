@@ -2444,11 +2444,11 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         return FD2_STATE_MENU;
     }
 
-    /* Toggle debug grid overlay with G key (debug builds only) */
+    /* Toggle debug grid overlay with L key (debug builds only) */
 #ifdef FD2_DEBUG
     if (fd2_action_pressed(&game->input, FD2_ACTION_DEBUG_GRID)) {
         data->debug_grid_enabled = !data->debug_grid_enabled;
-        printf("debug_grid: %s\n", data->debug_grid_enabled ? "ON" : "OFF");
+        printf("[DEBUG] 网格切换: %s\n", data->debug_grid_enabled ? "开启" : "关闭");
     }
 #endif
 
@@ -2524,9 +2524,9 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
                        data->camera_x, data->camera_y);
 
 #ifdef FD2_DEBUG
-        /* Only draw debug grid overlay when enabled (toggle with P key) */
+        /* Only draw debug grid overlay when enabled (toggle with L key) */
         if (data->debug_grid_enabled) {
-            printf("DEBUG: drawing grid overlay\n");
+            printf("[DEBUG] 正在绘制网格覆盖层\n");
             
             /* Draw simple white grid lines (no text for now) */
             int start_tile_x = data->camera_x / MAP_TILE_SIZE;

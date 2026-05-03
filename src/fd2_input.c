@@ -43,6 +43,7 @@ fd2_action_t fd2_input_map_scancode(int scancode) {
         case SDL_SCANCODE_SPACE:  return FD2_ACTION_START;
         case SDL_SCANCODE_ESCAPE: return FD2_ACTION_ESCAPE;
         case SDL_SCANCODE_TAB:    return FD2_ACTION_COIN;
+        case SDL_SCANCODE_L:      return FD2_ACTION_DEBUG_GRID;
 
         default:                  return FD2_ACTION_NONE;
     }
