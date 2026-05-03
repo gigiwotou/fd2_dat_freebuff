@@ -2144,19 +2144,22 @@ static int decode_rle_image(
             } else {
                 /* Bit7=0: Fill operations */
                 if (opcode & 0x40) {
-                    /* Bit7=0, Bit6=1: FILL - single color fill */
+                    /* Bit7=0, Bit6=1: ALTERNATE - write at odd offsets (1,3,5...) */
+                    u8 color = *p++;
+                    int i;
+                    for (i = 0; i < count && col < width; i++) {
+                        col++;  /* skip even position */
+                        if (col < width) {
+                            dst_row[col] = color;
+                        }
+                        col++;  /* advance to next even position */
+                    }
+                } else {
+                    /* Bit7=0, Bit6=0: FILL - continuous fill */
                     u8 color = *p++;
                     int i;
                     for (i = 0; i < count && col < width; i++) {
                         dst_row[col++] = color;
-                    }
-                } else {
-                    /* Bit7=0, Bit6=0: ALTERNATE - every other pixel */
-                    u8 color = *p++;
-                    int i;
-                    for (i = 0; i < count && col < width; i++) {
-                        dst_row[col] = color;
-                        col += 2;
                     }
                 }
             }
