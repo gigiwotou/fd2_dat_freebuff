@@ -2031,16 +2031,22 @@ static void state_battle_enter(fd2_game_t* game) {
         }
         
         /* Skip empty positions */
-        if (tile_x == 0 && tile_y == 0) continue;
+        if (tile_x == 0 && tile_y == 0) {
+            data->sprite_count++;
+            continue;
+        }
         
         map_sprite_t* sprite = &data->sprites[data->sprite_count];
         sprite->tile_x = tile_x;
         sprite->tile_y = tile_y;
         sprite->icon_id = icon_id;
-        sprite->sprite_type = icon_id;
+        sprite->sprite_type = 0;
+        sprite->cache_idx = -1;
         sprite->anim_frame = 0;
         sprite->loaded = false;
         sprite->pixels = NULL;
+        sprite->width = 24;
+        sprite->height = 24;
         
         printf("  sprite[%d]: tile=(%d,%d), icon=%d\n", 
                data->sprite_count, tile_x, tile_y, icon_id);
@@ -2050,23 +2056,18 @@ static void state_battle_enter(fd2_game_t* game) {
         printf("    fd2_icon_get(%d) = %d\n", icon_id, cache_idx);
         if (cache_idx >= 0) {
             sprite->cache_idx = cache_idx;
-            int icon_width = 24;
-            int icon_height = 24;
-            sprite->pixels = (u8*)calloc(1, icon_width * icon_height);
+            sprite->sprite_type = (u8)cache_idx;
+            sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
             if (sprite->pixels) {
-                int segment = icon_id * 12 + 0;
-                if (fd2_icon_decode_segment(cache_idx, segment, icon_width, icon_height,
+                int segment = sprite->sprite_type * 12 + 0;
+                if (fd2_icon_decode_segment(cache_idx, segment, sprite->width, sprite->height,
                                            sprite->pixels) == 0) {
-                    sprite->width = icon_width;
-                    sprite->height = icon_height;
                     sprite->loaded = true;
                 } else {
                     free(sprite->pixels);
                     sprite->pixels = NULL;
                 }
             }
-        } else {
-            sprite->cache_idx = -1;
         }
         
         data->sprite_count++;
