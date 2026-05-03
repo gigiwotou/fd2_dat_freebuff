@@ -381,18 +381,33 @@ int fd2_icon_decode_segment(int cache_index, int segment, int width, int height,
                 }
                 width_remaining -= count;
             } else {
-                /* 0x00-0x3F: FILL with next byte */
+                /* 0x00-0x3F: ALTERNATE - write same value at alternating pixel positions
+                 * Per IDA sub_4E98D lines 83-95:
+                 *   count = count - count_1 - count_1;
+                 *   value = *src++;
+                 *   do {
+                 *     v14 = dst + 1;
+                 *     *v14 = value;
+                 *     dst = v14 + 1;   // dst += 2
+                 *     --count_1;
+                 *   } while ( count_1 );
+                 * 
+                 * Writes 'count' pixels, each separated by 1 pixel gap.
+                 * Total pixels consumed = count * 2
+                 */
                 if (src_ptr >= seg_data_len) {
                     break;
                 }
                 unsigned char fill_value = seg_data[src_ptr++];
                 
                 for (int i = 0; i < count; i++) {
+                    dst_ptr++;  /* Skip one pixel gap */
                     if (dst_ptr < width * height) {
-                        pixels[dst_ptr++] = fill_value;
+                        pixels[dst_ptr] = fill_value;
+                        dst_ptr++;  /* Skip to next write position */
                     }
                 }
-                width_remaining -= count;
+                width_remaining -= count * 2;  /* ALTERNATE consumes 2x pixel positions */
             }
         }
     }
