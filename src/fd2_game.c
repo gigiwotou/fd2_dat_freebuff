@@ -2056,14 +2056,28 @@ static void state_battle_enter(fd2_game_t* game) {
         printf("    fd2_icon_get(%d) = %d\n", icon_id, cache_idx);
         if (cache_idx >= 0) {
             sprite->cache_idx = cache_idx;
-            sprite->sprite_type = (u8)cache_idx;
+            sprite->sprite_type = icon_id;
             sprite->pixels = (u8*)calloc(1, sprite->width * sprite->height);
             if (sprite->pixels) {
-                int segment = sprite->sprite_type * 12 + 0;
+                /* Per IDA sub_1C2DA: segment = sprite_type * 12 + anim_frame
+                 * But fd2_icon_decode_segment expects segment 0-11 within the cached icon
+                 * sprite_type = icon_id (for segment calculation in sub_1C2DA)
+                 * anim_frame starts at 0 */
+                int segment = 0;  /* Animation frame 0-11 within this icon */
+                printf("    decoding icon=%d cache=%d segment=%d for sprite[%d]\n", 
+                       icon_id, cache_idx, segment, data->sprite_count);
                 if (fd2_icon_decode_segment(cache_idx, segment, sprite->width, sprite->height,
                                            sprite->pixels) == 0) {
+                    /* Check if pixel data is non-zero */
+                    int non_zero = 0;
+                    for (int p = 0; p < sprite->width * sprite->height; p++) {
+                        if (sprite->pixels[p] != 0) non_zero++;
+                    }
+                    printf("    decode OK, non-zero pixels=%d/%d, setting loaded=true\n", 
+                           non_zero, sprite->width * sprite->height);
                     sprite->loaded = true;
                 } else {
+                    printf("    decode FAILED\n");
                     free(sprite->pixels);
                     sprite->pixels = NULL;
                 }
@@ -2339,7 +2353,11 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
                    i, sprite->tile_x, sprite->tile_y, screen_x, screen_y, draw_x, draw_y,
                    sprite->width, sprite->height, data->camera_x, data->camera_y);
             
-            if (is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height)) {
+            int visible = is_sprite_visible(draw_x, draw_y, sprite->width, sprite->height);
+            printf("  visible=%d (sx=%d sy=%d w=%d h=%d screen=%dx%d)\n",
+                   visible, draw_x, draw_y, sprite->width, sprite->height, FD2_SCREEN_W, FD2_SCREEN_H);
+            
+            if (visible) {
                 /* Create temporary sprite_frame_t for rendering */
                 fd2_sprite_frame_t frame;
                 frame.pixels = sprite->pixels;
