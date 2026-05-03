@@ -1951,6 +1951,14 @@ typedef struct {
     int move_counter_x;   /* Horizontal move counter (IDA: n10) */
     int move_counter_y;   /* Vertical move counter (IDA: n2_1) */
     int cursor_blink;     /* Cursor blink timer (from IDA: n999) */
+    int cursor_frame_id;  /* Cursor image frame ID (IDA: n242, 242 or 1) */
+    
+    /* Cursor image data (from IDA: dword_53A81, FDOTHER.DAT) */
+    const u8* fdother_data;       /* FDOTHER.DAT base pointer (IDA: dword_53A81) */
+    u32 fdother_data_size;        /* FDOTHER.DAT data size */
+    const u8* cursor_image_data;  /* Cursor RLE image data pointer */
+    u32 cursor_image_width;       /* Cursor image width */
+    u32 cursor_image_height;      /* Cursor image height */
     
     /* Character sprite on map */
     map_sprite_t* sprites;
@@ -2077,6 +2085,126 @@ static void update_camera_from_cursor(state_battle_data_t* data) {
     if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
 }
 
+/* ========================================================================
+ * RLE Image Decoder (from IDA sub_4E98D at 0x4E98D)
+ * 
+ * RLE encoding format (from IDA analysis):
+ *   - Header: uint16_t width, uint16_t height
+ *   - Data: RLE compressed pixel data starting at offset 4
+ * 
+ * Operation codes (opcode byte):
+ *   Bit7=0, Bit6=0: SKIP - skip count pixels (transparent)
+ *   Bit7=0, Bit6=1: FILL - fill count pixels with single color
+ *   Bit7=1, Bit6=0: COPY - copy count bytes of raw data
+ *   Bit7=1, Bit6=1: ALTERNATE - write same value every other pixel
+ * 
+ * count = (opcode & 0x3F) + 1  (range 1-64)
+ * ======================================================================== */
+
+/* Decode RLE image to pixel buffer (direct mode, value_1 = -1)
+ * From IDA sub_4E98D */
+static int decode_rle_image(
+    const u8* src,        /* Source RLE data (after header) */
+    u8* dst,              /* Destination pixel buffer */
+    int dst_stride,       /* Destination row width (stride) */
+    int width,            /* Image width */
+    int height            /* Image height */
+) {
+    const u8* p = src;
+    u8* dst_row = dst;
+    
+    for (int row = 0; row < height; row++) {
+        int col = 0;
+        while (col < width) {
+            u8 opcode = *p++;
+            int count = (opcode & 0x3F) + 1;
+            
+            if (opcode & 0x80) {
+                /* Bit7=1: Data operations */
+                if (opcode & 0x40) {
+                    /* Bit7=1, Bit6=1: SKIP - transparent pixels */
+                    col += count;
+                } else {
+                    /* Bit7=1, Bit6=0: COPY - raw data */
+                    int i;
+                    for (i = 0; i < count && col < width; i++) {
+                        dst_row[col++] = *p++;
+                    }
+                }
+            } else {
+                /* Bit7=0: Fill operations */
+                if (opcode & 0x40) {
+                    /* Bit7=0, Bit6=1: FILL - single color fill */
+                    u8 color = *p++;
+                    int i;
+                    for (i = 0; i < count && col < width; i++) {
+                        dst_row[col++] = color;
+                    }
+                } else {
+                    /* Bit7=0, Bit6=0: ALTERNATE - every other pixel */
+                    u8 color = *p++;
+                    int i;
+                    for (i = 0; i < count && col < width; i++) {
+                        dst_row[col] = color;
+                        col += 2;
+                    }
+                }
+            }
+        }
+        dst_row += dst_stride;
+    }
+    
+    return 0;
+}
+
+/* Load cursor image from FDOTHER.DAT
+ * From IDA: dword_53A81 points to FDOTHER data
+ * Image data offset stored at dword_53A81 + 526 */
+static int load_cursor_image(state_battle_data_t* data) {
+    if (!data->fdother_data || data->fdother_data_size == 0) {
+        printf("load_cursor_image: FDOTHER data not loaded\n");
+        return -1;
+    }
+    
+    /* Get image data offset from FDOTHER header (offset 526 = 0x20E) */
+    if (data->fdother_data_size < 530) {
+        printf("load_cursor_image: FDOTHER data too small\n");
+        return -1;
+    }
+    
+    u32 image_offset = *(const u32*)(data->fdother_data + 526);
+    if (image_offset + 4 >= data->fdother_data_size) {
+        printf("load_cursor_image: invalid image offset %u\n", image_offset);
+        return -1;
+    }
+    
+    const u8* image_data = data->fdother_data + image_offset;
+    
+    /* Read image header (width, height) */
+    if (data->fdother_data_size < image_offset + 4) {
+        printf("load_cursor_image: incomplete image header\n");
+        return -1;
+    }
+    
+    u16 width = *(const u16*)(image_data);
+    u16 height = *(const u16*)(image_data + 2);
+    
+    printf("load_cursor_image: FDOTHER offset=%u, size=%dx%d\n", 
+           image_offset, width, height);
+    
+    if (width == 0 || height == 0 || width > 256 || height > 256) {
+        printf("load_cursor_image: invalid image dimensions %dx%d\n", width, height);
+        return -1;
+    }
+    
+    /* Store cursor image info */
+    data->cursor_image_data = image_data + 4;  /* Skip header */
+    data->cursor_image_width = width;
+    data->cursor_image_height = height;
+    
+    return 0;
+}
+
 static void state_battle_enter(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)calloc(1, sizeof(state_battle_data_t));
     game->state_data = data;
@@ -2107,6 +2235,15 @@ static void state_battle_enter(fd2_game_t* game) {
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDSHAP);
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
+    
+    /* Load FDOTHER data for cursor images (IDA: dword_53A81) */
+    data->fdother_data = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 0, &data->fdother_data_size);
+    if (data->fdother_data) {
+        printf("state_battle: FDOTHER.DAT loaded (%u bytes)\n", data->fdother_data_size);
+        load_cursor_image(data);
+    } else {
+        printf("state_battle: FDOTHER.DAT not available\n");
+    }
 
     /* Load map using new map loader */
     int map_id = game->map_index;
@@ -2507,7 +2644,8 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
         
         /* Draw cursor on map (from IDA sub_1ACF3, sub_1AEB1)
          * Cursor is drawn at cursor tile position with blink effect
-         * Blink cycle: ~30 frames visible, then briefly hidden */
+         * Blink cycle: ~30 frames visible, then briefly hidden
+         * Uses RLE image from FDOTHER.DAT */
         int cursor_screen_x = data->cursor_x * MAP_TILE_SIZE - data->camera_x;
         int cursor_screen_y = data->cursor_y * MAP_TILE_SIZE - data->camera_y;
         
@@ -2517,36 +2655,49 @@ static fd2_state_t state_battle_update(fd2_game_t* game) {
             /* Cursor blink: visible when (cursor_blink % 30) < 25 */
             bool cursor_visible = (data->cursor_blink % 30) < 25;
             
-            if (cursor_visible) {
-                /* Draw cursor as a semi-transparent overlay on the tile
-                 * Use palette index 15 (yellow highlight) for visibility */
-                u8 cursor_color = 15;
+            if (cursor_visible && data->cursor_image_data) {
+                /* Decode and draw cursor RLE image
+                 * From IDA: n242 controls frame ID (242 or 1) */
+                data->cursor_frame_id = (data->move_counter_y <= 5 || data->move_counter_x >= 3) ?
+                    ((data->move_counter_y > 5 && data->move_counter_x > 9) ? 1 : data->cursor_frame_id) : 242;
                 
-                /* Draw cursor border (24x24 tile outline) */
-                for (int x = 0; x < MAP_TILE_SIZE; x++) {
-                    int px = cursor_screen_x + x;
-                    /* Top border */
-                    if (px >= 0 && px < FD2_SCREEN_W && cursor_screen_y >= 0 && cursor_screen_y < FD2_SCREEN_H) {
-                        game->render.screen[cursor_screen_y * FD2_SCREEN_W + px] = cursor_color;
-                    }
-                    /* Bottom border */
-                    int bottom_y = cursor_screen_y + MAP_TILE_SIZE - 1;
-                    if (px >= 0 && px < FD2_SCREEN_W && bottom_y >= 0 && bottom_y < FD2_SCREEN_H) {
-                        game->render.screen[bottom_y * FD2_SCREEN_W + px] = cursor_color;
+                /* Temporary buffer for decoded cursor image (24x24 = 576 max) */
+                u8 cursor_pixels[576];
+                int img_w = data->cursor_image_width;
+                int img_h = data->cursor_image_height;
+                
+                /* Decode RLE cursor image */
+                decode_rle_image(
+                    data->cursor_image_data,
+                    cursor_pixels,
+                    img_w,
+                    img_w,
+                    img_h
+                );
+                
+                /* Blit cursor image to screen at cursor position */
+                int start_x = cursor_screen_x;
+                int start_y = cursor_screen_y;
+                
+                for (int y = 0; y < img_h; y++) {
+                    for (int x = 0; x < img_w; x++) {
+                        int sx = start_x + x;
+                        int sy = start_y + y;
+                        
+                        /* Check bounds */
+                        if (sx >= 0 && sx < FD2_SCREEN_W && sy >= 0 && sy < FD2_SCREEN_H) {
+                            u8 pixel = cursor_pixels[y * img_w + x];
+                            /* Skip transparent pixels (palette index 0) */
+                            if (pixel != 0) {
+                                game->render.screen[sy * FD2_SCREEN_W + sx] = pixel;
+                            }
+                        }
                     }
                 }
-                for (int y = 0; y < MAP_TILE_SIZE; y++) {
-                    int py = cursor_screen_y + y;
-                    /* Left border */
-                    if (cursor_screen_x >= 0 && cursor_screen_x < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
-                        game->render.screen[py * FD2_SCREEN_W + cursor_screen_x] = cursor_color;
-                    }
-                    /* Right border */
-                    int right_x = cursor_screen_x + MAP_TILE_SIZE - 1;
-                    if (right_x >= 0 && right_x < FD2_SCREEN_W && py >= 0 && py < FD2_SCREEN_H) {
-                        game->render.screen[py * FD2_SCREEN_W + right_x] = cursor_color;
-                    }
-                }
+                
+                printf("cursor draw: frame=%d pos=(%d,%d) screen=(%d,%d) size=%dx%d\n",
+                       data->cursor_frame_id, data->cursor_x, data->cursor_y,
+                       cursor_screen_x, cursor_screen_y, img_w, img_h);
             }
         }
         

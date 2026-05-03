@@ -36,7 +36,6 @@ set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
 set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
-set EXPORT_OBJ=%OBJ_DIR%\fd2_export_scenes.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
@@ -47,7 +46,6 @@ set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
 set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
 set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
-set TARGET_EXPORT=%BIN_DIR%\fd2_export_scenes%EXE_EXT%
 
 :: Parse arguments (order-independent)
 set TARGET=all
@@ -76,7 +74,11 @@ if "%TARGET%"=="clean" (
     echo Cleaning build artifacts...
     if exist %OBJ_DIR% rmdir /S /Q %OBJ_DIR%
     if exist %OBJ_RELEASE_DIR% rmdir /S /Q %OBJ_RELEASE_DIR%
-    if exist %BIN_DIR% rmdir /S /Q %BIN_DIR%
+    if exist %BIN_DIR% (
+        for %%F in (%BIN_DIR%\*.exe) do (
+            del /F /Q "%%F" 2>nul
+        )
+    )
     echo Clean complete.
     goto :end
 )
@@ -116,8 +118,6 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
     if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_export_scenes.c %EXPORT_OBJ%
-    if errorlevel 1 goto :error
 
     echo Linking %TARGET_GAME% ...
     %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
@@ -134,11 +134,6 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     echo [OK] %TARGET_INTRO%
 
-    echo Linking %TARGET_EXPORT% ...
-    %GCC% %CFLAGS% -o %TARGET_EXPORT% %EXPORT_OBJ% %DECODER_OBJ% %OBJ_DIR%\fd2_scene.o %LDFLAGS%
-    if errorlevel 1 goto :error
-    echo [OK] %TARGET_EXPORT%
-
     echo.
     echo Copying required DLLs...
 )
@@ -147,7 +142,6 @@ if "%TARGET%"=="all" (
 if "%TARGET%"=="game" goto :build_game
 if "%TARGET%"=="test" goto :build_test
 if "%TARGET%"=="intro" goto :build_intro
-if "%TARGET%"=="export" goto :build_export
 if "%TARGET%"=="release" goto :build_release
 
 if "%TARGET%"=="all" (
@@ -160,7 +154,13 @@ if "%TARGET%"=="all" (
             set "ext=%%~xF"
             if /I not "!ext!"==".exe" (
                 if /I not "!ext!"==".i64" (
-                    copy /Y "%%F" "%BIN_DIR%\" >nul 2>&1
+                    if /I not "!ext!"==".ini" (
+                        if /I not "!ext!"==".MDI" (
+                            if /I not "!ext!"==".DIG" (
+                                copy /Y "%%F" "%BIN_DIR%\" >nul 2>&1
+                            )
+                        )
+                    )
                 )
             )
         )
@@ -168,24 +168,6 @@ if "%TARGET%"=="all" (
     echo Build complete! All targets generated in %BIN_DIR%\.
     goto :end
 )
-
-:build_export
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_scene.c %OBJ_DIR%\fd2_scene.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_export_scenes.c %EXPORT_OBJ%
-if errorlevel 1 goto :error
-
-echo Linking %TARGET_EXPORT%
-%GCC% %CFLAGS% -o %TARGET_EXPORT% %EXPORT_OBJ% %DECODER_OBJ% %OBJ_DIR%\fd2_scene.o %LDFLAGS%
-if errorlevel 1 goto :error
-echo [OK] %TARGET_EXPORT%
-goto :end
-
-echo Unknown target: %TARGET%
-echo Usage: build.bat [all^|game^|test^|intro^|clean^|release] [mingw64]
-goto :end
 
 :build_game
 call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
@@ -217,6 +199,10 @@ echo Linking %TARGET_GAME%
 %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
 if errorlevel 1 goto :error
 echo [OK] %TARGET_GAME%
+goto :end
+
+echo Unknown target: %TARGET%
+echo Usage: build.bat [all^|game^|test^|intro^|clean^|release] [mingw64]
 goto :end
 
 :build_release
