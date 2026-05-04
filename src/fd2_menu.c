@@ -74,7 +74,7 @@ static void menu_draw(fd2_game_t* game, int selection, int num_items) {
 
             const u8* rle_data = sub_data + 4;
             u8* pixels = (u8*)calloc(w * h, sizeof(u8));
-            if (fd2_rle_decompress(rle_data, rle_size, pixels, w, h) == 0) {
+            if (fd2_rle_decompress(rle_data, rle_size, pixels, 0, 0, w, w, h, -1) == 0) {
                 fd2_render_blit(&game->render, pixels, w, h, 0, 0);
             }
             free(pixels);
@@ -122,7 +122,7 @@ static void menu_draw(fd2_game_t* game, int selection, int num_items) {
         const u8* rle_data = sub_data + 4;
 
         u8* pixels = (u8*)calloc(w * h, sizeof(u8));
-        if (fd2_rle_decompress(rle_data, rle_size, pixels, w, h) == 0) {
+        if (fd2_rle_decompress(rle_data, rle_size, pixels, 0, 0, w, w, h, -1) == 0) {
             fd2_render_blit(&game->render, pixels, w, h, dx, dy);
         }
         free(pixels);

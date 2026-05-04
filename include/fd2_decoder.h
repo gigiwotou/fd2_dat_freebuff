@@ -97,42 +97,70 @@ u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
 /* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
 extern u32 fd2_last_loaded_size;
 
-/* ---- RLE Decompression ---- */
+/* ---- RLE Decompression (IDA sub_4E98D) ---- */
 
 /*
- * Decompress FD2 RLE data (IDA sub_4E98D).
- * 
- * Input:  src points to compressed data (after 4-byte width/height header)
- *         src_size is the compressed data size
- *         dst is pre-allocated buffer of width * height bytes
- * 
+ * Decompress FD2 RLE data (IDA sub_4E98D) - FULL 1:1 implementation.
+ *
+ * This function has 3 modes controlled by palette_offset:
+ *
+ * Mode 1: palette_offset == -1 (direct pixel mode)
+ *   - 00: read 1 byte from src, fill dst with it
+ *   - 10: copy bytes from src to dst
+ *   - 01: read 1 byte from src, write at every 2nd position
+ *   - 11: skip (transparent)
+ *
+ * Mode 2: palette_offset 0-255 (color fill mode)
+ *   - All operations write palette_offset as the color value
+ *   - Used for fonts and overlays
+ *
+ * Mode 3: palette_offset > 255 (palette offset mode)
+ *   - value = (palette_offset & 0xFF) + (((palette_offset >> 8) + src_byte) & 7)
+ *   - Used for character sprites with palette shifting
+ *
+ * Parameters (matching original sub_4E98D):
+ *   src:        compressed data (after 4-byte width/height header)
+ *   src_size:   compressed data size
+ *   dst:        destination buffer (pre-allocated, width * height bytes)
+ *   dst_x:      X offset in destination (argC)
+ *   dst_y:      Y offset in destination (arg8)
+ *   stride:     bytes per row (arg10, typically 320)
+ *   width:      image width (*arg0)
+ *   height:     image height (word_627B6)
+ *   palette_offset: value_1 (-1, 0-255, or >255)
+ *
  * Returns 0 on success, -1 on error.
  */
 int fd2_rle_decompress(const u8* src, u32 src_size,
-                       u8* dst, int width, int height);
+                       u8* dst, int dst_x, int dst_y, int stride,
+                       int width, int height, int palette_offset);
 
 /*
  * Convenience: decompress a resource that starts with a 4-byte header
  * (2-byte width + 2-byte height, little-endian).
- * 
+ *
+ * palette_offset: -1 for direct pixels, 0-255 for color fill, >255 for palette offset
  * Allocates the destination buffer. Caller must free *out_pixels.
  * Sets *out_w, *out_h to the dimensions.
  * Returns 0 on success, -1 on error.
  */
 int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
-                                     u8** out_pixels, int* out_w, int* out_h);
+                                     u8** out_pixels, int* out_w, int* out_h,
+                                     int palette_offset);
 
 /*
  * Convenience: decompress RLE data directly into a buffer with given stride.
  * Matches original sub_4E98D behavior for scroll buffer construction.
- * 
+ *
  * dst_buf: destination buffer (must be pre-allocated and zero-initialized)
  * dst_y: Y offset in destination buffer (dst_buf + stride * dst_y)
  * stride: bytes per row in destination buffer (typically 320)
+ * palette_offset: -1 for direct mode (most common for scroll buffers)
  * Returns 0 on success, -1 on error.
  */
 int fd2_rle_decompress_to_buffer(const u8* res_data, u32 res_size,
-                                  u8* dst_buf, int dst_y, int stride);
+                                  u8* dst_buf, int dst_y, int stride,
+                                  int palette_offset);
 
 /* ---- Palette ---- */
 

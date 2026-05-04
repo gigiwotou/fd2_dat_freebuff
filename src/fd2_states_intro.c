@@ -225,7 +225,7 @@ static void intro_build_scroll_buffer(fd2_game_t* game, state_intro_data_t* data
         if (fres) {
             int fw, fh;
             u8* fpixels = NULL;
-            if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh) == 0) {
+            if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh, -1) == 0) {
                 int dst_y = frame_h * i;
                 int copy_h = fh < frame_h ? fh : frame_h;
                 int copy_w = fw < FD2_SCREEN_W ? fw : FD2_SCREEN_W;

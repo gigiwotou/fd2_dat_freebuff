@@ -98,7 +98,7 @@ static void blit_rle_image(const u8* res_data, u32 res_size, int dx, int dy) {
     if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return;
 
     u8* pixels = NULL;
-    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h) != 0) return;
+    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h, -1) != 0) return;
 
     for (int y = 0; y < h && (dy + y) < FD2_SCREEN_H; y++) {
         for (int x = 0; x < w && (dx + x) < FD2_SCREEN_W; x++) {
@@ -155,7 +155,7 @@ static void play_bar_animation_resource(const u8* res_data, u32 res_size, int fr
     if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return;
 
     u8* pixels = NULL;
-    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h) != 0) return;
+    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h, -1) != 0) return;
 
     fill_screen(0);
     for (int f = 0; f < frames; f++) {
@@ -221,7 +221,7 @@ static void play_intro_animation(const char* fdother_path) {
              * Clamp to 147px to match original game behavior. */
             int fw, fh;
             u8* fpixels = NULL;
-            if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh) == 0) {
+            if (fd2_rle_decompress_from_resource(fres, fsize, &fpixels, &fw, &fh, -1) == 0) {
                 fprintf(stderr, "[intro] Frame %d (res %d): RLE size=%u, dim=%dx%d, dst_y=%d, copy_h=%d\n",
                         i, 69 + i, fsize, fw, fh, frame_h * i,
                         fh < frame_h ? fh : frame_h);

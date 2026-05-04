@@ -27,7 +27,7 @@ int main() {
     printf("Decoding %dx%d image\n", w, h);
     
     u8* pixels = NULL;
-    if (fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h) != 0) {
+    if (fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h, -1) != 0) {
         printf("Failed to decode\n");
         fd2_dat_free(&dat);
         return 1;

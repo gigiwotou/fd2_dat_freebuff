@@ -68,7 +68,7 @@ static int test_rle_decompress_title(void) {
 
     u8* pixels = NULL;
     int w, h;
-    int rc = fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h);
+    int rc = fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h, -1);
     if (rc != 0) { printf("decompress failed\n"); free(res); return 0; }
     if (w != 320 || h != 200) { printf("expected 320x200, got %dx%d\n", w, h); free(pixels); free(res); return 0; }
 
@@ -85,7 +85,7 @@ static int test_rle_decompress_intro(void) {
 
     u8* pixels = NULL;
     int w, h;
-    int rc = fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h);
+    int rc = fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h, -1);
     if (rc != 0) { printf("decompress failed\n"); free(res); return 0; }
     if (w != 62 || h != 26) { printf("expected 62x26, got %dx%d\n", w, h); free(pixels); free(res); return 0; }
 
@@ -107,7 +107,7 @@ static int test_rle_decompress_anim_frames(void) {
 
         u8* pixels = NULL;
         int w, h;
-        int rc = fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h);
+        int rc = fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h, -1);
         if (rc != 0) { printf("decompress frame %d failed\n", i); free(res); return 0; }
         if (w != expected_dims[i][0] || h != expected_dims[i][1]) {
             printf("frame %d: expected %dx%d, got %dx%d\n", i, expected_dims[i][0], expected_dims[i][1], w, h);

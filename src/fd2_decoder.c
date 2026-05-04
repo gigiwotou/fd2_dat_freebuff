@@ -178,98 +178,155 @@ u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index) {
 }
 
 /* ========================================================================
- * RLE Decompression (IDA sub_4E98D)
+ * RLE Decompression (IDA sub_4E98D) - FULL 1:1 implementation
  *
- * The algorithm uses bits 7,6 of each control byte to determine the mode:
- *   bit7=1, bit6=1: skip (transparent) - advance dst by count
- *   bit7=1, bit6=0: copy count bytes from src to dst
- *   bit7=0, bit6=1: sparse fill - write value at every 2nd position (odd offsets)
- *   bit7=0, bit6=0: fill count pixels with value from src
+ * Original signature:
+ *   char __cdecl sub_4E98D(__int16 *arg0, int arg4, int arg8, int argC, int arg10, int value_1)
+ *   arg0[0] = width
+ *   arg0[1] = height (stored to word_627B6)
+ *   arg0+2    = src (compressed data after header)
+ *   arg4      = dst_base
+ *   arg8      = dst_y
+ *   argC      = dst_x
+ *   arg10     = stride
+ *   value_1   = palette_offset (-1, 0-255, or >255)
  *
- * count = (value & 0x3F) + 1
- *
- * Data is organized in rows of 'width' pixels.
- * After each row, dst advances by (stride - width) to handle padding.
+ * Three modes:
+ *   value_1 == -1:        Direct pixel mode (read/write actual pixel values)
+ *   (u16)value_1 > 0xFF:  Palette offset mode (value = base + ((high + src) & 7))
+ *   else (0-255):         Color fill mode (all writes use value_1 as color)
  * ======================================================================== */
 
+/* Helper: compute color for palette offset mode */
+static u8 compute_palette_color(int palette_offset, u8 src_byte) {
+    /* value = value_1 + ((BYTE1(value_1) + src_byte) & 7) */
+    return (u8)(palette_offset + (((palette_offset >> 8) + src_byte) & 7));
+}
+
 int fd2_rle_decompress(const u8* src, u32 src_size,
-                       u8* dst, int width, int height) {
-    if (!src || !dst || width <= 0 || height <= 0) return -1;
+                       u8* dst, int dst_x, int dst_y, int stride,
+                       int width, int height, int palette_offset) {
+    if (!src || !dst || width <= 0 || height <= 0 || stride <= 0) return -1;
 
-    const u8* p = src;
-    const u8* src_end = src + src_size;
-    u8* dst_end = dst + width * height;
+    u8* dst_ptr = dst + stride * dst_y + dst_x;
+    int row_skip = stride - width;
 
-    for (int row = 0; row < height; row++) {
-        u8* row_dst = dst + row * width;
-        int count = width;
+    if (palette_offset == -1) {
+        const u8* src_end = src + src_size;
+        for (int row = 0; row < height; row++) {
+            int count = width;
 
-        while (count > 0 && p < src_end) {
-            u8 value = *p++;
-            int count_1 = (value & 0x3F) + 1;
-            int bit7 = (value >> 7) & 1;
-            int bit6 = (value >> 6) & 1;
+            while (count > 0 && src < src_end) {
+                u8 ctrl = *src++;
+                int count_1 = (ctrl & 0x3F) + 1;
+                int bit7 = (ctrl >> 7) & 1;
+                int bit6 = (ctrl >> 6) & 1;
 
-            if (bit7 && bit6) {
-                /* 11: skip (transparent) - cap both dst and count at buffer end */
-                if (row_dst + count_1 <= dst_end) {
-                    row_dst += count_1;
-                } else {
-                    row_dst = dst_end;
-                }
-                if (count >= count_1) {
+                if (bit7 && bit6) {
+                    dst_ptr += count_1;
                     count -= count_1;
+                } else if (bit7 && !bit6) {
+                    if (src + count_1 > src_end) return -1;
+                    count -= count_1;
+                    memcpy(dst_ptr, src, count_1);
+                    src += count_1;
+                    dst_ptr += count_1;
+                } else if (!bit7 && bit6) {
+                    if (src >= src_end) return -1;
+                    count = count - count_1 - count_1;
+                    u8 fill = *src++;
+                    for (int i = 0; i < count_1; i++) {
+                        dst_ptr[1] = fill;
+                        dst_ptr += 2;
+                    }
                 } else {
-                    count = 0;
-                }
-            } else if (bit7 && !bit6) {
-                /* 10: copy from source - with bounds checking */
-                for (int i = 0; i < count_1 && count > 0 && p < src_end; i++) {
-                    if (row_dst < dst_end) {
-                        *row_dst = *p;
-                    }
-                    row_dst++;
-                    p++;
-                    count--;
-                }
-            } else if (!bit7 && bit6) {
-                /* 01: sparse fill - write at every 2nd position (odd offsets)
-                 * Original (IDA): count = count - count_1 - count_1
-                 * Writes to dst[1], then dst+=2, for count_1 iterations.
-                 * Each iteration consumes 2 pixels of width. */
-                if (p < src_end) {
-                    u8 fill = *p++;
-                    for (int i = 0; i < count_1 && count > 0; i++) {
-                        if (count >= 2) {
-                            if (row_dst + 1 < dst_end) {
-                                row_dst[1] = fill;
-                            }
-                            row_dst += 2;
-                            count -= 2;
-                        } else {
-                            /* count == 1: last pixel in row */
-                            if (row_dst < dst_end) {
-                                *row_dst = fill;
-                            }
-                            row_dst += 1;
-                            count -= 1;
-                        }
-                    }
-                }
-            } else {
-                /* 00: regular fill - write at every position
-                 * Original (IDA): memset(dst, value, count_1) */
-                if (p < src_end) {
-                    u8 fill = *p++;
-                    for (int i = 0; i < count_1 && count > 0; i++) {
-                        if (row_dst < dst_end) {
-                            *row_dst = fill;
-                        }
-                        row_dst++;
-                        count--;
-                    }
+                    if (src >= src_end) return -1;
+                    count -= count_1;
+                    u8 fill = *src++;
+                    memset(dst_ptr, fill, count_1);
+                    dst_ptr += count_1;
                 }
             }
+            dst_ptr += row_skip;
+        }
+    } else if ((unsigned short)palette_offset > 0xFF) {
+        const u8* src_end = src + src_size;
+        for (int row = 0; row < height; row++) {
+            int count = width;
+
+            while (count > 0 && src < src_end) {
+                u8 ctrl = *src++;
+                int count_1 = (ctrl & 0x3F) + 1;
+                int bit7 = (ctrl >> 7) & 1;
+                int bit6 = (ctrl >> 6) & 1;
+
+                if (bit7 && bit6) {
+                    dst_ptr += count_1;
+                    count -= count_1;
+                } else if (bit7 && !bit6) {
+                    if (src + count_1 > src_end) return -1;
+                    count -= count_1;
+                    for (int i = 0; i < count_1; i++) {
+                        *dst_ptr++ = compute_palette_color(palette_offset, *src++);
+                    }
+                } else if (!bit7 && bit6) {
+                    if (src >= src_end) return -1;
+                    count = count - count_1 - count_1;
+                    u8 src_byte = *src++;
+                    u8 color = compute_palette_color(palette_offset, src_byte);
+                    for (int i = 0; i < count_1; i++) {
+                        dst_ptr[1] = color;
+                        dst_ptr += 2;
+                    }
+                } else {
+                    if (src >= src_end) return -1;
+                    count -= count_1;
+                    u8 src_byte = *src++;
+                    u8 color = compute_palette_color(palette_offset, src_byte);
+                    memset(dst_ptr, color, count_1);
+                    dst_ptr += count_1;
+                }
+            }
+            dst_ptr += row_skip;
+        }
+    } else {
+        const u8* src_end = src + src_size;
+        u8 fill = (u8)palette_offset;
+        for (int row = 0; row < height; row++) {
+            int count = width;
+
+            while (count > 0 && src < src_end) {
+                u8 ctrl = *src++;
+                int count_1 = (ctrl & 0x3F) + 1;
+                int bit7 = (ctrl >> 7) & 1;
+                int bit6 = (ctrl >> 6) & 1;
+
+                if (bit7 && bit6) {
+                    dst_ptr += count_1;
+                    count -= count_1;
+                } else if (bit7 && !bit6) {
+                    if (src + count_1 > src_end) return -1;
+                    count -= count_1;
+                    src += count_1;
+                    memset(dst_ptr, fill, count_1);
+                    dst_ptr += count_1;
+                } else if (!bit7 && bit6) {
+                    if (src >= src_end) return -1;
+                    count = count - count_1 - count_1;
+                    src++;
+                    for (int i = 0; i < count_1; i++) {
+                        dst_ptr[1] = fill;
+                        dst_ptr += 2;
+                    }
+                } else {
+                    if (src >= src_end) return -1;
+                    count -= count_1;
+                    src++;
+                    memset(dst_ptr, fill, count_1);
+                    dst_ptr += count_1;
+                }
+            }
+            dst_ptr += row_skip;
         }
     }
 
@@ -283,82 +340,40 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
  * ======================================================================== */
 
 int fd2_rle_decompress_to_buffer(const u8* res_data, u32 res_size,
-                                  u8* dst_buf, int dst_y, int stride) {
+                                  u8* dst_buf, int dst_y, int stride,
+                                  int palette_offset) {
     if (!res_data || res_size < 4 || !dst_buf || stride <= 0) return -1;
 
     int w, h;
     if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return -1;
 
-    /* Start writing at dst_buf + stride * dst_y */
-    u8* dst = dst_buf + stride * dst_y;
-    const u8* src = res_data + 4;  /* Skip 4-byte header */
-    const u8* src_end = res_data + res_size;
-
-    for (int row = 0; row < h; row++) {
-        u8* row_dst = dst + row * stride;
-        int count = w;  /* Pixels remaining in this row */
-
-        while (count > 0 && src < src_end) {
-            u8 value = *src++;
-            int run_len = (value & 0x3F) + 1;
-            int bit7 = (value >> 7) & 1;
-            int bit6 = (value >> 6) & 1;
-
-            if (bit7 && bit6) {
-                /* 11: skip (transparent) - advance dst by count */
-                row_dst += run_len;
-                count -= (count >= run_len) ? run_len : count;
-            } else if (bit7 && !bit6) {
-                /* 10: copy from source */
-                for (int i = 0; i < run_len && count > 0 && src < src_end; i++) {
-                    *row_dst++ = *src++;
-                    count--;
-                }
-            } else if (!bit7 && bit6) {
-                /* 01: sparse fill - write at every 2nd position */
-                if (src < src_end) {
-                    u8 fill = *src++;
-                    for (int i = 0; i < run_len && count > 0; i++) {
-                        if (count >= 2) {
-                            row_dst[1] = fill;
-                            row_dst += 2;
-                            count -= 2;
-                        } else {
-                            *row_dst++ = fill;
-                            count -= 1;
-                        }
-                    }
-                }
-            } else {
-                /* 00: regular fill */
-                if (src < src_end) {
-                    u8 fill = *src++;
-                    for (int i = 0; i < run_len && count > 0; i++) {
-                        *row_dst++ = fill;
-                        count--;
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
+    /* Skip 4-byte header, decompress with stride */
+    return fd2_rle_decompress(res_data + 4, res_size - 4,
+                              dst_buf, 0, dst_y, stride,
+                              w, h, palette_offset);
 }
 
+/* ========================================================================
+ * RLE Decompression from resource (convenience wrapper)
+ * Allocates destination buffer and decompresses RLE data.
+ * ======================================================================== */
+
 int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
-                                     u8** out_pixels, int* out_w, int* out_h) {
+                                     u8** out_pixels, int* out_w, int* out_h,
+                                     int palette_offset) {
     if (!res_data || res_size < 4 || !out_pixels || !out_w || !out_h) return -1;
 
     int w, h;
     if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return -1;
 
-    /* Use calloc instead of malloc: RLE data contains skip (transparent)
-     * operations that leave dst pixels untouched. These must be black (0).
-     * Original sub_4E98D writes into a calloc-initialized scroll buffer. */
+    /* Use calloc: RLE skip operations leave pixels as 0 (black) */
     u8* pixels = (u8*)calloc(1, (size_t)(w * h));
     if (!pixels) return -1;
 
-    if (fd2_rle_decompress(res_data + 4, res_size - 4, pixels, w, h) != 0) {
+    /* Decompress with stride == width (no padding) */
+    if (fd2_rle_decompress(res_data + 4, res_size - 4,
+                           pixels, 0, 0, w,
+                           w, h, palette_offset) != 0) {
         free(pixels);
         return -1;
     }
@@ -530,7 +545,7 @@ void fd2_resource_classify(const u8* data, u32 size, fd2_resource_info_t* info) 
 int fd2_bg_decode(const u8* res_data, u32 res_size,
                   u8** out_pixels, int* out_w, int* out_h) {
     return fd2_rle_decompress_from_resource(res_data, res_size,
-                                            out_pixels, out_w, out_h);
+                                            out_pixels, out_w, out_h, -1);
 }
 
 /* ========================================================================
@@ -559,7 +574,7 @@ int fd2_ani_decode_frame(const u8* res_data, u32 res_size,
 
     if (fd2_rle_decompress_from_resource(res_data, res_size,
                                          &frame->pixels,
-                                         &frame->width, &frame->height) != 0) {
+                                         &frame->width, &frame->height, -1) != 0) {
         return -1;
     }
 
@@ -584,7 +599,7 @@ int fd2_text_decode_glyph(const u8* res_data, u32 res_size,
 
     return fd2_rle_decompress_from_resource(res_data, res_size,
                                             &glyph->pixels,
-                                            &glyph->width, &glyph->height);
+                                            &glyph->width, &glyph->height, 0);
 }
 
 /* ========================================================================
@@ -594,5 +609,5 @@ int fd2_text_decode_glyph(const u8* res_data, u32 res_size,
 int fd2_tai_decode_portrait(const u8* res_data, u32 res_size,
                             u8** out_pixels, int* out_w, int* out_h) {
     return fd2_rle_decompress_from_resource(res_data, res_size,
-                                            out_pixels, out_w, out_h);
+                                            out_pixels, out_w, out_h, -1);
 }

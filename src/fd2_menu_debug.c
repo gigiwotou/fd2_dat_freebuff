@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
     if (test_res) {
         u8* pixels = NULL;
         int w, h;
-        int ret = fd2_rle_decompress_from_resource(test_res, test_size, &pixels, &w, &h);
+        int ret = fd2_rle_decompress_from_resource(test_res, test_size, &pixels, &w, &h, -1);
         if (ret == 0) {
             printf("Resource #1: decompressed to %dx%d\n", w, h);
             free(pixels);

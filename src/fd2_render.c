@@ -154,7 +154,7 @@ int fd2_render_blit_rle(fd2_render_t* render,
 
     u8* pixels = NULL;
     int w = 0, h = 0;
-    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h) != 0) {
+    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h, -1) != 0) {
         return -1;
     }
 
