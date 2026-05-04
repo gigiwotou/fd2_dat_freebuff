@@ -40,6 +40,9 @@ void state_battle_enter(fd2_game_t* game) {
     data->saved_num_fighters = 0;
     data->selected_char_idx = -1;
     data->cursor_char_frame_id = 0;
+    data->terrain_info_data = NULL;
+    data->terrain_info_data_size = 0;
+    memset(data->terrain_info_buffer, 0, sizeof(data->terrain_info_buffer));
 
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
     fd2_resources_load_dat(&game->resources, FD2_DAT_FDSHAP);
@@ -63,6 +66,16 @@ void state_battle_enter(fd2_game_t* game) {
             }
         } else {
             printf("state_battle: FDOTHER resource index 5 not found\n");
+        }
+
+        u32 resource3_size = 0;
+        const u8* resource3_data = fd2_dat_get_resource(fdother_dat, 3, &resource3_size);
+        if (resource3_data && resource3_size > 0) {
+            data->terrain_info_data = resource3_data;
+            data->terrain_info_data_size = resource3_size;
+            printf("state_battle: FDOTHER resource index 3 loaded (%u bytes) - terrain info\n", resource3_size);
+        } else {
+            printf("state_battle: FDOTHER resource index 3 not found\n");
         }
     } else {
         printf("state_battle: FDOTHER.DAT not available\n");
@@ -329,6 +342,9 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
 
         /* Draw cursor */
         battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+
+        /* Draw terrain info UI - based on IDA sub_126F7 */
+        battle_render_terrain_info(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
 
         fd2_render_present(&game->render);
     }

@@ -6,6 +6,8 @@
 #include <stdbool.h>
 
 #define MAP_TILE_SIZE 24
+#define TERRAIN_INFO_WIDTH 456
+#define TERRAIN_INFO_HEIGHT 24
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,11 +70,20 @@ typedef struct {
     /* Character selection state - based on IDA sub_12C0D */
     int selected_char_idx;
     int cursor_char_frame_id;
+
+    /* Terrain info display - based on IDA sub_126F7 */
+    const u8* terrain_info_data;
+    u32 terrain_info_data_size;
+    u8 terrain_info_buffer[TERRAIN_INFO_WIDTH * TERRAIN_INFO_HEIGHT];
 } state_battle_data_t;
 
 /* Character query - based on IDA sub_12C0D */
 int battle_find_char_at_cursor(state_battle_data_t* data);
 int battle_check_char_valid(state_battle_data_t* data, int char_idx);
+
+/* Terrain info display - based on IDA sub_126F7, sub_122DC */
+int load_terrain_info_data(fd2_game_t* game, state_battle_data_t* data);
+void battle_render_terrain_info(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
 
 /* Sprite system */
 void battle_render_sprites(map_sprite_t* sprites, int sprite_count,
