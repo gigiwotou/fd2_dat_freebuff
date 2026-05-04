@@ -44,19 +44,26 @@ void state_battle_enter(fd2_game_t* game) {
     data->terrain_info_data_size = 0;
     memset(data->terrain_info_buffer, 0, sizeof(data->terrain_info_buffer));
 
-    fd2_resources_load_dat(&game->resources, FD2_DAT_FDFIELD);
-    fd2_resources_load_dat(&game->resources, FD2_DAT_FDSHAP);
-    fd2_resources_load_dat(&game->resources, FD2_DAT_FDOTHER);
+    /* Initialize resource pointers to NULL */
+    data->fdother_resource_5 = NULL;
+    data->fdother_resource_5_size = 0;
+    data->fdother_resource_3 = NULL;
+    data->fdother_resource_3_size = 0;
+    data->fdother_data = NULL;
+    data->fdother_data_size = 0;
 
-    const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
-    if (fdother_dat) {
-        u32 resource5_size = 0;
-        const u8* resource5_data = fd2_dat_get_resource(fdother_dat, 5, &resource5_size);
+    /* Get paths for map loading */
+    const char* fdfield_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDFIELD);
+    const char* fdshap_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDSHAP);
+    const char* fdother_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDOTHER);
 
-        if (resource5_data && resource5_size > 0) {
-            data->fdother_data = resource5_data;
-            data->fdother_data_size = resource5_size;
-            printf("state_battle: FDOTHER resource index 5 loaded (%u bytes)\n", resource5_size);
+    /* Load FDOTHER.DAT resources via sub_111BA (fd2_dat_load_resource) */
+    if (fdother_path) {
+        data->fdother_resource_5 = fd2_dat_load_resource(fdother_path, NULL, 5);
+        if (data->fdother_resource_5) {
+            data->fdother_data = data->fdother_resource_5;
+            data->fdother_data_size = fd2_last_loaded_size;
+            printf("state_battle: FDOTHER resource index 5 loaded (%u bytes)\n", data->fdother_data_size);
 
             if (load_cursor_image(game, data) == 0) {
                 printf("state_battle: cursor image loaded OK, %dx%d\n",
@@ -65,28 +72,23 @@ void state_battle_enter(fd2_game_t* game) {
                 printf("state_battle: cursor image load FAILED\n");
             }
         } else {
-            printf("state_battle: FDOTHER resource index 5 not found\n");
+            printf("state_battle: FDOTHER resource index 5 failed to load\n");
         }
 
-        u32 resource3_size = 0;
-        const u8* resource3_data = fd2_dat_get_resource(fdother_dat, 3, &resource3_size);
-        if (resource3_data && resource3_size > 0) {
-            data->terrain_info_data = resource3_data;
-            data->terrain_info_data_size = resource3_size;
-            printf("state_battle: FDOTHER resource index 3 loaded (%u bytes) - terrain info\n", resource3_size);
+        data->fdother_resource_3 = fd2_dat_load_resource(fdother_path, NULL, 3);
+        if (data->fdother_resource_3) {
+            data->terrain_info_data = data->fdother_resource_3;
+            data->terrain_info_data_size = fd2_last_loaded_size;
+            printf("state_battle: FDOTHER resource index 3 loaded (%u bytes) - terrain info\n", data->terrain_info_data_size);
         } else {
-            printf("state_battle: FDOTHER resource index 3 not found\n");
+            printf("state_battle: FDOTHER resource index 3 failed to load\n");
         }
     } else {
-        printf("state_battle: FDOTHER.DAT not available\n");
+        printf("state_battle: FDOTHER.DAT path not available\n");
     }
 
     int map_id = game->map_index;
     printf("state_battle: loading map %d from DAT files\n", map_id);
-
-    const char* fdfield_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDFIELD);
-    const char* fdshap_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDSHAP);
-    const char* fdother_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDOTHER);
 
     if (fd2_map_load_from_dat(&data->map, map_id, fdfield_path, fdshap_path, fdother_path) == 0) {
         printf("state_battle: map %d loaded successfully (%dx%d tiles)\n",
@@ -355,6 +357,15 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
 void state_battle_exit(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)game->state_data;
     if (data) {
+        /* Free resources loaded via sub_111BA */
+        if (data->fdother_resource_5) {
+            free(data->fdother_resource_5);
+            data->fdother_resource_5 = NULL;
+        }
+        if (data->fdother_resource_3) {
+            free(data->fdother_resource_3);
+            data->fdother_resource_3 = NULL;
+        }
         battle_free_sprites(data->sprites, data->sprite_count);
         fd2_map_free(&data->map);
         free(data);

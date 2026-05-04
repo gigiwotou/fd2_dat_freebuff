@@ -8,6 +8,7 @@
 #include "fd2_game.h"
 #include "fd2_battle.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -65,22 +66,30 @@ static void rle_decode_terrain_image(const u8* src, u8* dst, int stride) {
 }
 
 int load_terrain_info_data(fd2_game_t* game, state_battle_data_t* data) {
-    const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
-    if (!fdother_dat) {
-        printf("battle terrain: FDOTHER.DAT not available\n");
+    const char* fdother_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDOTHER);
+    if (!fdother_path) {
+        printf("battle terrain: FDOTHER.DAT path not available\n");
         return -1;
     }
 
-    u32 resource3_size = 0;
-    const u8* resource3_data = fd2_dat_get_resource(fdother_dat, 3, &resource3_size);
-    if (resource3_data && resource3_size > 0) {
-        data->terrain_info_data = resource3_data;
-        data->terrain_info_data_size = resource3_size;
-        printf("battle terrain: FDOTHER resource 3 loaded (%u bytes)\n", resource3_size);
+    /* Free existing terrain info resource if present */
+    if (data->fdother_resource_3) {
+        free(data->fdother_resource_3);
+        data->fdother_resource_3 = NULL;
+        data->terrain_info_data = NULL;
+        data->terrain_info_data_size = 0;
+    }
+
+    /* Load FDOTHER.DAT resource 3 via sub_111BA */
+    data->fdother_resource_3 = fd2_dat_load_resource(fdother_path, NULL, 3);
+    if (data->fdother_resource_3) {
+        data->terrain_info_data = data->fdother_resource_3;
+        data->terrain_info_data_size = fd2_last_loaded_size;
+        printf("battle terrain: FDOTHER resource 3 loaded (%u bytes)\n", data->terrain_info_data_size);
         return 0;
     }
 
-    printf("battle terrain: FDOTHER resource 3 not found\n");
+    printf("battle terrain: FDOTHER resource 3 failed to load\n");
     return -1;
 }
 

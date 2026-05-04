@@ -148,16 +148,14 @@ static void fade_to_black(int steps, int step_ms) {
     }
 }
 
-static void play_bar_animation(const fd2_dat_t* dat, int frames, int frame_ms) {
-    u32 size;
-    const u8* res = fd2_dat_get_resource(dat, 10, &size);
-    if (!res) return;
+static void play_bar_animation_resource(const u8* res_data, u32 res_size, int frames, int frame_ms) {
+    if (!res_data) return;
 
     int w, h;
-    if (fd2_image_get_dimensions(res, size, &w, &h) != 0) return;
+    if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return;
 
     u8* pixels = NULL;
-    if (fd2_rle_decompress_from_resource(res, size, &pixels, &w, &h) != 0) return;
+    if (fd2_rle_decompress_from_resource(res_data, res_size, &pixels, &w, &h) != 0) return;
 
     fill_screen(0);
     for (int f = 0; f < frames; f++) {
@@ -199,7 +197,7 @@ static void play_bar_animation(const fd2_dat_t* dat, int frames, int frame_ms) {
  *   4. After break at n535==25: sub_1F81E(0,15,0) -> ANI#0
  *   5. Then sub_11EB0 restore + sub_1F525
  */
-static void play_intro_animation(const fd2_dat_t* dat) {
+static void play_intro_animation(const char* fdother_path) {
     /* ---- Step 1: Build scroll buffer exactly like sub_1F894 ----
      * IDA analysis: loc_396C0 = 235200 = 320 * 735.
      * All 5 frames use fixed stride of 147 pixels (147 * 5 = 735).
@@ -215,8 +213,8 @@ static void play_intro_animation(const fd2_dat_t* dat) {
     if (!scroll_buf) return;
 
     for (int i = 0; i < num_frames; i++) {
-        u32 fsize;
-        const u8* fres = fd2_dat_get_resource(dat, 69 + i, &fsize);
+        u8* fres = fd2_dat_load_resource(fdother_path, NULL, 69 + i);
+        u32 fsize = fd2_last_loaded_size;
         if (fres) {
             /* sub_4E98D with value_1 == -1 decompresses the full RLE image
              * directly into the buffer at dst_y = 147 * i.
@@ -236,6 +234,7 @@ static void play_intro_animation(const fd2_dat_t* dat) {
                 }
                 free(fpixels);
             }
+            free(fres);
         } else {
             fprintf(stderr, "[intro] Frame %d (res %d): NOT FOUND\n", i, 69 + i);
         }
@@ -279,13 +278,11 @@ static void play_intro_animation(const fd2_dat_t* dat) {
          *   blit resource 100 -> fadein -> wait 6 ticks ->
          *   fadeout -> restore scroll_buf at pos 450 -> load palette 101 -> fadein */
         if (n535 == 450) {
-            /* For fd2_intro.c (simplified): just blit resource 100,
-             * then immediately restore scroll on next frame.
-             * The full sub_1F73F effect is implemented in fd2_game.c state machine. */
-            u32 ov_size;
-            const u8* ov_res = fd2_dat_get_resource(dat, 100, &ov_size);
+            u8* ov_res = fd2_dat_load_resource(fdother_path, NULL, 100);
+            u32 ov_size = fd2_last_loaded_size;
             if (ov_res) {
                 blit_rle_image(ov_res, ov_size, 0, 0);
+                free(ov_res);
             }
         }
 
@@ -295,10 +292,11 @@ static void play_intro_animation(const fd2_dat_t* dat) {
 
         /* n535 == 10: sub_1F73F(75, 76, n15_1, 10) */
         if (n535 == 10) {
-            u32 ov_size;
-            const u8* ov_res = fd2_dat_get_resource(dat, 75, &ov_size);
+            u8* ov_res = fd2_dat_load_resource(fdother_path, NULL, 75);
+            u32 ov_size = fd2_last_loaded_size;
             if (ov_res) {
                 blit_rle_image(ov_res, ov_size, 0, 0);
+                free(ov_res);
             }
         }
 
@@ -383,9 +381,9 @@ int main(int argc, char** argv) {
 
     init_exe_dir();
 
-    fd2_dat_t dat;
-    if (fd2_dat_load(&dat, exe_path("FDOTHER.DAT")) != 0) {
-        fprintf(stderr, "Failed to load FDOTHER.DAT from %s\n", g_exe_dir);
+    const char* fdother_path = exe_path("FDOTHER.DAT");
+    if (!fdother_path) {
+        fprintf(stderr, "Failed to get FDOTHER.DAT path\n");
         free(g_argb);
         SDL_DestroyTexture(g_texture);
         SDL_DestroyRenderer(g_renderer);
@@ -396,12 +394,13 @@ int main(int argc, char** argv) {
 
     printf("Loading intro resources...\n");
 
-    u32 title_size;
-    const u8* title_res = fd2_dat_get_resource(&dat, 74, &title_size);
+    /* Load title screen resource 74 via sub_111BA */
+    u8* title_res = fd2_dat_load_resource(fdother_path, NULL, 74);
+    u32 title_size = fd2_last_loaded_size;
 
-    /* Title screen uses palette FDOTHER[76] (original: sub_111BA(76)) */
-    u32 pal_size;
-    const u8* pal_res = fd2_dat_get_resource(&dat, 76, &pal_size);
+    /* Load palette resource 76 via sub_111BA */
+    u8* pal_res = fd2_dat_load_resource(fdother_path, NULL, 76);
+    u32 pal_size = fd2_last_loaded_size;
     if (pal_res && pal_size == FD2_PALETTE_BYTES) {
         fd2_palette_6bit_to_8bit(pal_res, g_palette);
     }
@@ -417,19 +416,26 @@ int main(int argc, char** argv) {
     SDL_Delay(500);
 
     printf("Playing bar animation...\n");
-    play_bar_animation(&dat, 60, 30);
+    
+    /* Load resource 10 for bar animation */
+    u8* bar_res = fd2_dat_load_resource(fdother_path, NULL, 10);
+    u32 bar_size = fd2_last_loaded_size;
+    if (bar_res) {
+        play_bar_animation_resource(bar_res, bar_size, 60, 30);
+    }
     SDL_Delay(200);
 
     printf("Fading to black...\n");
     fade_to_black(40, 8);
     SDL_Delay(100);
 
-    u32 menu_size;
-    const u8* menu_res = fd2_dat_get_resource(&dat, 101, &menu_size);
+    /* Load resource 101 for scroll/menu section */
+    u8* menu_res = fd2_dat_load_resource(fdother_path, NULL, 101);
+    u32 menu_size = fd2_last_loaded_size;
 
-    /* Scroll/menu section uses palette FDOTHER[101] (original: sub_111BA(101)) */
-    const u8* scroll_pal = fd2_dat_get_resource(&dat, 101, &pal_size);
-    if (scroll_pal && pal_size == FD2_PALETTE_BYTES) {
+    /* Scroll/menu section uses palette FDOTHER[101] */
+    const u8* scroll_pal = menu_res;
+    if (scroll_pal && menu_size >= FD2_PALETTE_BYTES) {
         fd2_palette_6bit_to_8bit(scroll_pal, g_palette);
     }
     fd2_palette_set_brightness(g_palette, 63);
@@ -444,11 +450,17 @@ int main(int argc, char** argv) {
     SDL_Delay(500);
 
     printf("Playing intro animation (535 frames)...\n");
-    play_intro_animation(&dat);
+    play_intro_animation(fdother_path);
 
     printf("Fading out...\n");
     fade_to_black(40, 8);
     SDL_Delay(100);
+
+    /* Clean up loaded resources */
+    if (title_res) free(title_res);
+    if (pal_res) free(pal_res);
+    if (bar_res) free(bar_res);
+    if (menu_res) free(menu_res);
 
     printf("Showing menu...\n");
     printf("Press ESC to quit.\n");
@@ -465,7 +477,6 @@ int main(int argc, char** argv) {
         SDL_Delay(16);
     }
 
-    fd2_dat_free(&dat);
     free(g_argb);
     SDL_DestroyTexture(g_texture);
     SDL_DestroyRenderer(g_renderer);

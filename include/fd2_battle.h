@@ -43,6 +43,12 @@ typedef struct {
 
     bool debug_grid_enabled;
 
+    /* Resources loaded via fd2_dat_load_resource (sub_111BA) - must be freed */
+    u8* fdother_resource_5;      /* FDOTHER.DAT resource index 5 */
+    u32 fdother_resource_5_size;
+    u8* fdother_resource_3;      /* FDOTHER.DAT resource index 3 (terrain info) */
+    u32 fdother_resource_3_size;
+
     const u8* fdother_data;
     u32 fdother_data_size;
     const u8* cursor_image_data;
