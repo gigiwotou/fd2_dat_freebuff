@@ -2,24 +2,6 @@
  * FD2 Battle Terrain Info UI
  *
  * Based on IDA sub_126F7 and sub_4E22A.
- * 
- * Original assembly analysis:
- * - sub_126F7: Renders terrain info image for cursor position
- *   - Parameters: a5=x, a6=y, a7=terrain_image_index
- *   - Bounds check: x >= qword_53AA9 && x < dword_51A87+qword_53AA9
- *                 && y >= HIDWORD(qword_53AA9) && y < dword_51A8B+HIDWORD(qword_53AA9)
- *   - Get terrain image: FDOTHER_DAT__3 + *(DWORD*)(FDOTHER_DAT__3 + 4*a7 + 6)
- *   - Call sub_4E22A to decode RLE image to buffer at n655360 + 32904, width 456
- * 
- * - sub_4E22A: RLE decode function for 24x24 images
- *   - Outer loop: 24 rows (n24=24)
- *   - Inner loop: 24 columns (n24_1=24)
- *   - RLE format: byte value with flags in high bits
- *     - bit 7 set (CF=1 after shl): skip/run mode
- *     - bit 6 set: copy mode from source
- *     - otherwise: fill mode with single color
- *   - Run length = (value >> 2) + 1
- *   - After each row: dst += arg8 - 24 (stride adjustment)
  */
 
 #define _GNU_SOURCE
@@ -30,63 +12,78 @@
 
 /*
  * RLE decode function - based on IDA sub_4E22A.
- * Decodes 24x24 RLE-compressed terrain image to destination buffer.
- * 
- * @param src - source RLE data
- * @param dst - destination buffer (width=456 stride)
- * @param dst_stride - destination row stride (456)
  */
-static void rle_decode_terrain_image(const u8* src, u8* dst, int dst_stride) {
+static void rle_decode_terrain_image(const u8* src, u8* dst, int stride) {
     const u8* src_ptr = src;
     u8* dst_ptr = dst;
+    int stride_minus_24 = stride - 24;
     
-    /* Outer loop: 24 rows */
+    /* Outer loop: bl = 24 rows */
     for (int row = 0; row < 24; row++) {
-        int col_remaining = 24;  /* n24_1 = 24 */
+        /* Inner: bh = 24 columns remaining */
+        int bh = 24;
         
-        /* Inner loop: decode until 24 pixels filled */
-        while (col_remaining > 0) {
-            u8 value = *src_ptr++;
-            u8 value_shl1 = value << 1;
+        while (bh > 0) {
+            u8 al = *src_ptr++;
+            u8 cl = al;
             
-            /* Check bit 7 (CF after shl) */
-            if (value_shl1 & 0x100) {
-                /* Skip/run mode - advance destination without writing */
-                int count = (value >> 2) + 1;
-                if (count > col_remaining) count = col_remaining;
-                dst_ptr += count;
-                col_remaining -= count;
-            }
-            /* Check bit 6 (CF after second shl) */
-            else if ((value_shl1 << 1) & 0x100) {
-                /* Copy mode - copy 'count' bytes from source */
-                int count = (value >> 2) + 1;
-                if (count > col_remaining) count = col_remaining;
-                memcpy(dst_ptr, src_ptr, count);
-                src_ptr += count;
-                dst_ptr += count;
-                col_remaining -= count;
-            }
-            else {
-                /* Fill mode - fill 'count' bytes with single color */
-                int count = (value >> 2) + 1;
-                u8 fill_color = *src_ptr++;
-                if (count > col_remaining) count = col_remaining;
-                memset(dst_ptr, fill_color, count);
-                dst_ptr += count;
-                col_remaining -= count;
+            /* shl cl, 1 -> CF = bit 7 */
+            if (al & 0x80) {
+                /* bit 7 set */
+                
+                /* shl cl, 1 again -> CF = bit 6 */
+                if ((al & 0x40) == 0) {
+                    /* bit 6 = 0: copy mode (rep movsb) */
+                    int count = (al >> 2) + 1;
+                    if (count > bh) count = bh;
+                    memcpy(dst_ptr, src_ptr, count);
+                    src_ptr += count;
+                    dst_ptr += count;
+                    bh -= count;
+                } else {
+                    /* bit 6 = 1: skip mode (dst += count) */
+                    int count = (al >> 2) + 1;
+                    if (count > bh) count = bh;
+                    dst_ptr += count;
+                    bh -= count;
+                }
+            } else {
+                /* bit 7 clear */
+                
+                /* shl cl, 1 again -> CF = bit 6 */
+                if ((al & 0x40) == 0) {
+                    /* bit 6 = 0: fill mode (rep stosb) */
+                    int count = (al >> 2) + 1;
+                    if (count > bh) count = bh;
+                    u8 fill_color = *src_ptr++;
+                    memset(dst_ptr, fill_color, count);
+                    dst_ptr += count;
+                    bh -= count;
+                } else {
+                    /* bit 6 = 1: interleave mode */
+                    /* 4E262: sub bh, cl; 4E264: sub bh, cl -> bh -= 2*cl */
+                    int count = (al >> 2) + 1;
+                    bh -= count;
+                    bh -= count;
+                    
+                    u8 fill_color = *src_ptr++;
+                    /* 4E267: inc edi; stosb; loop -> 
+                     * Each iteration: dst++, *dst++=color -> writes 1 byte, advances 2 bytes
+                     * Loop uses ecx which is cl after shr+inc (count-1 iterations since loop decrements first)
+                     */
+                    for (int i = 0; i < count; i++) {
+                        dst_ptr++;
+                        *dst_ptr++ = fill_color;
+                    }
+                }
             }
         }
         
-        /* Move to next row: dst += dst_stride - 24 */
-        dst_ptr += (dst_stride - 24);
+        /* Next row: dst += (stride - 24) */
+        dst_ptr += stride_minus_24;
     }
 }
 
-/*
- * Load terrain info data from FDOTHER.DAT resource 3.
- * Based on IDA FDOTHER_DAT__3 reference in sub_126F7.
- */
 int load_terrain_info_data(fd2_game_t* game, state_battle_data_t* data) {
     const fd2_dat_t* fdother_dat = fd2_resources_get_dat(&game->resources, FD2_DAT_FDOTHER);
     if (!fdother_dat) {
@@ -107,56 +104,51 @@ int load_terrain_info_data(fd2_game_t* game, state_battle_data_t* data) {
     return -1;
 }
 
-/*
- * Render terrain info for cursor position.
- * Based on IDA sub_126F7:
- *   - Gets tile at cursor position
- *   - Gets terrain image from FDOTHER_DAT__3 + *(DWORD*)(FDOTHER_DAT__3 + 4*terrain_id + 6)
- *   - Decodes RLE image to buffer using sub_4E22A
- *   - Buffer offset: n655360 + 32904, width 456
- */
 void battle_render_terrain_info(state_battle_data_t* data, u8* screen, int screen_w, int screen_h) {
     if (!data->terrain_info_data || !data->map.loaded) {
+        static int warned = 0;
+        if (!warned++) {
+            printf("battle terrain: skipping render - terrain_info_data=%p, map.loaded=%d\n", 
+                   (void*)data->terrain_info_data, data->map.loaded);
+        }
         return;
     }
 
     int cursor_x = data->cursor_x;
     int cursor_y = data->cursor_y;
 
-    /* Check bounds */
     if (cursor_x < 0 || cursor_x >= data->map.width ||
         cursor_y < 0 || cursor_y >= data->map.height) {
         return;
     }
 
-    /* Get terrain ID from map tile data */
     int terrain_id = data->map.tiles[cursor_y][cursor_x].terrain_id;
 
-    /* Get terrain image offset from FDOTHER resource 3 */
     const u8* terrain_info_base = data->terrain_info_data;
     
-    /* Parse resource 3 header to get image count */
-    u16 image_count = 0;
-    if (data->terrain_info_data_size >= 2) {
-        image_count = terrain_info_base[0] | (terrain_info_base[1] << 8);
-    }
-
-    if (terrain_id < 0 || terrain_id >= image_count) {
-        return;
-    }
-
-    /* Get image offset: FDOTHER_DAT__3 + *(DWORD*)(FDOTHER_DAT__3 + 4*terrain_id + 6) */
-    u32 header_offset = 6;
-    u32 image_offset_ptr = header_offset + 4 * terrain_id;
+    /* Resource 3 format (from IDA 12779-12783):
+     *   edx = FDOTHER_DAT__3
+     *   edx += [edx + a7*4 + 6]
+     * So: offset table starts at byte 6, each entry is 4 bytes (little-endian)
+     * The value is an offset from the start of resource 3 data
+     */
     
-    if (image_offset_ptr + 4 > data->terrain_info_data_size) {
+    u32 offset_table_start = 6;
+    u32 offset_ptr = offset_table_start + 4 * terrain_id;
+    
+    if (offset_ptr + 4 > data->terrain_info_data_size) {
+        static int warned = 0;
+        if (!warned++) {
+            printf("battle terrain: terrain_id %d offset out of range (size=%u)\n",
+                   terrain_id, data->terrain_info_data_size);
+        }
         return;
     }
 
-    u32 image_offset = terrain_info_base[image_offset_ptr] |
-                      (terrain_info_base[image_offset_ptr + 1] << 8) |
-                      (terrain_info_base[image_offset_ptr + 2] << 16) |
-                      (terrain_info_base[image_offset_ptr + 3] << 24);
+    u32 image_offset = terrain_info_base[offset_ptr] |
+                      (terrain_info_base[offset_ptr + 1] << 8) |
+                      (terrain_info_base[offset_ptr + 2] << 16) |
+                      (terrain_info_base[offset_ptr + 3] << 24);
 
     if (image_offset >= data->terrain_info_data_size) {
         return;
@@ -164,14 +156,14 @@ void battle_render_terrain_info(state_battle_data_t* data, u8* screen, int scree
 
     const u8* terrain_image_data = terrain_info_base + image_offset;
 
-    /* Decode RLE image to buffer (sub_4E22A) */
+    /* Decode RLE image */
     int dst_stride = TERRAIN_INFO_WIDTH;  /* 456 */
     u8 decoded_buffer[TERRAIN_INFO_WIDTH * 24];
     memset(decoded_buffer, 0, sizeof(decoded_buffer));
     
     rle_decode_terrain_image(terrain_image_data, decoded_buffer, dst_stride);
 
-    /* Render to screen at bottom center */
+    /* Render to screen */
     int box_x = (FD2_SCREEN_W - TERRAIN_INFO_WIDTH) / 2;
     int box_y = FD2_SCREEN_H - 24 - 4;
 
