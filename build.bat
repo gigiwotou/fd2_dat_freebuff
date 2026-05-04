@@ -35,6 +35,7 @@ set EXE_EXT=.exe
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
 set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game_core.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_states.o %OBJ_DIR%\fd2_states_intro.o %OBJ_DIR%\fd2_menu.o %OBJ_DIR%\fd2_battle.o %OBJ_DIR%\fd2_battle_sprite.o %OBJ_DIR%\fd2_battle_cursor.o %OBJ_DIR%\fd2_battle_menu.o %OBJ_DIR%\fd2_battle_terrain_info.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_continue.o %OBJ_DIR%\fd2_cutscene.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
+set SUB_111BA_TEST_OBJ=%OBJ_DIR%\fd2_sub_111ba_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Object files (release)
@@ -45,6 +46,7 @@ set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
 set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
+set TARGET_SUB_111BA_TEST=%BIN_DIR%\fd2_sub_111ba_test%EXE_EXT%
 set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
 
 :: Parse arguments (order-independent)

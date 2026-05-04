@@ -99,6 +99,84 @@ const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size) {
     return dat->data + dat->resources[index].start;
 }
 
+/* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
+u32 fd2_last_loaded_size = 0;
+
+/* ========================================================================
+ * sub_111BA: Single Resource Loader (IDA 0x111BA)
+ *
+ * Original assembly behavior (1:1 replication):
+ *   1. Free old_ptr if non-NULL
+ *   2. fopen(filename, "rb")
+ *   3. fseek(fp, 4 * index + 6, SEEK_SET)
+ *   4. fread 8 bytes: offset(4) + next_offset(4)
+ *   5. size = next_offset - offset
+ *   6. malloc(size)
+ *   7. fseek(fp, offset, SEEK_SET)
+ *   8. fread resource data
+ *   9. fclose(fp)
+ *   10. return pointer
+ * ======================================================================== */
+
+u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index) {
+    FILE* fp;
+    u8* buffer;
+    u32 offset, next_offset, size;
+    u32 offsets[2];
+
+    /* Free old resource pointer if provided (IDA: if (a6) free(a6)) */
+    if (old_ptr) {
+        free(old_ptr);
+    }
+
+    /* Open DAT file */
+    fp = fopen(filename, "rb");
+    if (!fp) {
+        fprintf(stderr, "\n\n File not found %s!!! \n\n", filename);
+        return NULL;
+    }
+
+    /* Seek to offset table entry: 4 * index + 6 */
+    fseek(fp, 4 * index + 6, SEEK_SET);
+
+    /* Read 8 bytes: offset (4 bytes) + next_offset (4 bytes) */
+    if (fread(offsets, 1, 8, fp) != 8) {
+        fprintf(stderr, "fd2_dat_load_resource: failed to read offset table for index %d\n", index);
+        fclose(fp);
+        return NULL;
+    }
+
+    offset = offsets[0];
+    next_offset = offsets[1];
+    size = next_offset - offset;
+
+    /* Store size in global (matches dword_53BFF) */
+    fd2_last_loaded_size = size;
+
+    /* Allocate memory for the resource */
+    buffer = (u8*)malloc(size);
+    if (!buffer) {
+        fprintf(stderr, "Out of Memory at Load %s Number:%d!!\n", filename, index);
+        fclose(fp);
+        return NULL;
+    }
+
+    /* Seek to resource data */
+    fseek(fp, offset, SEEK_SET);
+
+    /* Read resource data */
+    if (fread(buffer, 1, size, fp) != size) {
+        fprintf(stderr, "fd2_dat_load_resource: failed to read resource %d (size=%u)\n", index, size);
+        free(buffer);
+        fclose(fp);
+        return NULL;
+    }
+
+    fclose(fp);
+
+    return buffer;
+}
+
 /* ========================================================================
  * RLE Decompression (IDA sub_4E98D)
  *

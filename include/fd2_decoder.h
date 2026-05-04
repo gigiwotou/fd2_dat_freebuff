@@ -64,8 +64,38 @@ void fd2_dat_free(fd2_dat_t* dat);
  * Get raw resource data by index.
  * Returns pointer into mapped file (do not free), or NULL if invalid.
  * Sets *out_size to the resource size.
+ *
+ * @deprecated Use fd2_dat_load_resource instead (matches sub_111BA).
  */
 const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size);
+
+/* ---- sub_111BA: Single Resource Loader ---- */
+
+/*
+ * Load a single resource from a DAT file (IDA sub_111BA).
+ *
+ * This is the ORIGINAL game's resource loading mechanism:
+ * - Opens the DAT file
+ * - Reads the offset table entry for the given index
+ * - Allocates memory for the resource
+ * - Reads the resource data
+ * - Closes the file
+ * - Returns pointer to the loaded resource
+ *
+ * If old_ptr is non-NULL, it is freed first (for resource switching).
+ * The global fd2_last_loaded_size is set to the resource size.
+ *
+ * filename: DAT file path (e.g., "FDOTHER.DAT")
+ * old_ptr:  previous resource pointer to free (can be NULL)
+ * index:    resource index within the DAT file
+ *
+ * Returns: pointer to loaded resource data, or NULL on error.
+ *          The caller is responsible for freeing the returned pointer.
+ */
+u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
+
+/* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
+extern u32 fd2_last_loaded_size;
 
 /* ---- RLE Decompression ---- */
 
