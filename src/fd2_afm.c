@@ -18,8 +18,12 @@
  */
 
 #include "fd2_afm.h"
+#include "fd2_render.h"
+#include "fd2_resources.h"
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* ========================================================================
  * Internal Command Handlers
@@ -382,4 +386,170 @@ const u8* fd2_afm_get_frame(const fd2_afm_t* afm) {
 const u8* fd2_afm_get_palette(const fd2_afm_t* afm) {
     if (!afm) return NULL;
     return afm->palette;
+}
+
+/* ========================================================================
+ * sub_20421: AFM动画播放器 (原游戏 0x20421)
+ *
+ * 原游戏逻辑 (1:1 复制):
+ *   1. sub_3702F(..., 56) - 初始化
+ *   2. 如果a5==1, 加载FDOTHER.DAT索引78
+ *   3. buf = malloc(768) - 调色板缓冲
+ *   4. v8 = malloc(64000) - 帧缓冲
+ *   5. sub_36FD3(64000, 655360, buf) - 初始化缓冲
+ *   6. _rb_ = fopen("ANI.DAT", "rb")
+ *   7. fseek(_rb_, 4*a5 + 6, 0) - 定位到动画索引
+ *   8. sub_373CA(v8, 1u, 8, _rb_) - 读取8字节 (动画偏移)
+ *   9. fseek(_rb_, *(DWORD*)v8, 0) - 定位到动画数据
+ *   10. sub_373CA(v8, 1u, 173, _rb_) - 读取173字节头
+ *   11. v15 = *(WORD*)(v8 + 165) - 获取帧数
+ *   12. for (i=0; i<v15; ++i) {
+ *         sub_373CA(v12, 1u, 8, _rb_) - 读取8字节帧头
+ *         sub_373CA(v8, 1u, v12[0], _rb_) - 读取帧数据
+ *         sub_36FF4(v12[1], v8) - 分发帧命令
+ *         if (a5==1 && !i) sub_25A96(_FDOTHER.DAT_, 0, 1)
+ *         j___delay(a6) - 延迟
+ *         if (a7 && sub_10620()) break - 检查按键
+ *         sub_4E381() - 刷新屏幕
+ *       }
+ *   13. free(buf), free(v8)
+ *   14. if (_FDOTHER.DAT_) { sub_25A96(_FDOTHER.DAT_, -1, 1); free(_FDOTHER.DAT_); }
+ *   15. fclose(_rb_)
+ *
+ * 参数:
+ *   anim_index - ANI.DAT中的动画索引 (1=开场动画)
+ *   frame_delay - 每帧延迟毫秒数
+ *   check_input - 是否检查键盘输入 (1=是, 0=否)
+ *   render - 渲染器
+ *   resources - 资源管理器
+ *
+ * 返回: 0=正常播放完成, 1=用户按键中断
+ * ======================================================================== */
+int fd2_afm_play(int anim_index, int frame_delay, int check_input,
+                 fd2_render_t* render, fd2_resources_t* resources) {
+    if (!render || !resources) return -1;
+
+    /* 1. 分配缓冲 (对应原游戏 malloc(768) 和 malloc(64000)) */
+    u8* palette_buf = (u8*)malloc(768);
+    u8* frame_buf = (u8*)malloc(FD2_SCREEN_SIZE);
+    if (!palette_buf || !frame_buf) {
+        free(palette_buf);
+        free(frame_buf);
+        return -1;
+    }
+
+    /* 2. 初始化缓冲 (对应原游戏 sub_36FD3) */
+    memset(frame_buf, 0, FD2_SCREEN_SIZE);
+    memset(palette_buf, 0, 768);
+
+    /* 3. 加载ANI.DAT资源 */
+    if (!fd2_resources_is_loaded(resources, FD2_DAT_ANI)) {
+        if (fd2_resources_load_dat(resources, FD2_DAT_ANI) != 0) {
+            fprintf(stderr, "fd2_afm_play: Failed to load ANI.DAT\n");
+            free(palette_buf);
+            free(frame_buf);
+            return -1;
+        }
+    }
+
+    const fd2_dat_t* ani_dat = fd2_resources_get_dat(resources, FD2_DAT_ANI);
+    if (!ani_dat) {
+        fprintf(stderr, "fd2_afm_play: ANI.DAT not available\n");
+        free(palette_buf);
+        free(frame_buf);
+        return -1;
+    }
+
+    /* 4. 获取动画资源 (原游戏通过fseek定位到4*anim_index+6) */
+    /* ANI.DAT索引表: 前6字节是头部, 然后每个索引4字节偏移 */
+    u32 resource_size = 0;
+    const u8* resource_data = fd2_resources_get(resources, FD2_DAT_ANI, anim_index, &resource_size);
+    if (!resource_data || resource_size < FD2_AFM_HEADER_SIZE) {
+        fprintf(stderr, "fd2_afm_play: Invalid ANI.DAT resource %d (size=%u)\n",
+                anim_index, resource_size);
+        free(palette_buf);
+        free(frame_buf);
+        return -1;
+    }
+
+    /* 5. 解析AFM头 (对应原游戏 sub_373CA读取173字节) */
+    u16 total_frames = (u16)(resource_data[FD2_AFM_FRAMES_OFF])
+                     | (u16)(resource_data[FD2_AFM_FRAMES_OFF + 1] << 8);
+
+    printf("[AFM] Playing animation %d, %d frames\n", anim_index, total_frames);
+
+    /* 6. 如果anim_index==1, 加载FDOTHER.DAT索引78 (原游戏逻辑) */
+    const u8* fdother_78 = NULL;
+    if (anim_index == 1) {
+        u32 s78_size = 0;
+        fdother_78 = fd2_resources_get(resources, FD2_DAT_FDOTHER, 78, &s78_size);
+        /* TODO: sub_25A96(fdother_78, 0, 1) - 可能需要额外处理 */
+    }
+
+    /* 7. 播放循环 (对应原游戏 for i=0 to v15) */
+    fd2_afm_t afm;
+    fd2_afm_init(&afm);
+
+    if (fd2_afm_open(&afm, resource_data, resource_size) != 0) {
+        fprintf(stderr, "fd2_afm_play: Failed to open AFM animation\n");
+        free(palette_buf);
+        free(frame_buf);
+        return -1;
+    }
+
+    int interrupted = 0;
+    Uint32 last_frame_time = SDL_GetTicks();
+
+    for (u16 i = 0; i < total_frames; i++) {
+        /* 解码当前帧 */
+        if (fd2_afm_decode_next_frame(&afm) != 0) {
+            fprintf(stderr, "fd2_afm_play: Frame %d decode failed\n", i);
+            break;
+        }
+
+        /* 渲染到屏幕 (对应原游戏 sub_4E381) */
+        const u8* frame = fd2_afm_get_frame(&afm);
+        const u8* pal = fd2_afm_get_palette(&afm);
+
+        if (frame) {
+            memcpy(render->screen, frame, FD2_SCREEN_SIZE);
+        }
+        if (pal) {
+            fd2_render_set_palette_6bit(render, pal);
+        }
+        fd2_render_present(render);
+
+        /* 延迟 (对应原游戏 j___delay(a6)) */
+        if (frame_delay > 0) {
+            SDL_Delay(frame_delay);
+        }
+
+        /* 检查键盘输入 (对应原游戏 if (a7 && sub_10620()) break) */
+        if (check_input) {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    interrupted = 1;
+                    goto cleanup;
+                }
+                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+                    /* 任何按键都中断动画 */
+                    interrupted = 1;
+                    goto cleanup;
+                }
+            }
+        }
+    }
+
+cleanup:
+    /* 8. 释放资源 */
+    free(palette_buf);
+    free(frame_buf);
+
+    /* 如果anim_index==1, 释放FDOTHER.DAT (对应原游戏逻辑) */
+    if (anim_index == 1 && fdother_78) {
+        /* TODO: sub_25A96(fdother_78, -1, 1); free(fdother_78); */
+    }
+
+    return interrupted ? 1 : 0;
 }

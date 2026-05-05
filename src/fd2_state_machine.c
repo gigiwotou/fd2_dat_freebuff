@@ -14,6 +14,7 @@
 #include "fd2_data_loader.h"
 #include "fd2_scene_interact.h"
 #include "fd2_input_scan.h"
+#include "fd2_opening_animation.h"
 #include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>

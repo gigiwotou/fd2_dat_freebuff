@@ -5,6 +5,14 @@
 #include <string.h>
 #include <SDL2/SDL.h>
 
+/* 全局资源管理器 */
+static fd2_resources_t g_resources;
+static int g_resources_initialized = 0;
+
+fd2_resources_t* fd2_get_resources(void) {
+    return g_resources_initialized ? &g_resources : NULL;
+}
+
 /* 静态路径缓冲区 */
 static char s_path_buf[768];
 static char s_exe_dir[512] = {0};
@@ -209,43 +217,101 @@ int scene_check_default(void) {
  *   11. malloc(2560)      -> g_n8_3
  * ======================================================================== */
 int fd2_data_load_all(fd2_state_machine_t* sm, const char* data_dir) {
+    if (!sm) {
+        fprintf(stderr, "fd2_data_load_all: Invalid state machine\n");
+        return -1;
+    }
+
+    /* 如果data_dir为NULL，使用当前目录 */
+    const char* effective_dir = data_dir ? data_dir : ".";
+
+    /* 初始化资源管理器 */
+    if (!g_resources_initialized) {
+        if (fd2_resources_init(&g_resources, effective_dir) != 0) {
+            fprintf(stderr, "fd2_data_load_all: Failed to initialize resources\n");
+            return -1;
+        }
+        g_resources_initialized = 1;
+    }
+
     const char* path;
 
     (void)sm;
 
-    /* 1. 加载FDOTHER.DAT索引31 */
-    path = fd2_get_data_path(data_dir, "FDOTHER.DAT");
-    g_FDOTHER_DAT__2 = fd2_dat_load_resource(path, NULL, 31);
+    /* 1. 加载所有必要的DAT文件到资源管理器 */
+    fd2_resources_load_dat(&g_resources, FD2_DAT_FDOTHER);
+    fd2_resources_load_dat(&g_resources, FD2_DAT_FDTXT);
+    fd2_resources_load_dat(&g_resources, FD2_DAT_ANI);
+    fd2_resources_load_dat(&g_resources, FD2_DAT_FDSHAP);
+    fd2_resources_load_dat(&g_resources, FD2_DAT_FDFIELD);
+    fd2_resources_load_dat(&g_resources, FD2_DAT_FIGANI);
+
+    /* 2. 使用资源管理器获取FDOTHER.DAT各索引资源 */
+    u32 s31_size = 0;
+    const u8* fdother_31 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 31, &s31_size);
+    if (fdother_31) {
+        g_dword_53BFF = s31_size;
+        g_FDOTHER_DAT__2 = malloc(s31_size);
+        memcpy(g_FDOTHER_DAT__2, fdother_31, s31_size);
+    }
     if (!g_FDOTHER_DAT__2) return -1;
 
-    /* 2. 加载FDOTHER.DAT索引1 */
-    g_FDOTHER_DAT__3 = fd2_dat_load_resource(path, NULL, 1);
+    u32 s1_size = 0;
+    const u8* fdother_1 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 1, &s1_size);
+    if (fdother_1) {
+        g_FDOTHER_DAT__3 = malloc(s1_size);
+        memcpy(g_FDOTHER_DAT__3, fdother_1, s1_size);
+    }
     if (!g_FDOTHER_DAT__3) return -1;
 
-    /* 3. 加载FDOTHER.DAT索引2 */
-    g_FDOTHER_DAT__4 = fd2_dat_load_resource(path, NULL, 2);
+    u32 s2_size = 0;
+    const u8* fdother_2 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 2, &s2_size);
+    if (fdother_2) {
+        g_FDOTHER_DAT__4 = malloc(s2_size);
+        memcpy(g_FDOTHER_DAT__4, fdother_2, s2_size);
+    }
     if (!g_FDOTHER_DAT__4) return -1;
 
-    /* 4. 加载FDOTHER.DAT索引3 */
-    g_FDOTHER_DAT__5 = fd2_dat_load_resource(path, NULL, 3);
+    u32 s3_size = 0;
+    const u8* fdother_3 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 3, &s3_size);
+    if (fdother_3) {
+        g_FDOTHER_DAT__5 = malloc(s3_size);
+        memcpy(g_FDOTHER_DAT__5, fdother_3, s3_size);
+    }
     if (!g_FDOTHER_DAT__5) return -1;
 
-    /* 5. 加载FDOTHER.DAT索引4 */
-    g_FDOTHER_DAT__6 = fd2_dat_load_resource(path, NULL, 4);
+    u32 s4_size = 0;
+    const u8* fdother_4 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 4, &s4_size);
+    if (fdother_4) {
+        g_FDOTHER_DAT__6 = malloc(s4_size);
+        memcpy(g_FDOTHER_DAT__6, fdother_4, s4_size);
+    }
     if (!g_FDOTHER_DAT__6) return -1;
 
-    /* 6. 加载FDOTHER.DAT索引5 */
-    g_FDOTHER_DAT__7 = fd2_dat_load_resource(path, NULL, 5);
+    u32 s5_size = 0;
+    const u8* fdother_5 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 5, &s5_size);
+    if (fdother_5) {
+        g_FDOTHER_DAT__7 = malloc(s5_size);
+        memcpy(g_FDOTHER_DAT__7, fdother_5, s5_size);
+    }
     if (!g_FDOTHER_DAT__7) return -1;
 
     /* 7. 加载FDTXT.DAT索引0 */
-    path = fd2_get_data_path(data_dir, "FDTXT.DAT");
-    g_FDTXT_DAT__0 = fd2_dat_load_resource(path, NULL, 0);
+    u32 txt0_size = 0;
+    const u8* fdtxt_0 = fd2_resources_get(&g_resources, FD2_DAT_FDTXT, 0, &txt0_size);
+    if (fdtxt_0) {
+        g_FDTXT_DAT__0 = malloc(txt0_size);
+        memcpy(g_FDTXT_DAT__0, fdtxt_0, txt0_size);
+    }
     if (!g_FDTXT_DAT__0) return -1;
 
     /* 8. 加载FDOTHER.DAT索引6 */
-    path = fd2_get_data_path(data_dir, "FDOTHER.DAT");
-    g_FDOTHER_DAT__8 = fd2_dat_load_resource(path, NULL, 6);
+    u32 s6_size = 0;
+    const u8* fdother_6 = fd2_resources_get(&g_resources, FD2_DAT_FDOTHER, 6, &s6_size);
+    if (fdother_6) {
+        g_FDOTHER_DAT__8 = malloc(s6_size);
+        memcpy(g_FDOTHER_DAT__8, fdother_6, s6_size);
+    }
     if (!g_FDOTHER_DAT__8) return -1;
 
     /* 9. 分配缓冲区 */
@@ -261,6 +327,7 @@ int fd2_data_load_all(fd2_state_machine_t* sm, const char* data_dir) {
     g_n8_3 = malloc(2560);
     if (!g_n8_3) return -1;
 
+    printf("[DEBUG] Resources loaded\n");
     return 0;
 }
 

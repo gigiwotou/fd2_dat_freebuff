@@ -13,12 +13,16 @@
 #include "fd2_state_machine.h"
 #include "fd2_globals.h"
 #include "fd2_data_loader.h"
+#include "fd2_opening_animation.h"
 
 int main(int argc, char** argv) {
     /* 确定数据目录 */
     const char* data_dir = NULL;
     if (argc > 1) {
         data_dir = argv[1];
+    } else {
+        /* 默认使用game目录 */
+        data_dir = "game";
     }
 
     printf("[DEBUG] Starting initialization...\n");
@@ -65,6 +69,11 @@ int main(int argc, char** argv) {
     printf("  Arrows: Navigate    Enter/Space: Confirm\n");
     printf("  Tab: Subscene switch   ESC: Back/Quit\n");
     printf("  F11: Fullscreen\n");
+
+    /* 播放开场动画 (对应原游戏 sub_1F894) */
+    printf("[DEBUG] Playing opening animation...\n");
+    fd2_play_opening_animation(&sm);
+    printf("[DEBUG] Opening animation finished\n");
 
     /* 运行状态机主循环 (对应原游戏 main() while(1) 循环) */
     printf("[DEBUG] Starting state machine run...\n");

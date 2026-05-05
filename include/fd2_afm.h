@@ -8,6 +8,10 @@
 extern "C" {
 #endif
 
+/* Forward declarations */
+typedef struct fd2_render fd2_render_t;
+typedef struct fd2_resources fd2_resources_t;
+
 /* ========================================================================
  * AFM (Animation File Manager) Decoder
  *
@@ -96,6 +100,38 @@ const u8* fd2_afm_get_palette(const fd2_afm_t* afm);
  * Returns number of source bytes consumed, or -1 on error.
  */
 int fd2_afm_rle_decode(const u8* src, u32 src_size, u8* dst, u32 dst_size);
+
+/* ---- AFM Player (sub_20421) ---- */
+
+/*
+ * Play an AFM animation from ANI.DAT resource.
+ * 对应原游戏 sub_20421 (地址: 0x20421)
+ * 
+ * 原游戏逻辑:
+ *   1. 分配768字节调色板缓冲和64000字节帧缓冲
+ *   2. 调用sub_36FD3初始化缓冲
+ *   3. 打开ANI.DAT文件，定位到动画索引
+ *   4. 读取173字节头，获取帧数
+ *   5. 循环播放每一帧:
+ *      - 读取8字节帧头
+ *      - 读取帧数据
+ *      - 调用sub_36FF4分发命令
+ *      - 延迟a6毫秒
+ *      - 如果a7非零，检查键盘输入
+ *      - 调用sub_4E381刷新屏幕
+ *   6. 释放资源，关闭文件
+ *
+ * 参数:
+ *   anim_index - ANI.DAT中的动画索引 (1=开场动画)
+ *   frame_delay - 每帧延迟毫秒数
+ *   check_input - 是否检查键盘输入 (1=是, 0=否)
+ *   render - 渲染器
+ *   resources - 资源管理器
+ *
+ * 返回: 0=正常播放完成, 1=用户按键中断
+ */
+int fd2_afm_play(int anim_index, int frame_delay, int check_input,
+                 fd2_render_t* render, fd2_resources_t* resources);
 
 #ifdef __cplusplus
 }

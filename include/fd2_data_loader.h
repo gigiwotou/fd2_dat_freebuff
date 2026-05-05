@@ -13,6 +13,7 @@
 #include "fd2_types.h"
 #include "fd2_globals.h"
 #include "fd2_state_machine.h"
+#include "fd2_resources.h"
 #include <stdio.h>
 
 /* 类型别名 */
@@ -23,19 +24,8 @@ typedef int8_t s8;
 typedef int16_t s16;
 typedef int32_t s32;
 
-/* 数据文件类型 */
-typedef enum {
-    FD2_DAT_FDOTHER,    /* FDOTHER.DAT */
-    FD2_DAT_FDTXT,      /* FDTXT.DAT */
-    FD2_DAT_FDFIELD,    /* FDFIELD.DAT */
-    FD2_DAT_FDSHAP,     /* FDSHAP.DAT */
-    FD2_DAT_ANI,        /* ANI.DAT */
-    FD2_DAT_FDICON,     /* FDICON.B24 */
-    FD2_DAT_DATO,       /* DATO.DAT */
-    FD2_DAT_FDMUS,      /* FDMUS.DAT */
-    FD2_DAT_FD2SAV,     /* FD2.SAV */
-    FD2_DAT_COUNT
-} fd2_dat_file_t;
+/* 数据文件类型 - 使用 fd2_resources.h 中的 fd2_dat_id_t */
+/* FD2_DAT_FDOTHER, FD2_DAT_FDTXT, FD2_DAT_FDFIELD 等已在 fd2_dat_id_t 中定义 */
 
 /*
  * sub_111BA: 资源加载函数 (原游戏 0x111BA)
@@ -121,6 +111,9 @@ void fd2_scene_check_init(void);
 
 /* 默认检查函数 */
 int scene_check_default(void);
+
+/* 资源管理器访问函数 */
+fd2_resources_t* fd2_get_resources(void);
 
 /* 数据加载辅助函数 */
 int fd2_data_init(void);
