@@ -345,8 +345,15 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
         /* Draw cursor */
         battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
 
-        /* Draw terrain info UI - based on IDA sub_126F7 */
-        battle_render_terrain_info(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+        /* Terrain info UI - output log instead of rendering */
+        if (data->terrain_info_data && data->map.loaded) {
+            int cx = data->cursor_x;
+            int cy = data->cursor_y;
+            if (cx >= 0 && cx < data->map.width && cy >= 0 && cy < data->map.height) {
+                int terrain_id = data->map.tiles[cy][cx].terrain_id;
+                printf("[terrain] cursor=(%d,%d) terrain_id=%d\n", cx, cy, terrain_id);
+            }
+        }
 
         fd2_render_present(&game->render);
     }
