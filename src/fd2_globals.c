@@ -72,6 +72,17 @@ int g_dword_53AE9 = 0;
 int g_n4_1 = 0;
 int g_n6_0 = 0;
 int g_byte_51A42 = 0;
+void* g_dword_53A45 = NULL;
+void* g_dword_53A55 = NULL;
+void* g_dword_53F5A = NULL;
+void* g_dword_53F66 = NULL;
+int g_dword_53BFB = 0;
+int g_dword_53BF7 = 0;
+int g_dword_53A51 = 0;
+int g_dword_53EEC = 0;
+int g_dword_53EC8 = 0;
+int g_n3_3 = 0;
+void* g_n7 = NULL;
 
 /* 存档状态变量 (对应sub_10010) */
 int g_n999 = 0;              /* 0x53C02 */
