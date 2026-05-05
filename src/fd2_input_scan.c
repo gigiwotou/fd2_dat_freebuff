@@ -90,7 +90,7 @@ int fd2_sdl_to_scan_code(SDL_Scancode sdl_key) {
  * sub_11AA8: BIOS中断读取按键 (原游戏 0x11AA8)
  *
  * SDL2实现:
- *   1. 等待按键事件
+ *   1. 等待按键事件 (使用非阻塞轮询，每10ms检查一次)
  *   2. 转换SDL扫描码为原游戏扫描码
  *   3. 处理特殊映射 (224/82->28, 83->1)
  *   4. 返回扫描码
@@ -98,9 +98,9 @@ int fd2_sdl_to_scan_code(SDL_Scancode sdl_key) {
 int fd2_input_get_scan_code(void) {
     SDL_Event event;
     
-    /* 等待按键事件 (对应原游戏 while (!sub_10620())) */
+    /* 非阻塞轮询按键事件 (对应原游戏 while (!sub_10620())) */
     while (1) {
-        if (SDL_WaitEvent(&event)) {
+        if (SDL_PollEvent(&event)) {
             if (event.type == SDL_KEYDOWN) {
                 SDL_Scancode sdl_key = event.key.keysym.scancode;
                 int scan_code = fd2_sdl_to_scan_code(sdl_key);
@@ -118,6 +118,10 @@ int fd2_input_get_scan_code(void) {
             else if (event.type == SDL_QUIT) {
                 return 1; /* 返回Esc */
             }
+        }
+        else {
+            /* 没有事件，短暂等待后重试 */
+            SDL_Delay(10);
         }
     }
 }
@@ -199,18 +203,4 @@ int fd2_input_process_key(int key_code) {
     }
     
     return 0;
-}
-
-/*
- * fd2_input_init: 初始化输入系统
- */
-void fd2_input_init(void) {
-    /* SDL输入系统已在main中初始化 */
-}
-
-/*
- * fd2_input_shutdown: 关闭输入系统
- */
-void fd2_input_shutdown(void) {
-    /* SDL输入系统由SDL_Quit自动清理 */
 }

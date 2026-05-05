@@ -75,7 +75,5 @@ int fd2_input_process_key(int key_code);
 
 /* 辅助函数 */
 int fd2_sdl_to_scan_code(SDL_Scancode sdl_key);
-void fd2_input_init(void);
-void fd2_input_shutdown(void);
 
 #endif /* FD2_INPUT_SCAN_H */

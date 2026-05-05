@@ -3,17 +3,36 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <SDL2/SDL.h>
 
 /* 静态路径缓冲区 */
 static char s_path_buf[768];
+static char s_exe_dir[512] = {0};
+
+/* 获取exe所在目录 */
+static void get_exe_dir(void) {
+    if (s_exe_dir[0]) return;  /* 已初始化 */
+
+    char* base_path = SDL_GetBasePath();
+    if (base_path) {
+        /* SDL_GetBasePath 返回目录路径，带斜杠 */
+        strncpy(s_exe_dir, base_path, sizeof(s_exe_dir) - 1);
+        SDL_free(base_path);
+    } else {
+        /* 回退：使用当前目录 */
+        s_exe_dir[0] = '.';
+        s_exe_dir[1] = '\0';
+    }
+}
 
 const char* fd2_get_data_path(const char* data_dir, const char* filename) {
     if (!filename) return NULL;
-    if (data_dir && data_dir[0]) {
-        snprintf(s_path_buf, sizeof(s_path_buf), "%s/%s", data_dir, filename);
-    } else {
-        snprintf(s_path_buf, sizeof(s_path_buf), "%s", filename);
-    }
+
+    /* 使用exe所在目录作为资源目录 */
+    get_exe_dir();
+
+    /* 构建完整路径: exe_dir/filename */
+    snprintf(s_path_buf, sizeof(s_path_buf), "%s/%s", s_exe_dir, filename);
     return s_path_buf;
 }
 
@@ -233,8 +252,9 @@ int fd2_data_load_all(fd2_state_machine_t* sm, const char* data_dir) {
     g_n8_0 = malloc(32);
     if (!g_n8_0) return -1;
 
-    /* 10. 分配后备缓冲区 (64KB) */
-    g_n655360_0 = malloc(65536);
+    /* 10. 分配后备缓冲区 (640KB - 原游戏 n655360 变量名暗示 655360 字节) */
+    /* 原游戏中有多个偏移量访问: +107020, +32904 等，需要足够大的缓冲区 */
+    g_n655360_0 = malloc(655360);
     if (!g_n655360_0) return -1;
 
     /* 11. 分配场景数据缓冲区 (2560字节) */

@@ -10,9 +10,9 @@ UNAME_M := $(shell uname -m 2>/dev/null)
 # Platform-specific configuration
 ifeq ($(OS),Windows_NT)
   PLATFORM := WINDOWS
-  MSYS2_PREFIX = C:/msys64/ucrt64
-  ifeq ($(MINGW64),1)
-    MSYS2_PREFIX = C:/msys64/mingw64
+  MSYS2_PREFIX = C:/msys64/mingw64
+  ifeq ($(UCRT64),1)
+    MSYS2_PREFIX = C:/msys64/ucrt64
   endif
   CC = $(MSYS2_PREFIX)/bin/gcc.exe
   AR = $(MSYS2_PREFIX)/bin/ar.exe
@@ -62,11 +62,11 @@ endif
 
 # Common compiler flags
 CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -O2 -DFD2_DEBUG $(PLATFORM_CFLAGS)
-LDFLAGS = -lSDL2 -lm $(PLATFORM_LDFLAGS)
+LDFLAGS = -lmingw32 -lSDL2 -lm $(PLATFORM_LDFLAGS)
 
 # Release flags (no console window, no debug output)
 RELEASE_CFLAGS = -Wall -Wextra -std=gnu99 -Iinclude -O2 -DNDEBUG $(PLATFORM_RELEASE_CFLAGS)
-RELEASE_LDFLAGS = -lSDL2 -lm $(PLATFORM_RELEASE_LDFLAGS)
+RELEASE_LDFLAGS = -lmingw32 -lSDL2 -lm $(PLATFORM_RELEASE_LDFLAGS)
 
 # Windows-specific flags
 ifeq ($(PLATFORM),WINDOWS)
@@ -86,9 +86,9 @@ DECODER_SRCS = $(SRC_DIR)/fd2_decoder.c
 DECODER_OBJS = $(OBJ_DIR)/fd2_decoder.o
 DECODER_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_decoder.o
 
-GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_map_loader.c $(SRC_DIR)/fd2_icon_b24.c $(SRC_DIR)/fd2_sprite.c $(SRC_DIR)/main.c $(SRC_DIR)/fd2_save_load.c $(SRC_DIR)/fd2_state_machine.c $(SRC_DIR)/fd2_scenes.c $(SRC_DIR)/fd2_globals.c $(SRC_DIR)/fd2_data_loader.c $(SRC_DIR)/fd2_scene_interact.c $(SRC_DIR)/fd2_input_scan.c
-GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_map_loader.o $(OBJ_DIR)/fd2_icon_b24.o $(OBJ_DIR)/fd2_sprite.o $(OBJ_DIR)/main.o $(OBJ_DIR)/fd2_save_load.o $(OBJ_DIR)/fd2_state_machine.o $(OBJ_DIR)/fd2_scenes.o $(OBJ_DIR)/fd2_globals.o $(OBJ_DIR)/fd2_data_loader.o $(OBJ_DIR)/fd2_scene_interact.o $(OBJ_DIR)/fd2_input_scan.o
-GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_map_loader.o $(OBJ_RELEASE_DIR)/fd2_icon_b24.o $(OBJ_RELEASE_DIR)/fd2_sprite.o $(OBJ_RELEASE_DIR)/main.o $(OBJ_RELEASE_DIR)/fd2_save_load.o $(OBJ_RELEASE_DIR)/fd2_state_machine.o $(OBJ_RELEASE_DIR)/fd2_scenes.o $(OBJ_RELEASE_DIR)/fd2_globals.o $(OBJ_RELEASE_DIR)/fd2_data_loader.o $(OBJ_RELEASE_DIR)/fd2_scene_interact.o $(OBJ_RELEASE_DIR)/fd2_input_scan.o
+GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_map_loader.c $(SRC_DIR)/fd2_icon_b24.c $(SRC_DIR)/fd2_sprite.c $(SRC_DIR)/main.c $(SRC_DIR)/fd2_save_load.c $(SRC_DIR)/fd2_state_machine.c $(SRC_DIR)/fd2_scenes.c $(SRC_DIR)/fd2_globals.c $(SRC_DIR)/fd2_data_loader.c $(SRC_DIR)/fd2_scene_interact.c $(SRC_DIR)/fd2_input_scan.c $(SRC_DIR)/fd2_render_pipeline.c $(SRC_DIR)/fd2_rle.c
+GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_map_loader.o $(OBJ_DIR)/fd2_icon_b24.o $(OBJ_DIR)/fd2_sprite.o $(OBJ_DIR)/main.o $(OBJ_DIR)/fd2_save_load.o $(OBJ_DIR)/fd2_state_machine.o $(OBJ_DIR)/fd2_scenes.o $(OBJ_DIR)/fd2_globals.o $(OBJ_DIR)/fd2_data_loader.o $(OBJ_DIR)/fd2_scene_interact.o $(OBJ_DIR)/fd2_input_scan.o $(OBJ_DIR)/fd2_render_pipeline.o $(OBJ_DIR)/fd2_rle.o
+GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_map_loader.o $(OBJ_RELEASE_DIR)/fd2_icon_b24.o $(OBJ_RELEASE_DIR)/fd2_sprite.o $(OBJ_RELEASE_DIR)/main.o $(OBJ_RELEASE_DIR)/fd2_save_load.o $(OBJ_RELEASE_DIR)/fd2_state_machine.o $(OBJ_RELEASE_DIR)/fd2_scenes.o $(OBJ_RELEASE_DIR)/fd2_globals.o $(OBJ_RELEASE_DIR)/fd2_data_loader.o $(OBJ_RELEASE_DIR)/fd2_scene_interact.o $(OBJ_RELEASE_DIR)/fd2_input_scan.o $(OBJ_RELEASE_DIR)/fd2_render_pipeline.o $(OBJ_RELEASE_DIR)/fd2_rle.o
 
 # Targets
 TARGET_GAME   = $(BIN_DIR)/fd2$(EXE_EXT)
@@ -100,8 +100,7 @@ all: $(TARGET_GAME)
 	@echo Copying required DLLs...
 	-$(COPY_DLLS)
 	@echo Copying game data files...
-	-$(COPY_CMD) game/* $(BIN_DIR)/ 2>/dev/null || true
-	-$(CLEAN_EXTRAS)
+	-$(COPY_CMD) game/* $(BIN_DIR)/ 2>/dev/null || exit 0
 	@echo Build complete!
 
 game: $(TARGET_GAME)

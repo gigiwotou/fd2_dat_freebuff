@@ -12,6 +12,7 @@
  */
 
 #include "fd2_types.h"
+#include "fd2_render.h"
 #include <SDL2/SDL.h>
 
 typedef uint8_t u8;
@@ -185,6 +186,9 @@ typedef struct fd2_state_machine {
     /* 交互系统 */
     fd2_scene_interaction_t  interaction;
     fd2_input_processor_t    input;
+    
+    /* 渲染系统 */
+    fd2_render_t render;
     
     /* 当前状态 */
     int current_scene;

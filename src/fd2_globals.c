@@ -9,6 +9,10 @@
 int g_n17 = 0;          /* 0x53C03 - 当前场景索引 (0-29) */
 int g_n16_1 = 0;        /* 0x53BFB - 子场景索引 (0-9) */
 int g_n2_0 = 0;         /* 0x53C07 - 场景状态 (0=主循环, 1=初始化, 2=场景交互) */
+int g_n64 = 0;          /* 0x53C04 - 动画帧计数器 */
+int g_n6_5 = 0;         /* 0x51xxx - 场景标志变量 */
+int g_qword_53AA9 = 0;  /* 0x53AA9 - 屏幕滚动位置 */
+int g_qword_53AB1 = 0;  /* 0x53AB1 - 屏幕滚动位置 */
 int g_n5 = 0;           /* 0x53F4A - 菜单选择索引 (0-5) */
 int g_n3_4 = 0;         /* 0x53F52 - 动画帧计数器 (0-3) */
 int g_n3 = 0;           /* 0x53A8D - 按键扫描码 */
@@ -99,6 +103,13 @@ u32 g_dword_53BFF = 0;
 u16 g_bios_tick_base = 0;
 u16 g_bios_tick_current = 0;
 
+/* SDL退出标志 */
+int g_sdl_quit_requested = 0;
+
+void fd2_request_quit(void) {
+    g_sdl_quit_requested = 1;
+}
+
 /* ========================================================================
  * 初始化/清理函数
  * ======================================================================== */
@@ -119,8 +130,20 @@ void fd2_globals_init(void) {
     g_n8_1 = NULL;
     g_n8_3 = NULL;
 
-    g_n655360_0 = NULL;
-    g_n655360_1 = NULL;
+    /* 分配后备缓冲区 (64KB) - 对应原游戏 n655360_0 */
+    if (!g_n655360_0) {
+        g_n655360_0 = calloc(1, FD2_SCREEN_SIZE);
+    }
+
+    /* 分配格式转换缓冲区 (456字节/行 * 200行) - 对应原游戏 n655360_1 */
+    if (!g_n655360_1) {
+        g_n655360_1 = calloc(1, FD2_STRIDE_WIDE * FD2_SCREEN_H);
+    }
+
+    /* 分配2560字节场景数据缓冲区 - 对应原游戏 n8_3 */
+    if (!g_n8_3) {
+        g_n8_3 = calloc(1, 2560);
+    }
 
     g_byte_51AAC = 0;
     memset(g_byte_51E63, 0, sizeof(g_byte_51E63));

@@ -29,4 +29,39 @@ void scene_default_exit(struct fd2_state_machine* sm);
 /* 注册所有场景到状态机 */
 void fd2_register_all_scenes(fd2_state_machine_t* sm);
 
+/* sub_4E809: 场景元数据读取 */
+void* fd2_scene_get_metadata(int scene_id);
+
+/* sub_4E838: 图标元数据读取 */
+void* fd2_icon_get_metadata(int icon_id);
+
+/* sub_4E821: 图标属性读取 */
+void* fd2_icon_get_props(int icon_id);
+
+/* sub_112A5: 图标加载函数 */
+int fd2_icon_load(int icon_id);
+
+/* sub_4ED7A: 字符渲染函数 */
+void fd2_render_char(void* fdother_dat, int char_index, void* screen_buf,
+                     int screen_offset, int row_width, u8 color1, u8 color2, int do_clear);
+
+/* sub_15F84 简化版: 文本渲染函数 */
+void fd2_render_text(void* fdother_dat, void* screen_buf,
+                     int x, int y, const char* text,
+                     u8 color1, u8 color2, int do_clear);
+
+/* sub_1366A 简化版: 场景动画/资源加载 */
+int fd2_scene_load_resources(int resource_id);
+
+/* sub_4EBFF: 屏幕区域复制函数 */
+void fd2_copy_screen_region(u8* dst, s16* src, int row_width);
+
+/* sub_11EB0: 屏幕区域更新函数 */
+void fd2_screen_region_update(void* dst, int dst_stride,
+                               const void* src, int src_stride,
+                               int copy_size, int num_lines);
+
+/* sub_4E22A: 光标图像复制函数 */
+void fd2_copy_cursor_image(u8* dst, const u8* src, int row_width);
+
 #endif /* FD2_SCENES_H */

@@ -94,7 +94,15 @@ int fd2_render_init(fd2_render_t* render, int scale) {
     render->texture = tex;
 
     /* Palette and screen already zeroed by the memset above */
+    /* 初始化默认调色板 - 使用灰度渐变用于测试 */
+    for (int i = 0; i < FD2_PALETTE_COLORS; i++) {
+        render->palette[i * 3 + 0] = (u8)i;  /* R */
+        render->palette[i * 3 + 1] = (u8)i;  /* G */
+        render->palette[i * 3 + 2] = (u8)i;  /* B */
+    }
     update_argb_palette(render);
+    
+    printf("[RENDER] Initialized with grayscale palette\n");
 
     render->initialized = true;
     return 0;

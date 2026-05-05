@@ -13,10 +13,12 @@
 #include "fd2_globals.h"
 #include "fd2_data_loader.h"
 #include "fd2_scene_interact.h"
+#include "fd2_input_scan.h"
 #include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdio.h>
 
 /* DOS BIOS定时器模拟 (原游戏 MEMORY[0x46C]) */
 static clock_t g_clock_start = 0;
@@ -174,6 +176,12 @@ int fd2_state_machine_init(fd2_state_machine_t* sm) {
         rand();
     }
     
+    /* 初始化渲染系统 (对应原游戏 VGA模式13h初始化) */
+    if (fd2_render_init(&sm->render, FD2_RENDER_SCALE) != 0) {
+        fprintf(stderr, "Failed to initialize render system\n");
+        return -1;
+    }
+    
     return 0;
 }
 
@@ -181,6 +189,9 @@ void fd2_state_machine_shutdown(fd2_state_machine_t* sm) {
     if (!sm) return;
     sm->running = 0;
     sm->initialized = 0;
+    
+    /* 清理渲染系统 */
+    fd2_render_shutdown(&sm->render);
 }
 
 /*
@@ -290,7 +301,19 @@ int fd2_menu_get_index(fd2_state_machine_t* sm) {
  * 6. 检查n2_0标志
  */
 int fd2_get_key_code(void) {
-    /* TODO: 实现SDL按键扫描码读取 */
+    SDL_Event event;
+    
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            /* 设置全局退出标志，让主循环能检测到 */
+            extern void fd2_request_quit(void);
+            fd2_request_quit();
+            return FD2_KEY_ESC;
+        }
+        if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+            return fd2_sdl_to_scan_code(event.key.keysym.scancode);
+        }
+    }
     return 0;
 }
 
@@ -381,164 +404,6 @@ int fd2_scene_check_complete(fd2_state_machine_t* sm, int scene_id) {
 }
 
 /*
- * 第三层状态机: 场景交互循环 (对应原游戏 sub_26152)
- * 
- * 原游戏核心逻辑:
- * 1. 释放旧场景资源
- * 2. 加载场景配置 (fdicon.b24)
- * 3. 检查特殊场景 (byte_523E7[n17])
- * 4. 加载图形数据
- * 5. 主交互循环:
- *    - sub_265EC() 渲染更新
- *    - 等待按键 (BIOS定时器控制动画帧)
- *    - switch (按键) 处理导航/确认
- *    - sub_2670E() 执行选择
- * 6. 返回是否退出场景
- */
-int fd2_state_machine_interact_loop(fd2_state_machine_t* sm) {
-    if (!sm || !sm->initialized) return 0;
-    
-    int exit_flag = 0;
-    int scene_id = sm->globals.scene_id;
-    
-    /* 阶段1: 释放旧场景资源 (对应原游戏 if (n8_1) free(n8_1); ...) */
-    if (sm->globals.backup_buffer) {
-        free(sm->globals.backup_buffer);
-        sm->globals.backup_buffer = NULL;
-    }
-    if (sm->globals.fdfield_data) {
-        free(sm->globals.fdfield_data);
-        sm->globals.fdfield_data = NULL;
-    }
-    if (sm->globals.fdshap_data) {
-        free(sm->globals.fdshap_data);
-        sm->globals.fdshap_data = NULL;
-    }
-    
-    /* 阶段2: 加载场景配置 (对应原游戏 fopen("fdicon.b24")) */
-    /* TODO: 加载fdicon.b24 */
-    
-    /* 阶段3: 检查特殊场景 (对应原游戏 if (byte_523E7[n17])) */
-    if (sm->scenes[scene_id].is_special) {
-        /* TODO: 实现特殊场景处理 */
-        return 0;
-    }
-    
-    /* 阶段4: 普通场景 - 加载图形数据 */
-    sm->globals.fdshap_data = malloc(153216);
-    if (!sm->globals.fdshap_data) return 0;
-    
-    g_n5 = 0;
-    sm->globals.menu_index = 0;
-    
-    /* TODO: 加载场景图形 */
-    
-    if (sm->interaction.render_update) {
-        sm->interaction.render_update(sm);
-    }
-    
-    /* 阶段5: 主交互循环 (对应原游戏 do-while (!v21)) */
-    do {
-        if (sm->interaction.render_update) {
-            sm->interaction.render_update(sm);
-        }
-        
-        /* 等待按键 (带BIOS定时器控制动画帧) */
-        while (1) {
-            if (fd2_check_anim_frame(sm)) {
-                if (sm->interaction.render_update) {
-                    sm->interaction.render_update(sm);
-                }
-                break;
-            }
-            int key = fd2_get_key_code();
-            if (key != 0) {
-                g_n3 = key;
-                sm->globals.key_code = key;
-                break;
-            }
-            SDL_Delay(1);
-        }
-        
-        /* 按键处理 (对应原游戏 switch (HIBYTE(n3))) */
-        int key_code = sm->globals.key_code;
-        
-        switch (key_code) {
-            case FD2_KEY_EXTEND:
-            case FD2_KEY_INSERT:
-                key_code = FD2_KEY_MAP_INSERT;
-                break;
-                
-            case FD2_KEY_TAB:
-                if (sm->interaction.handle_subscene_switch) {
-                    sm->interaction.handle_subscene_switch(sm);
-                } else {
-                    g_n16_1++;
-                    if (g_n16_1 >= FD2_SUBSCENE_COUNT) g_n16_1 = 0;
-                    fd2_switch_subscene(sm, g_n16_1);
-                }
-                break;
-                
-            case FD2_KEY_RIGHT:
-                if (sm->interaction.handle_menu_nav) {
-                    sm->interaction.handle_menu_nav(sm, 1);
-                } else {
-                    fd2_menu_navigate(sm, 1);
-                }
-                break;
-                
-            case FD2_KEY_LEFT:
-                if (sm->interaction.handle_menu_nav) {
-                    sm->interaction.handle_menu_nav(sm, -1);
-                } else {
-                    fd2_menu_navigate(sm, -1);
-                }
-                break;
-                
-            default:
-                if (sm->interaction.handle_key) {
-                    sm->interaction.handle_key(sm, key_code);
-                }
-                break;
-        }
-        
-        /* 确认处理 */
-        if (key_code != FD2_KEY_ENTER && key_code != FD2_KEY_SPACE) {
-            continue;
-        }
-        
-        if (sm->globals.menu_index != FD2_MENU_ITEM_BACK) {
-            if (sm->interaction.handle_confirm) {
-                sm->interaction.handle_confirm(sm);
-            }
-        }
-        
-        if (sm->interaction.process_selection) {
-            sm->interaction.process_selection(sm);
-        }
-        
-        exit_flag = sm->globals.exit_flag;
-        
-    } while (!exit_flag);
-    
-    /* 清理资源 */
-    if (sm->globals.fdother_data[12]) {
-        free(sm->globals.fdother_data[12]);
-        sm->globals.fdother_data[12] = NULL;
-    }
-    
-    return (sm->globals.menu_index != FD2_MENU_ITEM_BACK);
-}
-
-/*
- * 场景渲染更新 (对应原游戏 sub_265EC)
- */
-void fd2_scene_render_update(fd2_state_machine_t* sm) {
-    if (!sm) return;
-    /* TODO: 实现 sub_265EC() 的完整逻辑 */
-}
-
-/*
  * 主循环 (对应原游戏 main)
  * 
  * 原游戏核心逻辑:
@@ -570,13 +435,68 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
     int v17 = 0;
     int i = 0;
     
+    /* 对应原游戏 sub_25EBB: 初始化第一个场景 */
+    g_n17 = 0;
+    g_n16_1 = 0;
+    g_byte_51AAC = 0;
+    g_n2_0 = FD2_SCENE_STATE_INTERACT;
+
+    /* 添加初始渲染，显示一个测试画面 */
+    /* 填充测试色块到渲染缓冲区 */
+    for (int y = 0; y < 200; y++) {
+        for (int x = 0; x < 320; x++) {
+            /* 创建渐变色背景 */
+            sm->render.screen[y * 320 + x] = (u8)((x + y) % 256);
+        }
+    }
+    /* 添加一个白色矩形测试块 */
+    for (int y = 50; y < 150; y++) {
+        for (int x = 50; x < 270; x++) {
+            sm->render.screen[y * 320 + x] = 255;
+        }
+    }
+    /* 添加文字提示 */
+    for (int y = 80; y < 120; y++) {
+        for (int x = 80; x < 240; x++) {
+            sm->render.screen[y * 320 + x] = 128;
+        }
+    }
+    fd2_render_present(&sm->render);
+    SDL_Delay(100);
+
     while (sm->running) {
-        v15 = fd2_get_game_state(sm);
+        /* 检查退出请求 */
+        if (g_sdl_quit_requested) {
+            goto cleanup;
+        }
         
+        /* 处理SDL事件，防止窗口无响应 */
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                sm->running = 0;
+                goto cleanup;
+            }
+        }
+
+        v15 = fd2_get_game_state(sm);
+
         if (v15 == 0) {
             do {
-                i = fd2_input_process(sm);
+                /* 在等待输入时也处理事件 */
+                SDL_Event event_inner;
+                while (SDL_PollEvent(&event_inner)) {
+                    if (event_inner.type == SDL_QUIT) {
+                        sm->running = 0;
+                        goto cleanup;
+                    }
+                }
                 
+                /* 检查是否请求退出 */
+                if (!sm->running) goto cleanup;
+
+                i = fd2_input_process(sm);
+
                 if (g_n2_0 == FD2_SCENE_STATE_INIT) {
                     g_byte_51AAC = FD2_SCENE_INACTIVE;
                     fd2_scene_setup(sm);
@@ -586,33 +506,42 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                 }
                 else if (g_n2_0 == FD2_SCENE_STATE_INTERACT) {
                     g_byte_51AAC = FD2_SCENE_INACTIVE;
-                    
-                    int scene_id = sm->globals.scene_id;
+
+                    int scene_id = g_n17;
                     fd2_scene_init(sm, scene_id);
+
+                    /* 加载场景音乐 */
+                    fd2_music_switch(g_byte_51E63[scene_id], 0);
+
+                    g_byte_51AAC = FD2_SCENE_ACTIVE;
+
+                    /* 场景交互循环 */
                     i = fd2_state_machine_interact_loop(sm);
-                    
+
                     if (i) {
                         v17 = 1;
                     } else {
                         fd2_scene_exit(sm, scene_id);
                         fd2_music_switch(g_byte_51E63[g_n17], 0);
                     }
-                    
+
                     g_byte_51AAC = FD2_SCENE_ACTIVE;
                     g_n2_0 = FD2_SCENE_STATE_IDLE;
                     fd2_update_screen(sm);
                 }
             } while (!i);
-            
+
             if (i == -1) {
                 v17 = 1;
             }
         }
-        
+
         if (v17) {
             break;
         }
     }
-    
+
+cleanup:
+    /* 清理 */
     return 0;
 }

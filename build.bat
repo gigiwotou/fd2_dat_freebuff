@@ -16,8 +16,8 @@ if /I "%~1"=="mingw64" (
 
 set GCC=%MSYS2_PREFIX%\bin\gcc.exe
 set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -DFD2_DEBUG -mconsole -static-libgcc
-set LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
-set SDL_LDFLAGS=-lmingw32 -lSDL2main -lSDL2
+set LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
+set SDL_LDFLAGS=-lmingw32 -lSDL2main -lSDL2 -lm
 
 :: Release flags (no console window, no debug output)
 set RELEASE_CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -DNDEBUG -mwindows -static-libgcc
@@ -31,11 +31,11 @@ set EXE_EXT=.exe
 
 :: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
-set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_state_machine.o %OBJ_DIR%\fd2_scenes.o %OBJ_DIR%\fd2_globals.o %OBJ_DIR%\fd2_data_loader.o %OBJ_DIR%\fd2_scene_interact.o %OBJ_DIR%\fd2_input_scan.o
+set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_state_machine.o %OBJ_DIR%\fd2_scenes.o %OBJ_DIR%\fd2_globals.o %OBJ_DIR%\fd2_data_loader.o %OBJ_DIR%\fd2_scene_interact.o %OBJ_DIR%\fd2_input_scan.o %OBJ_DIR%\fd2_rle.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
-set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o %OBJ_RELEASE_DIR%\fd2_save_load.o %OBJ_RELEASE_DIR%\fd2_state_machine.o %OBJ_RELEASE_DIR%\fd2_scenes.o %OBJ_RELEASE_DIR%\fd2_globals.o %OBJ_RELEASE_DIR%\fd2_data_loader.o %OBJ_RELEASE_DIR%\fd2_scene_interact.o %OBJ_RELEASE_DIR%\fd2_input_scan.o
+set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o %OBJ_RELEASE_DIR%\fd2_save_load.o %OBJ_RELEASE_DIR%\fd2_state_machine.o %OBJ_RELEASE_DIR%\fd2_scenes.o %OBJ_RELEASE_DIR%\fd2_globals.o %OBJ_RELEASE_DIR%\fd2_data_loader.o %OBJ_RELEASE_DIR%\fd2_scene_interact.o %OBJ_RELEASE_DIR%\fd2_input_scan.o %OBJ_RELEASE_DIR%\fd2_rle.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
