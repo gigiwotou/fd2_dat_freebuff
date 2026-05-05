@@ -53,8 +53,10 @@ typedef enum {
  *
  * 全局变量:
  *   dword_53BFF - 加载的数据大小
+ *
+ * 注意: 函数在fd2_decoder.c中已实现，这里只是引用
  */
-void* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
+/* fd2_dat_load_resource已在fd2_decoder.h中声明 */
 
 /*
  * sub_25977: 音乐切换函数 (原游戏 0x25977)

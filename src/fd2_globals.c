@@ -32,6 +32,9 @@ int g_byte_51AAC = 0;           /* 0x51AAC - 场景激活标志 */
 char g_byte_51E63[30] = {0};    /* 0x51E63 - 场景音乐ID映射表 */
 char g_byte_523E7[30] = {0};    /* 0x523E7 - 特殊场景标志 */
 
+unsigned char g_byte_52375[180] = {0};  /* 0x52375 - 光标Y坐标表 (30场景*6菜单项) */
+unsigned char g_byte_52363[180] = {0};  /* 0x52363 - 光标X坐标表 (30场景*6菜单项) */
+
 /* ========================================================================
  * 资源指针变量 (原游戏数据段)
  * ======================================================================== */
@@ -97,6 +100,8 @@ void fd2_globals_init(void) {
     g_byte_51AAC = 0;
     memset(g_byte_51E63, 0, sizeof(g_byte_51E63));
     memset(g_byte_523E7, 0, sizeof(g_byte_523E7));
+    memset(g_byte_52375, 0, sizeof(g_byte_52375));
+    memset(g_byte_52363, 0, sizeof(g_byte_52363));
 
     g_FDOTHER_DAT__2 = NULL;
     g_FDOTHER_DAT__3 = NULL;
