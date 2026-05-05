@@ -295,7 +295,7 @@ int fd2_sprite_decode_frame_with_palette(fd2_sprite_decoder_t* decoder,
     
     /* Get frame data */
     uint32_t frame_start = sprite.frame_offsets[frame_index];
-    uint32_t frame_end = (frame_index + 1 < sprite.frame_count) ? 
+    uint32_t frame_end = ((uint32_t)frame_index + 1 < sprite.frame_count) ? 
                          sprite.frame_offsets[frame_index + 1] : res_size;
     
     if (frame_start >= frame_end || frame_end > res_size) {

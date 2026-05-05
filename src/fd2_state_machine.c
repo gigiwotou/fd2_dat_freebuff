@@ -10,9 +10,10 @@
  */
 
 #include "fd2_state_machine.h"
-#include "fd2_resources.h"
-#include "fd2_input.h"
-#include "fd2_render.h"
+#include "fd2_globals.h"
+#include "fd2_data_loader.h"
+#include "fd2_scene_interact.h"
+#include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -20,19 +21,16 @@
 /* DOS BIOS定时器模拟 (原游戏 MEMORY[0x46C]) */
 static clock_t g_clock_start = 0;
 
-/* 原游戏全局变量映射 (部分关键变量) */
-static int n17 = 0;          /* 当前场景索引 */
-static int n16_1 = 0;        /* 子场景索引 */
-static int n2_0 = 0;         /* 场景状态标志 */
-static int n5 = 0;           /* 菜单选择索引 */
-static int n3 = 0;           /* 按键扫描码 */
-static int byte_51AAC = 0;   /* 场景激活标志 */
-
 /* 默认函数声明 */
 static void scene_default_init(struct fd2_state_machine* sm);
 static void scene_default_exit(struct fd2_state_machine* sm);
 static int scene_default_check(struct fd2_state_machine* sm);
 static void event_default(struct fd2_state_machine* sm);
+
+/* 前置声明 - 主循环使用的辅助函数 */
+static int fd2_get_game_state(fd2_state_machine_t* sm);
+static void fd2_scene_setup(fd2_state_machine_t* sm);
+static void fd2_update_screen(fd2_state_machine_t* sm);
 
 /*
  * 模拟原游戏 sub_10620() - 垂直同步等待
@@ -76,6 +74,29 @@ int fd2_check_anim_frame(struct fd2_state_machine* sm) {
         return 1;
     }
     return 0;
+}
+
+/*
+ * fd2_get_game_state: 获取游戏状态 (对应原游戏 sub_25977(18, 0))
+ * 返回0表示正常游戏循环，-1表示退出
+ */
+static int fd2_get_game_state(fd2_state_machine_t* sm) {
+    (void)sm;
+    return 0;
+}
+
+/*
+ * fd2_scene_setup: 场景初始化设置 (对应原游戏 sub_22E5C)
+ */
+static void fd2_scene_setup(fd2_state_machine_t* sm) {
+    (void)sm;
+}
+
+/*
+ * fd2_update_screen: 更新屏幕 (对应原游戏 sub_4E381)
+ */
+static void fd2_update_screen(fd2_state_machine_t* sm) {
+    (void)sm;
 }
 
 void fd2_update_anim_frame(struct fd2_state_machine* sm) {
@@ -198,16 +219,16 @@ int fd2_register_special_event(fd2_state_machine_t* sm,
  */
 void fd2_set_scene_state(fd2_state_machine_t* sm, int state) {
     if (!sm) return;
-    n2_0 = state;
+    g_n2_0 = state;
     sm->globals.scene_state = state;
 }
 
 void fd2_switch_scene(fd2_state_machine_t* sm, int scene_id) {
     if (!sm || scene_id < 0 || scene_id >= FD2_SCENE_COUNT) return;
-    n17 = scene_id;
+    g_n17 = scene_id;
     sm->globals.scene_id = scene_id;
     sm->globals.subscene_id = 0;
-    n16_1 = 0;
+    g_n16_1 = 0;
 }
 
 void fd2_switch_subscene(fd2_state_machine_t* sm, int subscene_id) {
@@ -215,7 +236,7 @@ void fd2_switch_subscene(fd2_state_machine_t* sm, int subscene_id) {
     if (subscene_id < 0 || subscene_id >= FD2_SUBSCENE_COUNT) {
         subscene_id = 0;
     }
-    n16_1 = subscene_id;
+    g_n16_1 = subscene_id;
     sm->globals.subscene_id = subscene_id;
 }
 
@@ -237,7 +258,7 @@ void fd2_menu_navigate(fd2_state_machine_t* sm, int direction) {
             sm->globals.menu_index = FD2_MENU_ITEM_MIN;
         }
     }
-    n5 = sm->globals.menu_index;
+    g_n5 = sm->globals.menu_index;
 }
 
 void fd2_menu_confirm(fd2_state_machine_t* sm) {
@@ -279,7 +300,7 @@ int fd2_input_process(fd2_state_machine_t* sm) {
     int key_code = fd2_get_key_code();
     if (key_code == 0) return 0;
     
-    n3 = key_code;
+    g_n3 = key_code;
     sm->globals.key_code = key_code;
     
     /* 特殊按键处理 (原游戏: if (n44 == 1 || n44 == 44 || n44 == 76)) */
@@ -325,17 +346,17 @@ int fd2_input_process(fd2_state_machine_t* sm) {
 void fd2_scene_init(fd2_state_machine_t* sm, int scene_id) {
     if (!sm || scene_id < 0 || scene_id >= FD2_SCENE_COUNT) return;
     
-    byte_51AAC = FD2_SCENE_INACTIVE;
+    g_byte_51AAC = FD2_SCENE_INACTIVE;
     sm->globals.scene_active_flag = FD2_SCENE_INACTIVE;
     
     if (sm->scenes[scene_id].init_fn) {
         sm->scenes[scene_id].init_fn(sm);
     }
     
-    byte_51AAC = FD2_SCENE_ACTIVE;
+    g_byte_51AAC = FD2_SCENE_ACTIVE;
     sm->globals.scene_active_flag = FD2_SCENE_ACTIVE;
     
-    n2_0 = FD2_SCENE_STATE_IDLE;
+    g_n2_0 = FD2_SCENE_STATE_IDLE;
     sm->globals.scene_state = FD2_SCENE_STATE_IDLE;
 }
 
@@ -346,7 +367,7 @@ void fd2_scene_exit(fd2_state_machine_t* sm, int scene_id) {
         sm->scenes[scene_id].exit_fn(sm);
     }
     
-    n2_0 = FD2_SCENE_STATE_IDLE;
+    g_n2_0 = FD2_SCENE_STATE_IDLE;
     sm->globals.scene_state = FD2_SCENE_STATE_IDLE;
 }
 
@@ -407,7 +428,7 @@ int fd2_state_machine_interact_loop(fd2_state_machine_t* sm) {
     sm->globals.fdshap_data = malloc(153216);
     if (!sm->globals.fdshap_data) return 0;
     
-    n5 = 0;
+    g_n5 = 0;
     sm->globals.menu_index = 0;
     
     /* TODO: 加载场景图形 */
@@ -432,7 +453,7 @@ int fd2_state_machine_interact_loop(fd2_state_machine_t* sm) {
             }
             int key = fd2_get_key_code();
             if (key != 0) {
-                n3 = key;
+                g_n3 = key;
                 sm->globals.key_code = key;
                 break;
             }
@@ -452,9 +473,9 @@ int fd2_state_machine_interact_loop(fd2_state_machine_t* sm) {
                 if (sm->interaction.handle_subscene_switch) {
                     sm->interaction.handle_subscene_switch(sm);
                 } else {
-                    n16_1++;
-                    if (n16_1 >= FD2_SUBSCENE_COUNT) n16_1 = 0;
-                    fd2_switch_subscene(sm, n16_1);
+                    g_n16_1++;
+                    if (g_n16_1 >= FD2_SUBSCENE_COUNT) g_n16_1 = 0;
+                    fd2_switch_subscene(sm, g_n16_1);
                 }
                 break;
                 
@@ -550,22 +571,21 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
     int i = 0;
     
     while (sm->running) {
-        /* TODO: sub_25977(18, 0) - 获取游戏状态 */
-        /* TODO: v15 = sub_25EBB(v14) - 处理游戏状态 */
+        v15 = fd2_get_game_state(sm);
         
         if (v15 == 0) {
             do {
                 i = fd2_input_process(sm);
                 
-                if (n2_0 == FD2_SCENE_STATE_INIT) {
-                    byte_51AAC = FD2_SCENE_INACTIVE;
-                    /* TODO: sub_22E5C(); */
-                    byte_51AAC = FD2_SCENE_ACTIVE;
-                    n2_0 = FD2_SCENE_STATE_IDLE;
+                if (g_n2_0 == FD2_SCENE_STATE_INIT) {
+                    g_byte_51AAC = FD2_SCENE_INACTIVE;
+                    fd2_scene_setup(sm);
+                    g_byte_51AAC = FD2_SCENE_ACTIVE;
+                    g_n2_0 = FD2_SCENE_STATE_IDLE;
                     i = 1;
                 }
-                else if (n2_0 == FD2_SCENE_STATE_INTERACT) {
-                    byte_51AAC = FD2_SCENE_INACTIVE;
+                else if (g_n2_0 == FD2_SCENE_STATE_INTERACT) {
+                    g_byte_51AAC = FD2_SCENE_INACTIVE;
                     
                     int scene_id = sm->globals.scene_id;
                     fd2_scene_init(sm, scene_id);
@@ -575,11 +595,12 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                         v17 = 1;
                     } else {
                         fd2_scene_exit(sm, scene_id);
-                        /* TODO: sub_25977(byte_51E63[n17], 0) - 切换音乐 */
+                        fd2_music_switch(g_byte_51E63[g_n17], 0);
                     }
                     
-                    byte_51AAC = FD2_SCENE_ACTIVE;
-                    n2_0 = FD2_SCENE_STATE_IDLE;
+                    g_byte_51AAC = FD2_SCENE_ACTIVE;
+                    g_n2_0 = FD2_SCENE_STATE_IDLE;
+                    fd2_update_screen(sm);
                 }
             } while (!i);
             

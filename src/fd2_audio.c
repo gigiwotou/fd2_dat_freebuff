@@ -570,7 +570,8 @@ void fd2_audio_shutdown(fd2_audio_t* audio) {
 }
 
 void fd2_audio_set_fdmus_path(fd2_audio_t* audio, const char* path) {
-    if (!audio) return; audio->fdmus_path = path;
+    if (!audio) return;
+    audio->fdmus_path = path;
 }
 
 int fd2_audio_play_music(fd2_audio_t* audio, int track_id, int loops) {

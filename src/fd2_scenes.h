@@ -27,6 +27,6 @@ void scene_default_init(struct fd2_state_machine* sm);
 void scene_default_exit(struct fd2_state_machine* sm);
 
 /* 注册所有场景到状态机 */
-int fd2_register_all_scenes(fd2_state_machine_t* sm);
+void fd2_register_all_scenes(fd2_state_machine_t* sm);
 
 #endif /* FD2_SCENES_H */

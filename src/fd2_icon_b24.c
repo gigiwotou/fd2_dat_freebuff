@@ -145,7 +145,7 @@ int fd2_icon_get(int icon_id) {
         return -1;
     }
 
-    if (icon_id < 0 || icon_id >= g_total_icons) {
+    if (icon_id < 0 || (unsigned int)icon_id >= (unsigned int)g_total_icons) {
         fprintf(stderr, "fd2_icon_get: icon_id %d out of range (max %d)\n",
                 icon_id, g_total_icons);
         return -1;

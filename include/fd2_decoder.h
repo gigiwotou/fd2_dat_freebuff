@@ -92,7 +92,7 @@ const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size);
  * Returns: pointer to loaded resource data, or NULL on error.
  *          The caller is responsible for freeing the returned pointer.
  */
-u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
+void* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
 
 /* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
 extern u32 fd2_last_loaded_size;

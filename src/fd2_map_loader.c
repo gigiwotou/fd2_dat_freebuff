@@ -209,16 +209,16 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
      */
     u32* fdfield_offsets = NULL;
     int fdfield_count = 0;
-    {
-        int capacity = 512;
-        fdfield_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!fdfield_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdfield_offsets\n");
-            goto cleanup;
-        }
+    int fdfield_capacity = 512;
+    fdfield_offsets = (u32*)malloc(fdfield_capacity * sizeof(u32));
+    if (!fdfield_offsets) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdfield_offsets\n");
+        goto cleanup;
+    }
 
+    {
         u32 pos = 6;
-        while (pos + 4 <= fdfield_size && fdfield_count < capacity) {
+        while (pos + 4 <= fdfield_size && fdfield_count < fdfield_capacity) {
             u32 offset = fdfield_data[pos] | (fdfield_data[pos+1] << 8) |
                          (fdfield_data[pos+2] << 16) | (fdfield_data[pos+3] << 24);
             
@@ -236,16 +236,16 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     /* Parse FDSHAP.DAT entries (format 2: no count, offsets from byte 6) */
     u32* fdshap_offsets = NULL;
     int fdshap_count = 0;
-    {
-        int capacity = 128;
-        fdshap_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!fdshap_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdshap_offsets\n");
-            goto cleanup;
-        }
+    int fdshap_capacity = 128;
+    fdshap_offsets = (u32*)malloc(fdshap_capacity * sizeof(u32));
+    if (!fdshap_offsets) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdshap_offsets\n");
+        goto cleanup;
+    }
 
+    {
         u32 pos = 6;
-        while (pos + 4 <= fdshap_size && fdshap_count < capacity) {
+        while (pos + 4 <= fdshap_size && fdshap_count < fdshap_capacity) {
             u32 offset = fdshap_data[pos] | (fdshap_data[pos+1] << 8) |
                          (fdshap_data[pos+2] << 16) | (fdshap_data[pos+3] << 24);
             
@@ -263,16 +263,16 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     /* Parse FDOTHER.DAT entries (format 2: no count, offsets from byte 6) */
     u32* fdother_offsets = NULL;
     int fdother_count = 0;
-    {
-        int capacity = 512;
-        fdother_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!fdother_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdother_offsets\n");
-            goto cleanup;
-        }
+    int fdother_capacity = 512;
+    fdother_offsets = (u32*)malloc(fdother_capacity * sizeof(u32));
+    if (!fdother_offsets) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdother_offsets\n");
+        goto cleanup;
+    }
 
+    {
         u32 pos = 6;
-        while (pos + 4 <= fdother_size && fdother_count < capacity) {
+        while (pos + 4 <= fdother_size && fdother_count < fdother_capacity) {
             u32 offset = fdother_data[pos] | (fdother_data[pos+1] << 8) |
                          (fdother_data[pos+2] << 16) | (fdother_data[pos+3] << 24);
             
@@ -392,16 +392,16 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     /* Parse tile offsets from byte 6 onwards (no "LLLLLL" magic in tileset data) */
     u32* tile_offsets = NULL;
     int tile_offset_count = 0;
-    {
-        int capacity = tile_count + 16;
-        tile_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!tile_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate tile_offsets\n");
-            goto cleanup;
-        }
+    int tile_capacity = tile_count + 16;
+    tile_offsets = (u32*)malloc(tile_capacity * sizeof(u32));
+    if (!tile_offsets) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot allocate tile_offsets\n");
+        goto cleanup;
+    }
 
+    {
         u32 pos = 6;
-        while (pos + 4 <= tileset_size && tile_offset_count < capacity) {
+        while (pos + 4 <= tileset_size && tile_offset_count < tile_capacity) {
             u32 offset = tileset_data[pos] | (tileset_data[pos+1] << 8) |
                          (tileset_data[pos+2] << 16) | (tileset_data[pos+3] << 24);
             

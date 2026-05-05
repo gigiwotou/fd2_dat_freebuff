@@ -76,8 +76,8 @@ void scene_default_exit(struct fd2_state_machine* sm) {
  * 注册所有场景到状态机
  * 对应原游戏 funcs_25E23[] 和 funcs_25E3A[] 数组初始化
  */
-int fd2_register_all_scenes(fd2_state_machine_t* sm) {
-    if (!sm) return -1;
+void fd2_register_all_scenes(fd2_state_machine_t* sm) {
+    if (!sm) return;
     
     /* 场景0: 主菜单/标题场景 */
     fd2_register_scene(sm, 0, scene_0_init, scene_0_exit, scene_0_check,
@@ -94,6 +94,4 @@ int fd2_register_all_scenes(fd2_state_machine_t* sm) {
         fd2_register_scene(sm, i, scene_default_init, scene_default_exit, NULL,
                            0, 0, name);
     }
-    
-    return 0;
 }

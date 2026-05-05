@@ -98,6 +98,7 @@ extern void* g_FDOTHER_DAT__5;   /* 索引3 */
 extern void* g_FDOTHER_DAT__6;   /* 索引4 */
 extern void* g_FDOTHER_DAT__7;   /* 索引5 */
 extern void* g_FDOTHER_DAT__8;   /* 索引6 */
+extern void* g_FDOTHER_DAT__11;  /* 索引11 */
 extern void* g_FDOTHER_DAT__12;  /* 索引12 */
 extern void* g_FDOTHER_DAT__13;  /* 索引13 */
 
@@ -106,11 +107,36 @@ extern void* g_FDTXT_DAT__0;
 
 /* 图形数据 */
 extern void* g_FDSHAP_DAT;
-extern void* g_FDFIELD_DAT__1;
+extern void* g_FDFIELD_DAT__0;   /* 字段数据0 */
+extern void* g_FDFIELD_DAT__1;   /* 字段数据1 */
 extern void* g_FDICON_DAT;
 
 /* 场景图形数据指针 */
 extern int g_dword_53F56;
+
+/* 其他数据段变量 */
+extern void* g_dword_53A61;        /* 0x53A61 */
+extern int g_dword_53BDF;        /* 0x53BDF */
+extern int g_dword_53AE9;        /* 0x53AE9 */
+extern int g_n4_1;               /* n4_1 */
+extern int g_n6_0;               /* n6_0 */
+extern int g_byte_51A42;         /* 0x51A42 */
+
+/* 存档状态变量 (对应sub_10010) */
+extern int g_n999;               /* 0x53C02 */
+extern int g_n10;                /* 0x53C09 */
+extern int g_n2;                 /* 0x53C0A */
+extern int g_n127;               /* 0x53C0E */
+extern int g_qword_53AA9_lo;     /* 0x53AA9 低字节 */
+extern int g_qword_53AA9_hi;     /* 0x53AA9 高字节 */
+extern int g_qword_53AB1_lo;     /* 0x53AB1 低字节 */
+extern int g_qword_53AB1_hi;     /* 0x53AB1 高字节 */
+extern int g_byte_53AF9;         /* 0x53AF9 */
+extern int g_byte_51AAB;         /* 0x51AAB */
+extern int g_byte_51E62;         /* 0x51E62 */
+
+/* 资源加载大小 (0x53BFF) - sub_111BA返回值 */
+extern u32 g_dword_53BFF;
 
 /* 音频句柄 */
 extern int g_dword_53ED8;

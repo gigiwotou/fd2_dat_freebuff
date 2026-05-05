@@ -39,23 +39,48 @@ unsigned char g_byte_52363[180] = {0};  /* 0x52363 - 光标X坐标表 (30场景*
  * 资源指针变量 (原游戏数据段)
  * ======================================================================== */
 
-void* g_FDOTHER_DAT__2 = NULL;
-void* g_FDOTHER_DAT__3 = NULL;
-void* g_FDOTHER_DAT__4 = NULL;
-void* g_FDOTHER_DAT__5 = NULL;
-void* g_FDOTHER_DAT__6 = NULL;
-void* g_FDOTHER_DAT__7 = NULL;
-void* g_FDOTHER_DAT__8 = NULL;
-void* g_FDOTHER_DAT__12 = NULL;
-void* g_FDOTHER_DAT__13 = NULL;
+/* FDOTHER.DAT */
+void* g_FDOTHER_DAT__2 = NULL;   /* 索引31 */
+void* g_FDOTHER_DAT__3 = NULL;   /* 索引1 */
+void* g_FDOTHER_DAT__4 = NULL;   /* 索引2 */
+void* g_FDOTHER_DAT__5 = NULL;   /* 索引3 */
+void* g_FDOTHER_DAT__6 = NULL;   /* 索引4 */
+void* g_FDOTHER_DAT__7 = NULL;   /* 索引5 */
+void* g_FDOTHER_DAT__8 = NULL;   /* 索引6 */
+void* g_FDOTHER_DAT__11 = NULL;  /* 索引11 */
+void* g_FDOTHER_DAT__12 = NULL;  /* 索引12 */
+void* g_FDOTHER_DAT__13 = NULL;  /* 索引13 */
 
+/* FDTXT.DAT */
 void* g_FDTXT_DAT__0 = NULL;
 
+/* 图形数据 */
 void* g_FDSHAP_DAT = NULL;
+void* g_FDFIELD_DAT__0 = NULL;
 void* g_FDFIELD_DAT__1 = NULL;
 void* g_FDICON_DAT = NULL;
 
+/* 其他数据段变量 */
 int g_dword_53F56 = 0;
+void* g_dword_53A61 = NULL;
+int g_dword_53BDF = 0;
+int g_dword_53AE9 = 0;
+int g_n4_1 = 0;
+int g_n6_0 = 0;
+int g_byte_51A42 = 0;
+
+/* 存档状态变量 (对应sub_10010) */
+int g_n999 = 0;              /* 0x53C02 */
+int g_n10 = 0;               /* 0x53C09 */
+int g_n2 = 0;                /* 0x53C0A */
+int g_n127 = 0;              /* 0x53C0E */
+int g_qword_53AA9_lo = 0;    /* 0x53AA9 低字节 */
+int g_qword_53AA9_hi = 0;    /* 0x53AA9 高字节 */
+int g_qword_53AB1_lo = 0;    /* 0x53AB1 低字节 */
+int g_qword_53AB1_hi = 0;    /* 0x53AB1 高字节 */
+int g_byte_53AF9 = 0;        /* 0x53AF9 */
+int g_byte_51AAB = 0;        /* 0x51AAB */
+int g_byte_51E62 = 0;        /* 0x51E62 */
 
 int g_dword_53ED8 = 0;
 int g_dword_53ED0 = 0;
@@ -126,6 +151,18 @@ void fd2_globals_init(void) {
     g_dword_53EE8 = 0;
     g_byte_53EF1 = 0;
     g_dword_53BFF = 0;
+
+    g_n999 = 0;
+    g_n10 = 0;
+    g_n2 = 0;
+    g_n127 = 0;
+    g_qword_53AA9_lo = 0;
+    g_qword_53AA9_hi = 0;
+    g_qword_53AB1_lo = 0;
+    g_qword_53AB1_hi = 0;
+    g_byte_53AF9 = 0;
+    g_byte_51AAB = 0;
+    g_byte_51E62 = 0;
 
     g_bios_tick_base = 0;
     g_bios_tick_current = 0;

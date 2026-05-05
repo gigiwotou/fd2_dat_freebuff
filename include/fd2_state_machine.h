@@ -219,7 +219,7 @@ int fd2_scene_check_complete(fd2_state_machine_t* sm, int scene_id);
 
 /* 第三层: 场景交互循环 (对应原游戏 sub_26152) */
 int fd2_scene_interact_loop(fd2_state_machine_t* sm);
-int fd2_scene_handle_key(fd2_state_machine_t* sm, int key_code);
+int fd2_scene_handle_key(fd2_state_machine_t* sm);
 void fd2_scene_render_update(fd2_state_machine_t* sm);
 
 /* 场景切换控制 */
@@ -233,6 +233,7 @@ void fd2_menu_confirm(fd2_state_machine_t* sm);
 int fd2_menu_get_index(fd2_state_machine_t* sm);
 
 /* 场景注册 */
+void fd2_register_all_scenes(fd2_state_machine_t* sm);
 int fd2_register_scene(fd2_state_machine_t* sm,
                        int scene_id,
                        fd2_scene_init_fn init_fn,
