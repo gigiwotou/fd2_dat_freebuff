@@ -405,144 +405,190 @@ int fd2_scene_check_complete(fd2_state_machine_t* sm, int scene_id) {
 }
 
 /*
- * 主循环 (对应原游戏 main)
+ * 主循环 (对应原游戏 sub_25EBB + main)
  * 
- * 原游戏核心逻辑:
- * while (1) {
- *     v14 = sub_25977(18, 0);
- *     v15 = sub_25EBB(v14);
- *     if (v15 == 0) {
- *         do {
- *             i = sub_117E7(...);
- *             if (n2_0 == 1) { 场景初始化 }
- *             else if (n2_0 == 2) {
- *                 funcs_25E23[n17]();  // 场景初始化
- *                 i = sub_26152();     // 场景交互
- *                 if (i) { v17 = 1; }
- *                 else {
- *                     funcs_25E3A[n17]();  // 场景结束
- *                     sub_25977(...);      // 切换音乐
- *                 }
- *             }
- *         } while (!i);
- *     }
- *     if (v17) { 退出游戏 }
- * }
+ * 原游戏核心逻辑 (sub_25EBB):
+ *   v7 = sub_3702F(...);
+ *   sub_1F894(...);  // 播放开场动画+菜单，返回0或1
+ *   
+ *   if (返回值 == 0) {  // 选择Start
+ *       n17 = 0;
+ *       FDOTHER_DAT = sub_111BA(..., 0);
+ *       dword_53BFB = 0;
+ *       byte_51AAC = 0;
+ *       funcs_25E3A[n17]();  // 调用场景0初始化 (sub_3231B)
+ *       sub_25977(byte_51E63[n17], ...);
+ *       byte_51AAC = 1;
+ *       sub_4E381();
+ *       return 0;
+ *   }
+ *   
+ *   if (返回值 != 1) {  // 其他选项
+ *       sub_25977(返回值, ..., -1, 0);
+ *       sub_10010();
+ *       sub_25977(byte_51E63[n17], ...);
+ *       return 0;
+ *   }
+ *   
+ *   // 返回值 == 1 (选择Load)
+ *   dword_53F66 = sub_111BA(..., 13);
+ *   FDOTHER_DAT = sub_111BA(..., 0);
+ *   memset(655360, 0, 64000);
+ *   sub_11D40(..., 0, 255, 0);
+ *   
+ *   v14 = malloc(22987);
+ *   加载FD2.SAV...
+ *   
+ *   n3_3 = 0;
+ *   do {
+ *       v16 = sub_29BCB(v13, 0);
+ *       if (v16 != -1) {
+ *           解析场景数据...
+ *           n17 = *v12;
+ *           dword_53BFB = v12[1];
+ *           ...
+ *           if (n17 == 255) v16 = 0;
+ *       }
+ *       sub_26996();
+ *   } while (!v16);
+ *   
+ *   if (v16 == 1) {
+ *       byte_51AAC = 0;
+ *       v16 = sub_26152();  // 场景交互循环
+ *       if (!v16) {
+ *           funcs_25E3A[n17]();
+ *           sub_25977(byte_51E63[n17], ...);
+ *       }
+ *       byte_51AAC = 1;
+ *   }
+ *   sub_4E381();
+ *   return v16;
  */
 int fd2_state_machine_run(fd2_state_machine_t* sm) {
     if (!sm || !sm->initialized) return -1;
     
-    int v15 = 0;
-    int v17 = 0;
-    int i = 0;
+    int opening_result = 0;
+    int v16 = 0;
     
-    /* 对应原游戏 sub_25EBB: 初始化第一个场景 */
-    g_n17 = 0;
-    g_n16_1 = 0;
-    g_byte_51AAC = 0;
-    g_n2_0 = FD2_SCENE_STATE_INTERACT;
-
-    /* 添加初始渲染，显示一个测试画面 */
-    /* 填充测试色块到渲染缓冲区 */
-    for (int y = 0; y < 200; y++) {
-        for (int x = 0; x < 320; x++) {
-            /* 创建渐变色背景 */
-            sm->render.screen[y * 320 + x] = (u8)((x + y) % 256);
-        }
-    }
-    /* 添加一个白色矩形测试块 */
-    for (int y = 50; y < 150; y++) {
-        for (int x = 50; x < 270; x++) {
-            sm->render.screen[y * 320 + x] = 255;
-        }
-    }
-    /* 添加文字提示 */
-    for (int y = 80; y < 120; y++) {
-        for (int x = 80; x < 240; x++) {
-            sm->render.screen[y * 320 + x] = 128;
-        }
-    }
-    fd2_render_present(&sm->render);
-    SDL_Delay(100);
-
-    while (sm->running) {
-        /* 检查退出请求 */
-        if (g_sdl_quit_requested) {
-            goto cleanup;
+    /* ====================================================================
+     * 第一步: 调用sub_1F894() - 开场动画+菜单系统
+     * 对应原游戏 sub_25EBB() 开头:
+     *   v7 = sub_3702F(a1, a2, n99, a3, 32);
+     *   sub_1F894(a2, n99, n100, n15, v7, a3);
+     * ==================================================================== */
+    printf("[STATE_MACHINE] Playing opening animation and menu...\n");
+    opening_result = fd2_play_opening_animation(sm);
+    printf("[STATE_MACHINE] Opening animation returned: %d\n", opening_result);
+    
+    /* ====================================================================
+     * 第二步: 根据返回值分支处理
+     * ==================================================================== */
+    if (opening_result == 0) {
+        /* ---------------------------------------------------------------
+         * 选择Start - 初始化场景0 (开场剧情)
+         * 对应原游戏:
+         *   if (!v8) {
+         *       v9 = sub_1F882(0, a2, n99, a3);
+         *       n17 = 0;
+         *       FDOTHER_DAT = sub_111BA(v9, a2, n99, a3, "FDOTHER.DAT", FDOTHER_DAT, 0);
+         *       dword_53BFB = 0;
+         *       byte_51AAC = 0;
+         *       funcs_25E3A[n17]();
+         *       sub_25977(byte_51E63[n17], a2, n99, a3, byte_51E63[n17], 0);
+         *       byte_51AAC = 1;
+         *       sub_4E381();
+         *       return 0;
+         *   }
+         * --------------------------------------------------------------- */
+        printf("[STATE_MACHINE] User selected Start - initializing scene 0\n");
+        
+        /* 设置场景0 */
+        g_n17 = 0;
+        sm->globals.scene_id = 0;
+        g_n16_1 = 0;
+        g_byte_51AAC = FD2_SCENE_INACTIVE;
+        sm->globals.scene_active_flag = FD2_SCENE_INACTIVE;
+        
+        /* 调用场景0初始化函数 (funcs_25E3A[0] = sub_3231B) */
+        if (sm->scenes[0].init_fn) {
+            printf("[STATE_MACHINE] Calling scene 0 init function\n");
+            sm->scenes[0].init_fn(sm);
         }
         
-        /* 处理SDL事件，防止窗口无响应 */
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                sm->running = 0;
-                goto cleanup;
+        /* 播放场景音乐 */
+        /* TODO: sub_25977(byte_51E63[n17], ...) */
+        
+        g_byte_51AAC = FD2_SCENE_ACTIVE;
+        sm->globals.scene_active_flag = FD2_SCENE_ACTIVE;
+        
+        /* 刷新屏幕 */
+        /* TODO: sub_4E381() */
+        fd2_render_present(&sm->render);
+        
+        /* 进入场景0的交互循环 */
+        printf("[STATE_MACHINE] Entering scene 0 interaction loop\n");
+        v16 = fd2_state_machine_interact_loop(sm);
+        
+        if (!v16) {
+            /* 场景结束，调用清理函数 */
+            if (sm->scenes[0].exit_fn) {
+                sm->scenes[0].exit_fn(sm);
             }
+            /* TODO: sub_25977(byte_51E63[n17], ...) */
         }
-
-        v15 = fd2_get_game_state(sm);
-
-        if (v15 == 0) {
-            do {
-                /* 在等待输入时也处理事件 */
-                SDL_Event event_inner;
-                while (SDL_PollEvent(&event_inner)) {
-                    if (event_inner.type == SDL_QUIT) {
-                        sm->running = 0;
-                        goto cleanup;
-                    }
+        
+        g_byte_51AAC = FD2_SCENE_ACTIVE;
+        
+    } else if (opening_result == 1) {
+        /* ---------------------------------------------------------------
+         * 选择Load - 加载存档继续游戏
+         * 对应原游戏 sub_25EBB() 中 v8 == 1 的分支
+         * --------------------------------------------------------------- */
+        printf("[STATE_MACHINE] User selected Load - loading save data\n");
+        
+        /* 加载FDOTHER.DAT索引13和0 */
+        /* TODO: dword_53F66 = sub_111BA(..., 13); */
+        /* TODO: FDOTHER_DAT = sub_111BA(..., 0); */
+        
+        /* 清屏并设置黑色调色板 */
+        fd2_render_fill_screen(&sm->render, 0);
+        fd2_render_present(&sm->render);
+        
+        /* 加载FD2.SAV存档数据 */
+        /* TODO: 实现存档加载逻辑 */
+        
+        /* 解析存档中的场景数据 */
+        /* TODO: 实现场景解析循环 */
+        
+        /* 如果加载成功，进入场景交互 */
+        if (v16 == 1) {
+            g_byte_51AAC = FD2_SCENE_INACTIVE;
+            v16 = fd2_state_machine_interact_loop(sm);
+            
+            if (!v16) {
+                /* 场景结束 */
+                if (sm->scenes[g_n17].exit_fn) {
+                    sm->scenes[g_n17].exit_fn(sm);
                 }
-                
-                /* 检查是否请求退出 */
-                if (!sm->running) goto cleanup;
-
-                i = fd2_input_process(sm);
-
-                if (g_n2_0 == FD2_SCENE_STATE_INIT) {
-                    g_byte_51AAC = FD2_SCENE_INACTIVE;
-                    fd2_scene_setup(sm);
-                    g_byte_51AAC = FD2_SCENE_ACTIVE;
-                    g_n2_0 = FD2_SCENE_STATE_IDLE;
-                    i = 1;
-                }
-                else if (g_n2_0 == FD2_SCENE_STATE_INTERACT) {
-                    g_byte_51AAC = FD2_SCENE_INACTIVE;
-
-                    int scene_id = g_n17;
-                    fd2_scene_init(sm, scene_id);
-
-                    /* 加载场景音乐 */
-                    fd2_music_switch(g_byte_51E63[scene_id], 0);
-
-                    g_byte_51AAC = FD2_SCENE_ACTIVE;
-
-                    /* 场景交互循环 */
-                    i = fd2_state_machine_interact_loop(sm);
-
-                    if (i) {
-                        v17 = 1;
-                    } else {
-                        fd2_scene_exit(sm, scene_id);
-                        fd2_music_switch(g_byte_51E63[g_n17], 0);
-                    }
-
-                    g_byte_51AAC = FD2_SCENE_ACTIVE;
-                    g_n2_0 = FD2_SCENE_STATE_IDLE;
-                    fd2_update_screen(sm);
-                }
-            } while (!i);
-
-            if (i == -1) {
-                v17 = 1;
+                /* TODO: sub_25977(...) */
             }
+            g_byte_51AAC = FD2_SCENE_ACTIVE;
         }
-
-        if (v17) {
-            break;
-        }
+        
+    } else {
+        /* ---------------------------------------------------------------
+         * 其他选项 (退出等)
+         * 对应原游戏 sub_25EBB() 中 v8 != 0 && v8 != 1 的分支
+         * --------------------------------------------------------------- */
+        printf("[STATE_MACHINE] Other option selected: %d\n", opening_result);
+        
+        /* TODO: sub_25977(opening_result, ..., -1, 0); */
+        /* TODO: sub_10010(); */
+        /* TODO: sub_25977(byte_51E63[n17], ...); */
     }
-
-cleanup:
-    /* 清理 */
-    return 0;
+    
+    /* 刷新屏幕 */
+    fd2_render_present(&sm->render);
+    
+    return v16;
 }

@@ -70,12 +70,8 @@ int main(int argc, char** argv) {
     printf("  Tab: Subscene switch   ESC: Back/Quit\n");
     printf("  F11: Fullscreen\n");
 
-    /* 播放开场动画 (对应原游戏 sub_1F894) */
-    printf("[DEBUG] Playing opening animation...\n");
-    fd2_play_opening_animation(&sm);
-    printf("[DEBUG] Opening animation finished\n");
-
     /* 运行状态机主循环 (对应原游戏 main() while(1) 循环) */
+    /* 注意: 开场动画由 sub_25EBB() 内部调用 sub_1F894() 播放 */
     printf("[DEBUG] Starting state machine run...\n");
     int result = fd2_state_machine_run(&sm);
     printf("[DEBUG] State machine exited with result: %d\n", result);
