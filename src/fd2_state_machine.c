@@ -374,7 +374,7 @@ int fd2_scene_check_complete(fd2_state_machine_t* sm, int scene_id) {
  *    - sub_2670E() 执行选择
  * 6. 返回是否退出场景
  */
-int fd2_scene_interact_loop(fd2_state_machine_t* sm) {
+int fd2_state_machine_interact_loop(fd2_state_machine_t* sm) {
     if (!sm || !sm->initialized) return 0;
     
     int exit_flag = 0;
@@ -569,7 +569,7 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                     
                     int scene_id = sm->globals.scene_id;
                     fd2_scene_init(sm, scene_id);
-                    i = fd2_scene_interact_loop(sm);
+                    i = fd2_state_machine_interact_loop(sm);
                     
                     if (i) {
                         v17 = 1;

@@ -161,7 +161,7 @@ int fd2_scene_load_graphics(void) {
  *   return sub_11EB0(n655360 + 32904, (int)dst, v7, a4, 656644, 320, n655360 + 32904, 456, 312, 192);
  * }
  */
-void fd2_scene_render_update(void* v20) {
+void fd2_scene_interact_render_update(void* v20) {
     unsigned char scene_type;
     
     (void)v20;
@@ -461,7 +461,7 @@ void fd2_scene_interact_main_loop(void* v20) {
 
     do {
         /* 渲染更新 */
-        fd2_scene_render_update(v20);
+        fd2_scene_interact_render_update(v20);
 
         /* 获取当前BIOS定时器值 */
         v13 = g_bios_tick_current;
@@ -481,7 +481,7 @@ void fd2_scene_interact_main_loop(void* v20) {
                 }
 
                 /* 更新渲染 */
-                fd2_scene_render_update(v20);
+                fd2_scene_interact_render_update(v20);
 
                 /* 更新定时器基准 */
                 v13 = current_tick;
@@ -554,7 +554,7 @@ fd2_scene_result_t fd2_scene_interact_loop(void) {
     }
 
     /* 阶段5: 首次渲染 */
-    fd2_scene_render_update(&local_v20);
+    fd2_scene_interact_render_update(&local_v20);
 
     /* 阶段6: 主交互循环 */
     fd2_scene_interact_main_loop(&local_v20);
