@@ -1,12 +1,12 @@
 #!/bin/bash
 # FD2 Build Script for Linux
-# Usage: ./build.sh [all|game|test|intro|clean|release]
+# Usage: ./build.sh [all|game|clean|release]
 
 set -e
 
 # Configuration
 CC=gcc
-CFLAGS="-Wall -Wextra -std=gnu99 -Iinclude -O2"
+CFLAGS="-Wall -Wextra -std=gnu99 -Iinclude -O2 -DFD2_DEBUG"
 LDFLAGS="-lSDL2 -lm"
 
 # Release flags (no debug output)
@@ -22,8 +22,6 @@ EXE_EXT=""
 # Object files (debug)
 DECODER_OBJ="${OBJ_DIR}/fd2_decoder.o"
 GAME_OBJS="${OBJ_DIR}/fd2_input.o ${OBJ_DIR}/fd2_render.o ${OBJ_DIR}/fd2_audio.o ${OBJ_DIR}/fd2_resources.o ${OBJ_DIR}/fd2_afm.o ${OBJ_DIR}/fd2_scene.o ${OBJ_DIR}/fd2_game_core.o ${OBJ_DIR}/fd2_map_loader.o ${OBJ_DIR}/fd2_icon_b24.o ${OBJ_DIR}/fd2_sprite.o ${OBJ_DIR}/main.o ${OBJ_DIR}/fd2_states.o ${OBJ_DIR}/fd2_states_intro.o ${OBJ_DIR}/fd2_menu.o ${OBJ_DIR}/fd2_battle.o ${OBJ_DIR}/fd2_battle_sprite.o ${OBJ_DIR}/fd2_battle_cursor.o ${OBJ_DIR}/fd2_battle_menu.o ${OBJ_DIR}/fd2_battle_terrain_info.o ${OBJ_DIR}/fd2_save_load.o ${OBJ_DIR}/fd2_continue.o ${OBJ_DIR}/fd2_cutscene.o ${OBJ_DIR}/fd2_state_machine.o ${OBJ_DIR}/fd2_scenes.o ${OBJ_DIR}/fd2_globals.o ${OBJ_DIR}/fd2_data_loader.o ${OBJ_DIR}/fd2_scene_interact.o"
-TEST_OBJ="${OBJ_DIR}/fd2_decoder_test.o"
-INTRO_OBJ="${OBJ_DIR}/fd2_intro.o"
 
 # Object files (release)
 DECODER_RELEASE_OBJ="${OBJ_RELEASE_DIR}/fd2_decoder.o"
@@ -32,8 +30,6 @@ GAME_RELEASE_OBJS="${OBJ_RELEASE_DIR}/fd2_input.o ${OBJ_RELEASE_DIR}/fd2_render.
 # Targets
 TARGET_GAME="${BIN_DIR}/fd2${EXE_EXT}"
 TARGET_GAME_RELEASE="${BIN_DIR}/fd2_release${EXE_EXT}"
-TARGET_TEST="${BIN_DIR}/fd2_decoder_test${EXE_EXT}"
-TARGET_INTRO="${BIN_DIR}/fd2_intro${EXE_EXT}"
 
 # Default target
 TARGET=${1:-all}
@@ -118,20 +114,6 @@ build_release() {
     $CC $RELEASE_CFLAGS -o "${TARGET_GAME_RELEASE}" ${GAME_RELEASE_OBJS} ${DECODER_RELEASE_OBJ} ${RELEASE_LDFLAGS}
 }
 
-build_test() {
-    compile "${SRC_DIR}/fd2_decoder.c" "${DECODER_OBJ}"
-    compile "${SRC_DIR}/fd2_decoder_test.c" "${TEST_OBJ}"
-    echo "Linking ${TARGET_TEST}"
-    $CC $CFLAGS -o "${TARGET_TEST}" "${DECODER_OBJ}" "${TEST_OBJ}" -lm
-}
-
-build_intro() {
-    compile "${SRC_DIR}/fd2_decoder.c" "${DECODER_OBJ}"
-    compile "${SRC_DIR}/fd2_intro.c" "${INTRO_OBJ}"
-    echo "Linking ${TARGET_INTRO}"
-    $CC $CFLAGS -o "${TARGET_INTRO}" "${INTRO_OBJ}" "${DECODER_OBJ}" ${LDFLAGS}
-}
-
 clean() {
     echo "Cleaning build artifacts..."
     rm -rf "${OBJ_DIR}" "${OBJ_RELEASE_DIR}" "${BIN_DIR}"
@@ -144,49 +126,7 @@ mkdir -p "${OBJ_DIR}" "${OBJ_RELEASE_DIR}" "${BIN_DIR}"
 # Build targets
 case "$TARGET" in
     all)
-        compile "${SRC_DIR}/fd2_decoder.c" "${DECODER_OBJ}"
-        compile "${SRC_DIR}/fd2_input.c" "${OBJ_DIR}/fd2_input.o"
-        compile "${SRC_DIR}/fd2_render.c" "${OBJ_DIR}/fd2_render.o"
-        compile "${SRC_DIR}/fd2_audio.c" "${OBJ_DIR}/fd2_audio.o"
-        compile "${SRC_DIR}/fd2_resources.c" "${OBJ_DIR}/fd2_resources.o"
-        compile "${SRC_DIR}/fd2_afm.c" "${OBJ_DIR}/fd2_afm.o"
-        compile "${SRC_DIR}/fd2_scene.c" "${OBJ_DIR}/fd2_scene.o"
-        compile "${SRC_DIR}/fd2_game_core.c" "${OBJ_DIR}/fd2_game_core.o"
-        compile "${SRC_DIR}/fd2_map_loader.c" "${OBJ_DIR}/fd2_map_loader.o"
-        compile "${SRC_DIR}/fd2_icon_b24.c" "${OBJ_DIR}/fd2_icon_b24.o"
-        compile "${SRC_DIR}/fd2_sprite.c" "${OBJ_DIR}/fd2_sprite.o"
-        compile "${SRC_DIR}/main.c" "${OBJ_DIR}/main.o"
-        compile "${SRC_DIR}/fd2_states.c" "${OBJ_DIR}/fd2_states.o"
-        compile "${SRC_DIR}/fd2_states_intro.c" "${OBJ_DIR}/fd2_states_intro.o"
-        compile "${SRC_DIR}/fd2_menu.c" "${OBJ_DIR}/fd2_menu.o"
-        compile "${SRC_DIR}/fd2_battle.c" "${OBJ_DIR}/fd2_battle.o"
-        compile "${SRC_DIR}/fd2_battle_sprite.c" "${OBJ_DIR}/fd2_battle_sprite.o"
-        compile "${SRC_DIR}/fd2_battle_cursor.c" "${OBJ_DIR}/fd2_battle_cursor.o"
-        compile "${SRC_DIR}/fd2_battle_menu.c" "${OBJ_DIR}/fd2_battle_menu.o"
-        compile "${SRC_DIR}/fd2_battle_terrain_info.c" "${OBJ_DIR}/fd2_battle_terrain_info.o"
-        compile "${SRC_DIR}/fd2_save_load.c" "${OBJ_DIR}/fd2_save_load.o"
-        compile "${SRC_DIR}/fd2_continue.c" "${OBJ_DIR}/fd2_continue.o"
-        compile "${SRC_DIR}/fd2_cutscene.c" "${OBJ_DIR}/fd2_cutscene.o"
-        compile "${SRC_DIR}/fd2_state_machine.c" "${OBJ_DIR}/fd2_state_machine.o"
-        compile "${SRC_DIR}/fd2_scenes.c" "${OBJ_DIR}/fd2_scenes.o"
-        compile "${SRC_DIR}/fd2_globals.c" "${OBJ_DIR}/fd2_globals.o"
-        compile "${SRC_DIR}/fd2_data_loader.c" "${OBJ_DIR}/fd2_data_loader.o"
-        compile "${SRC_DIR}/fd2_scene_interact.c" "${OBJ_DIR}/fd2_scene_interact.o"
-        compile "${SRC_DIR}/fd2_decoder_test.c" "${TEST_OBJ}"
-        compile "${SRC_DIR}/fd2_intro.c" "${INTRO_OBJ}"
-
-        echo "Linking ${TARGET_GAME}"
-        $CC $CFLAGS -o "${TARGET_GAME}" ${GAME_OBJS} ${DECODER_OBJ} ${LDFLAGS}
-        echo "[OK] ${TARGET_GAME}"
-
-        echo "Linking ${TARGET_TEST}"
-        $CC $CFLAGS -o "${TARGET_TEST}" "${DECODER_OBJ}" "${TEST_OBJ}" -lm
-        echo "[OK] ${TARGET_TEST}"
-
-        echo "Linking ${TARGET_INTRO}"
-        $CC $CFLAGS -o "${TARGET_INTRO}" "${INTRO_OBJ}" "${DECODER_OBJ}" ${LDFLAGS}
-        echo "[OK] ${TARGET_INTRO}"
-
+        build_game
         echo ""
         echo "Copying game data files..."
         if [ -d "game" ]; then
@@ -200,18 +140,12 @@ case "$TARGET" in
     release)
         build_release
         ;;
-    test)
-        build_test
-        ;;
-    intro)
-        build_intro
-        ;;
     clean)
         clean
         ;;
     *)
         echo "Unknown target: $TARGET"
-        echo "Usage: $0 [all|game|test|intro|clean|release]"
+        echo "Usage: $0 [all|game|clean|release]"
         exit 1
         ;;
 esac

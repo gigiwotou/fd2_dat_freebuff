@@ -4,9 +4,7 @@ setlocal EnableDelayedExpansion
 
 :: FD2 Build Script for Windows (MSYS2)
 :: Supports both UCRT64 and MINGW64 environments
-:: Usage: build.bat [all|game|test|intro|clean|release] [mingw64]
-::        build.bat all          (uses UCRT64 by default)
-::        build.bat all mingw64  (uses MINGW64)
+:: Usage: build.bat [all|game|test|intro|menu_debug|sub_111ba_test|clean|release] [mingw64]
 
 :: Detect environment
 set MSYS2_PREFIX=C:\msys64\ucrt64
@@ -34,9 +32,6 @@ set EXE_EXT=.exe
 :: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
 set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game_core.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_states.o %OBJ_DIR%\fd2_states_intro.o %OBJ_DIR%\fd2_menu.o %OBJ_DIR%\fd2_battle.o %OBJ_DIR%\fd2_battle_sprite.o %OBJ_DIR%\fd2_battle_cursor.o %OBJ_DIR%\fd2_battle_menu.o %OBJ_DIR%\fd2_battle_terrain_info.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_continue.o %OBJ_DIR%\fd2_cutscene.o %OBJ_DIR%\fd2_state_machine.o %OBJ_DIR%\fd2_scenes.o %OBJ_DIR%\fd2_globals.o %OBJ_DIR%\fd2_data_loader.o %OBJ_DIR%\fd2_scene_interact.o
-set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
-set SUB_111BA_TEST_OBJ=%OBJ_DIR%\fd2_sub_111ba_test.o
-set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
@@ -45,9 +40,6 @@ set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
-set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
-set TARGET_SUB_111BA_TEST=%BIN_DIR%\fd2_sub_111ba_test%EXE_EXT%
-set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
 
 :: Parse arguments (order-independent)
 set TARGET=all
@@ -57,8 +49,6 @@ set RELEASE=0
 if "%~1"=="" goto :arg_done
 if /I "%~1"=="all" set TARGET=all
 if /I "%~1"=="game" set TARGET=game
-if /I "%~1"=="test" set TARGET=test
-if /I "%~1"=="intro" set TARGET=intro
 if /I "%~1"=="clean" set TARGET=clean
 if /I "%~1"=="release" set RELEASE=1
 if /I "%~1"=="mingw64" set MSYS2_PREFIX=C:\msys64\mingw64
@@ -148,25 +138,11 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_scene_interact.c %OBJ_DIR%\fd2_scene_interact.o
     if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
-    if errorlevel 1 goto :error
 
     echo Linking %TARGET_GAME% ...
     %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
     if errorlevel 1 goto :error
     echo [OK] %TARGET_GAME%
-
-    echo Linking %TARGET_TEST% ...
-    %GCC% %CFLAGS% -o %TARGET_TEST% %DECODER_OBJ% %TEST_OBJ% -lm
-    if errorlevel 1 goto :error
-    echo [OK] %TARGET_TEST%
-
-    echo Linking %TARGET_INTRO% ...
-    %GCC% %CFLAGS% -o %TARGET_INTRO% %INTRO_OBJ% %DECODER_OBJ% %LDFLAGS% %SDL_LDFLAGS%
-    if errorlevel 1 goto :error
-    echo [OK] %TARGET_INTRO%
 
     echo.
     echo Copying required DLLs...
@@ -174,8 +150,6 @@ if "%TARGET%"=="all" (
 
 :: Individual targets
 if "%TARGET%"=="game" goto :build_game
-if "%TARGET%"=="test" goto :build_test
-if "%TARGET%"=="intro" goto :build_intro
 if "%TARGET%"=="release" goto :build_release
 
 if "%TARGET%"=="all" (
@@ -267,10 +241,6 @@ if errorlevel 1 goto :error
 echo [OK] %TARGET_GAME%
 goto :end
 
-echo Unknown target: %TARGET%
-echo Usage: build.bat [all^|game^|test^|intro^|clean^|release] [mingw64]
-goto :end
-
 :build_release
 call :compile_release %SRC_DIR%\fd2_decoder.c %DECODER_RELEASE_OBJ%
 if errorlevel 1 goto :error
@@ -308,6 +278,10 @@ call :compile_release %SRC_DIR%\fd2_battle_sprite.c %OBJ_RELEASE_DIR%\fd2_battle
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_battle_cursor.c %OBJ_RELEASE_DIR%\fd2_battle_cursor.o
 if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_menu.c %OBJ_RELEASE_DIR%\fd2_battle_menu.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_terrain_info.c %OBJ_RELEASE_DIR%\fd2_battle_terrain_info.o
+if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_save_load.c %OBJ_RELEASE_DIR%\fd2_save_load.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_continue.c %OBJ_RELEASE_DIR%\fd2_continue.o
@@ -331,26 +305,8 @@ if errorlevel 1 goto :error
 echo [OK] %TARGET_GAME_RELEASE%
 goto :end
 
-:build_test
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
-if errorlevel 1 goto :error
-echo Linking %TARGET_TEST% ...
-%GCC% %CFLAGS% -o %TARGET_TEST% %DECODER_OBJ% %TEST_OBJ% -lm
-if errorlevel 1 goto :error
-echo [OK] %TARGET_TEST%
-goto :end
-
-:build_intro
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
-if errorlevel 1 goto :error
-echo Linking %TARGET_INTRO% ...
-%GCC% %CFLAGS% -o %TARGET_INTRO% %INTRO_OBJ% %DECODER_OBJ% %LDFLAGS% %SDL_LDFLAGS%
-if errorlevel 1 goto :error
-echo [OK] %TARGET_INTRO%
+echo Unknown target: %TARGET%
+echo Usage: build.bat [all^|game^|clean^|release] [mingw64]
 goto :end
 
 :compile
