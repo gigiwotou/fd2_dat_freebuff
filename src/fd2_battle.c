@@ -144,10 +144,14 @@ void state_battle_enter(fd2_game_t* game) {
                game->from_save ? "from SAVE" : "from FDFIELD.DAT");
 
         for (int i = 0; i < data->total_char_count && data->sprite_count < num_sprites; i++) {
-            /* Check death status - based on IDA sub_14B78: offset+8 == 28 means dead */
-            if (data->char_data[i].death_status == 28 || data->char_data[i].death_flag != 0) {
-                printf("  char[%d]: DEAD (death_status=%d, death_flag=%d), skipping sprite\n",
-                       i, data->char_data[i].death_status, data->char_data[i].death_flag);
+            /* Check active status - based on IDA sub_19DF7 (0x19e98-0x19ea4):
+             *   byte[eax+5] & 1  != 0 => skip (bit0=1 means moved/inactive)
+             *   byte[eax+5] & 0x80 == 0 => skip (bit7=0 means dead/inactive)
+             * Only active when: (active_byte & 1) == 0 && (active_byte & 0x80) != 0 */
+            uint8_t ab = data->char_data[i].active_byte;
+            if ((ab & 1) != 0 || (ab & 0x80) == 0) {
+                printf("  char[%d]: INACTIVE (active_byte=0x%02X, bit0=%d, bit7=%d), skipping sprite\n",
+                       i, ab, ab & 1, (ab >> 7) & 1);
                 continue;
             }
 

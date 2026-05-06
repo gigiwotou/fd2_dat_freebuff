@@ -36,11 +36,12 @@
 int battle_get_active_chars(state_battle_data_t* data, int* out_ids, int max_ids) {
     int count = 0;
     
-    /* 遍历所有角色，检查活跃状态和死亡标志 */
+    /* 遍历所有角色，检查活跃状态 - based on IDA sub_19DF7 (0x19e98-0x19ea4) */
     for (int i = 0; i < data->total_char_count && count < max_ids; ++i) {
-        /* 检查死亡标志 - based on IDA sub_14B78: offset+8 == 28 means dead */
-        if (data->char_data[i].death_status == 28 || data->char_data[i].death_flag != 0) {
-            continue; /* 跳过死亡角色 */
+        /* 检查活跃字节 (offset+5): bit0==0 && bit7==1 才表示活跃单位 */
+        uint8_t ab = data->char_data[i].active_byte;
+        if ((ab & 1) != 0 || (ab & 0x80) == 0) {
+            continue; /* 跳过非活跃/死亡角色 */
         }
         
         /* 检查活跃状态位掩码 (offset+26) */
