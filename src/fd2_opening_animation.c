@@ -17,6 +17,7 @@
 #include "fd2_render_pipeline.h"
 #include "fd2_resources.h"
 #include "fd2_data_loader.h"
+#include "fd2_decoder.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,9 +115,43 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     /* sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
     fd2_render_set_brightness(&sm->render, 63);
     
-    /* 8. 加载FDOTHER索引69-73 (5个动画帧图像) */
-    /* malloc缓冲区，加载5个图像到缓冲区 */
-    /* sub_4E98D渲染这些图像 */
+    /* 8. 加载FDOTHER索引69-73 (5个动画帧图像) 到缓冲区 */
+    /* 原游戏: n15 = malloc(0x396C0) = 235200字节 */
+    /* for (n5=0; n5<5; ++n5) { */
+    /*   sub_111BA(..., "FDOTHER.DAT", n5+69); */
+    /*   sub_4E98D(..., 0, 147*n5, n15, 320, -1); */
+    /* } */
+    
+    printf("[OPENING] Loading animation frames (FDOTHER indices 69-73)...\n");
+    
+    /* 分配动画缓冲区 (235200字节) */
+    void* n15 = malloc(235200);
+    if (!n15) {
+        printf("[OPENING] Failed to allocate animation buffer\n");
+        return 0;
+    }
+    memset(n15, 0, 235200);
+    
+    /* 加载5个动画帧 */
+    for (int n5 = 0; n5 < 5; ++n5) {
+        int index = n5 + 69;  /* 索引69-73 */
+        int dst_offset = 147 * n5;  /* 目标偏移量 */
+        
+        printf("[OPENING] Loading FDOTHER index %d to offset %d...\n", index, dst_offset);
+        
+        /* 从资源管理器获取数据 */
+        u32 dat_size = 0;
+        const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, index, &dat_size);
+        
+        if (dat_data) {
+            /* sub_4E98D: RLE解压缩渲染到n15缓冲区 */
+            /* 参数: dst_y = 147*n5, stride = 320, palette_offset = -1 */
+            fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_offset, 320, -1);
+        } else {
+            printf("[OPENING] Failed to load FDOTHER index %d\n", index);
+        }
+    }
+    
     /* sub_4E381() - 刷新屏幕 */
     fd2_render_present(&sm->render);
 
@@ -129,15 +164,6 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     int n535 = FD2_ANIM_FRAME_START;
     int v33 = 0;  /* 时间点索引 */
     int n12 = 12; /* 时间点计数器 */
-    void* anim_buffer = NULL;  /* 动画帧缓冲区 */
-    
-    /* 分配动画缓冲区 */
-    anim_buffer = malloc(320 * 200);
-    if (!anim_buffer) {
-        printf("[OPENING] Failed to allocate animation buffer\n");
-        return 0;
-    }
-    memset(anim_buffer, 0, 320 * 200);
 
     while (1) {
         if (n535 < 0) {
@@ -146,18 +172,27 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         }
         
         /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
-        /* 垂直滚动blit: 从动画缓冲区复制到屏幕 */
+        /* 垂直滚动blit: 从n15缓冲区复制到屏幕 */
         {
             int src_offset = n535 * 320;
-            if (src_offset < 320 * 200) {
-                /* 复制一行到屏幕 */
-                u8* src = (u8*)anim_buffer + src_offset;
+            int screen_size = 320 * 200;
+            
+            if (src_offset < screen_size) {
+                /* sub_11EB0本质是memmove循环 */
+                /* sub_11EB0(dst, stride, src, arg4, arg5, arg6, arg7, arg8, arg9, count) */
+                /* 实际调用: sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
+                /* 复制200行，每行320字节，dst步长320，src步长320 */
+                
+                u8* src = (u8*)n15 + src_offset;
                 u8* dst = sm->render.screen;
-                int copy_size = 320;
-                if (src_offset + copy_size > 320 * 200) {
-                    copy_size = 320 * 200 - src_offset;
+                
+                for (int row = 0; row < 200; ++row) {
+                    if (src_offset + row * 320 < 235200) {
+                        memcpy(dst, src, 320);
+                        dst += 320;
+                        src += 320;
+                    }
                 }
-                memcpy(dst, src, copy_size);
             }
         }
         
@@ -245,9 +280,9 @@ opening_menu:
     fd2_render_present(&sm->render);
     
     /* 2. 释放旧资源 */
-    if (anim_buffer) {
-        free(anim_buffer);
-        anim_buffer = NULL;
+    if (n15) {
+        free(n15);
+        n15 = NULL;
     }
     
     /* 3. 加载菜单资源 */
