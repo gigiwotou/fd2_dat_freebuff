@@ -1,0 +1,11 @@
+{
+    "id": "example_mod",
+    "name": "示例MOD",
+    "version": "1.0.0",
+    "author": "FD2 Team",
+    "description": "这是一个示例MOD，展示了MOD系统的基本功能",
+    "dependencies": [],
+    "overrides_data": false,
+    "adds_scripts": false,
+    "adds_events": false
+}
