@@ -144,9 +144,10 @@ void state_battle_enter(fd2_game_t* game) {
                game->from_save ? "from SAVE" : "from FDFIELD.DAT");
 
         for (int i = 0; i < data->total_char_count && data->sprite_count < num_sprites; i++) {
-            /* Check death flag - skip dead characters */
-            if (data->char_data[i].death_flag != 0) {
-                printf("  char[%d]: DEAD, skipping sprite\n", i);
+            /* Check death status - based on IDA sub_14B78: offset+8 == 28 means dead */
+            if (data->char_data[i].death_status == 28 || data->char_data[i].death_flag != 0) {
+                printf("  char[%d]: DEAD (death_status=%d, death_flag=%d), skipping sprite\n",
+                       i, data->char_data[i].death_status, data->char_data[i].death_flag);
                 continue;
             }
 

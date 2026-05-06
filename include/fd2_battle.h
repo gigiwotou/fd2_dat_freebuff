@@ -34,13 +34,14 @@ typedef struct {
     uint8_t flags;          /* offset+5: bit0=moved flag */
     uint8_t char_type;      /* offset+6: character type */
     uint8_t icon_id;        /* offset+7: icon/animation ID */
-    uint8_t padding_8_25[18]; /* offset+8-25 */
+    uint8_t death_status;   /* offset+8: 0=alive, 28=dead */
+    uint8_t padding_9_25[17]; /* offset+9-25 */
     uint8_t active_mask;    /* offset+26: active status bit mask */
     uint8_t padding_27_31[5]; /* offset+27-31 */
     uint8_t icon_id_alt;    /* offset+32: alternate icon ID */
     uint8_t direction;      /* offset+33: facing direction */
     uint8_t padding_34_38[5]; /* offset+34-38 */
-    uint8_t death_flag;     /* offset+39: 0=alive, non-zero=dead */
+    uint8_t death_flag;     /* offset+39: 0=alive, non-zero=dead (alias) */
     uint8_t padding_40_58[19]; /* offset+40-58 */
     uint8_t anim_data_size; /* offset+59: animation data size */
     uint8_t padding_60_63[3];  /* offset+60-63 */
