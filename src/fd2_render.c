@@ -63,9 +63,9 @@ int fd2_render_init(fd2_render_t* render, int scale) {
     }
     render->window = win;
 
-    /* Create renderer */
+    /* Create renderer - 移除VSYNC避免阻塞 */
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        SDL_RENDERER_ACCELERATED);
     if (!ren) {
         fprintf(stderr, "fd2_render_init: SDL_CreateRenderer failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(win);
@@ -336,15 +336,41 @@ void fd2_render_blit_afm(fd2_render_t* render, const u8* afm_frame,
 /* ---- Presentation ---- */
 
 void fd2_render_present(fd2_render_t* render) {
-    if (!render || !render->initialized) return;
+    if (!render || !render->initialized) {
+        printf("[RENDER] present: not initialized, returning\n");
+        fflush(stdout);
+        return;
+    }
 
+    /* 处理SDL事件防止窗口锁死 */
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            printf("[RENDER] present: SDL_QUIT detected\n");
+            fflush(stdout);
+            return;
+        }
+    }
+
+    printf("[RENDER] present: calling screen_to_argb\n");
+    fflush(stdout);
     screen_to_argb(render);
+    printf("[RENDER] present: calling SDL_UpdateTexture\n");
+    fflush(stdout);
     SDL_UpdateTexture((SDL_Texture*)render->texture, NULL,
                       render->argb, FD2_SCREEN_W * sizeof(u32));
+    printf("[RENDER] present: calling SDL_RenderClear\n");
+    fflush(stdout);
     SDL_RenderClear((SDL_Renderer*)render->renderer);
+    printf("[RENDER] present: calling SDL_RenderCopy\n");
+    fflush(stdout);
     SDL_RenderCopy((SDL_Renderer*)render->renderer,
                    (SDL_Texture*)render->texture, NULL, NULL);
+    printf("[RENDER] present: calling SDL_RenderPresent\n");
+    fflush(stdout);
     SDL_RenderPresent((SDL_Renderer*)render->renderer);
+    printf("[RENDER] present: done\n");
+    fflush(stdout);
 }
 
 void fd2_render_toggle_fullscreen(fd2_render_t* render) {

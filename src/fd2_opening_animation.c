@@ -147,20 +147,28 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     
     printf("[OPENING] Loading animation frames (FDOTHER indices 69-73)...\n");
     
-    /* 分配动画缓冲区 (235200字节) */
+    /* 分配动画缓冲区 (235200字节 = 320*147*5) */
+    /* 原游戏: n15 = malloc(0x396C0) = 235200字节 */
+    printf("[OPENING] Allocating animation buffer (235200 bytes)...\n");
+    fflush(stdout);
     void* n15 = malloc(235200);
     if (!n15) {
         printf("[OPENING] Failed to allocate animation buffer\n");
+        fflush(stdout);
         return 0;
     }
     memset(n15, 0, 235200);
     
+    printf("[OPENING] Animation buffer allocated at %p\n", n15);
+    fflush(stdout);
+    
     /* 加载5个动画帧 */
     for (int n5 = 0; n5 < 5; ++n5) {
         int index = n5 + 69;  /* 索引69-73 */
-        int dst_offset = 147 * n5;  /* 目标偏移量 */
+        int dst_y = 147 * n5;  /* 目标Y偏移 */
         
-        printf("[OPENING] Loading FDOTHER index %d to offset %d...\n", index, dst_offset);
+        printf("[OPENING] Loading FDOTHER index %d to y=%d...\n", index, dst_y);
+        fflush(stdout);
         
         /* 从资源管理器获取数据 */
         u32 dat_size = 0;
@@ -168,15 +176,29 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         
         if (dat_data) {
             /* sub_4E98D: RLE解压缩渲染到n15缓冲区 */
+            /* 每帧图像最大尺寸320x147 */
             /* 参数: dst_y = 147*n5, stride = 320, palette_offset = -1 */
-            fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_offset, 320, -1);
+            int ret = fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
+            printf("[OPENING] Decompress result: %d (dat_size=%u)\n", ret, dat_size);
+            fflush(stdout);
         } else {
             printf("[OPENING] Failed to load FDOTHER index %d\n", index);
+            fflush(stdout);
         }
     }
     
     /* sub_4E381() - 刷新屏幕 */
+    printf("[OPENING] Animation frames loaded, presenting screen...\n");
+    fflush(stdout);
+    
+    /* 清屏为黑色 */
+    fd2_render_fill_screen(&sm->render, 0);
+    
+    printf("[OPENING] Screen cleared, calling present...\n");
+    fflush(stdout);
     fd2_render_present(&sm->render);
+    printf("[OPENING] Screen presented, starting animation loop...\n");
+    fflush(stdout);
 
     /* ====================================================================
      * 阶段2: 主动画循环 (n535: 535→0)
@@ -191,7 +213,13 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     while (1) {
         if (n535 < 0) {
             /* 动画播放完毕，进入菜单阶段 */
+            printf("[OPENING] Animation loop completed, entering menu\n");
             goto opening_menu;
+        }
+        
+        /* 每50帧打印一次进度 */
+        if (n535 % 50 == 0) {
+            printf("[OPENING] Animation frame: %d\n", n535);
         }
         
         /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */

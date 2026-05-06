@@ -137,7 +137,10 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
 
     u8* dst_ptr = dst + stride * dst_y + dst_x;
     int row_skip = stride - width;
-
+    
+    /* 添加目标缓冲区边界检查 */
+    u8* dst_end = dst + stride * (dst_y + height);
+    
     if (palette_offset == -1) {
         const u8* src_end = src + src_size;
         for (int row = 0; row < height; row++) {
@@ -150,16 +153,19 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                 int bit6 = (ctrl >> 6) & 1;
 
                 if (bit7 && bit6) {
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     dst_ptr += count_1;
                     count -= count_1;
                 } else if (bit7 && !bit6) {
                     if (src + count_1 > src_end) return -1;
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     count -= count_1;
                     memcpy(dst_ptr, src, count_1);
                     src += count_1;
                     dst_ptr += count_1;
                 } else if (!bit7 && bit6) {
                     if (src >= src_end) return -1;
+                    if (dst_ptr + count_1 * 2 > dst_end) return -1;
                     count = count - count_1 - count_1;
                     u8 fill = *src++;
                     for (int i = 0; i < count_1; i++) {
@@ -168,6 +174,7 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                     }
                 } else {
                     if (src >= src_end) return -1;
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     count -= count_1;
                     u8 fill = *src++;
                     memset(dst_ptr, fill, count_1);
@@ -188,16 +195,19 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                 int bit6 = (ctrl >> 6) & 1;
 
                 if (bit7 && bit6) {
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     dst_ptr += count_1;
                     count -= count_1;
                 } else if (bit7 && !bit6) {
                     if (src + count_1 > src_end) return -1;
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     count -= count_1;
                     for (int i = 0; i < count_1; i++) {
                         *dst_ptr++ = compute_palette_color(palette_offset, *src++);
                     }
                 } else if (!bit7 && bit6) {
                     if (src >= src_end) return -1;
+                    if (dst_ptr + count_1 * 2 > dst_end) return -1;
                     count = count - count_1 - count_1;
                     u8 src_byte = *src++;
                     u8 color = compute_palette_color(palette_offset, src_byte);
@@ -207,6 +217,7 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                     }
                 } else {
                     if (src >= src_end) return -1;
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     count -= count_1;
                     u8 src_byte = *src++;
                     u8 color = compute_palette_color(palette_offset, src_byte);
@@ -229,16 +240,19 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                 int bit6 = (ctrl >> 6) & 1;
 
                 if (bit7 && bit6) {
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     dst_ptr += count_1;
                     count -= count_1;
                 } else if (bit7 && !bit6) {
                     if (src + count_1 > src_end) return -1;
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     count -= count_1;
                     src += count_1;
                     memset(dst_ptr, fill, count_1);
                     dst_ptr += count_1;
                 } else if (!bit7 && bit6) {
                     if (src >= src_end) return -1;
+                    if (dst_ptr + count_1 * 2 > dst_end) return -1;
                     count = count - count_1 - count_1;
                     src++;
                     for (int i = 0; i < count_1; i++) {
@@ -247,6 +261,7 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
                     }
                 } else {
                     if (src >= src_end) return -1;
+                    if (dst_ptr + count_1 > dst_end) return -1;
                     count -= count_1;
                     src++;
                     memset(dst_ptr, fill, count_1);
