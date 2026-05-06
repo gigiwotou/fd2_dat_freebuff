@@ -55,20 +55,40 @@ static void fd2_delay(int ms) {
 }
 
 /*
- * sub_10620: 检查是否有按键按下 (原游戏 0x10620)
+ * sub_10620: 检查键盘缓冲区变化 (原游戏 0x10620)
+ * 
+ * 原游戏实现:
+ *   return MEMORY[0x41C] != MEMORY[0x41A];
+ * 
+ * 0x41A = 键盘缓冲区头指针
+ * 0x41C = 键盘缓冲区尾指针
+ * 当用户按键时，尾指针变化，两者不等
+ * 
+ * SDL2实现: 非阻塞检查是否有新按键按下
  * 返回: 1=有按键, 0=无按键
  */
+static int g_key_pressed = 0;
+
 static int fd2_check_key_pressed(void) {
+    if (g_key_pressed) return 1;
+    
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_KEYDOWN || event.type == SDL_MOUSEBUTTONDOWN) {
+        if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+            g_key_pressed = 1;
             return 1;
         }
         if (event.type == SDL_QUIT) {
+            g_key_pressed = 1;
             return 1;
         }
     }
     return 0;
+}
+
+/* 重置按键状态 */
+static void fd2_reset_key_state(void) {
+    g_key_pressed = 0;
 }
 
 /*
@@ -80,6 +100,9 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     if (!sm) return -1;
 
     printf("[OPENING] Starting opening animation sequence...\n");
+    
+    /* 重置按键状态 */
+    fd2_reset_key_state();
 
     /* ====================================================================
      * 阶段1: 初始化资源加载 (对应原游戏 0x1F894-0x1FA85)
@@ -247,6 +270,10 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         }
         
         n12++;
+        
+        /* 处理SDL事件防止窗口无响应 */
+        SDL_PumpEvents();
+        
         fd2_delay(30);  /* delay(30) */
         
         if (n535 == 0) {
