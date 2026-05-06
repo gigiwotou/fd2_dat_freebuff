@@ -112,7 +112,30 @@ void state_battle_enter(fd2_game_t* game) {
         data->from_save = game->from_save;
         data->saved_num_fighters = game->save_char_count;
 
-        int num_sprites = game->from_save ? game->save_char_count : data->map.scene.char_pos_count;
+        /* Copy character data from save or map */
+        data->total_char_count = game->from_save ? game->save_char_count : data->map.scene.char_pos_count;
+        if (data->total_char_count < 0 || data->total_char_count > MAX_BATTLE_CHARS) {
+            data->total_char_count = 0;
+        }
+        
+        if (game->from_save) {
+            for (int i = 0; i < data->total_char_count; i++) {
+                memcpy(&data->char_data[i], game->save_char_full_data[i], sizeof(battle_char_data_t));
+            }
+        } else {
+            for (int i = 0; i < data->total_char_count; i++) {
+                fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
+                data->char_data[i].tile_x = char_pos->x;
+                data->char_data[i].tile_y = char_pos->y;
+                data->char_data[i].portrait_id = char_pos->portrait_id;
+                data->char_data[i].icon_id = char_pos->portrait_id;
+                data->char_data[i].active_mask = 0x01; /* Default active */
+                data->char_data[i].death_flag = 0; /* Default alive for map */
+            }
+        }
+
+        int num_sprites = data->total_char_count;
+        if (num_sprites <= 0) num_sprites = 1; /* Ensure at least 1 for calloc */
         data->sprites = (map_sprite_t*)calloc(num_sprites, sizeof(map_sprite_t));
         data->max_sprites = num_sprites;
         data->sprite_count = 0;
@@ -120,21 +143,18 @@ void state_battle_enter(fd2_game_t* game) {
         printf("state_battle: allocating %d sprites (%s)\n", num_sprites,
                game->from_save ? "from SAVE" : "from FDFIELD.DAT");
 
-        for (int i = 0; i < num_sprites && data->sprite_count < num_sprites; i++) {
-            int tile_x, tile_y, icon_id;
-
-            if (game->from_save) {
-                tile_x = game->save_char_positions[i][0];
-                tile_y = game->save_char_positions[i][1];
-                icon_id = game->save_char_icons[i];
-            } else {
-                tile_x = data->map.scene.char_positions[i].x;
-                tile_y = data->map.scene.char_positions[i].y;
-                icon_id = data->map.scene.char_positions[i].portrait_id;
+        for (int i = 0; i < data->total_char_count && data->sprite_count < num_sprites; i++) {
+            /* Check death flag - skip dead characters */
+            if (data->char_data[i].death_flag != 0) {
+                printf("  char[%d]: DEAD, skipping sprite\n", i);
+                continue;
             }
 
+            int tile_x = data->char_data[i].tile_x;
+            int tile_y = data->char_data[i].tile_y;
+            int icon_id = data->char_data[i].icon_id;
+
             if (tile_x == 0 && tile_y == 0) {
-                data->sprite_count++;
                 continue;
             }
 
@@ -151,8 +171,8 @@ void state_battle_enter(fd2_game_t* game) {
             sprite->width = 24;
             sprite->height = 24;
 
-            printf("  sprite[%d]: tile=(%d,%d), icon=%d\n",
-                   data->sprite_count, tile_x, tile_y, icon_id);
+            printf("  sprite[%d]: tile=(%d,%d), icon=%d, char_data_idx=%d\n",
+                   data->sprite_count, tile_x, tile_y, icon_id, i);
 
             int cache_idx = fd2_icon_get(icon_id);
             if (cache_idx >= 0) {
@@ -173,7 +193,8 @@ void state_battle_enter(fd2_game_t* game) {
             data->sprite_count++;
         }
 
-        printf("state_battle: created %d character sprites\n", data->sprite_count);
+        printf("state_battle: created %d character sprites (total chars=%d, alive=%d)\n", 
+               data->sprite_count, data->total_char_count, data->sprite_count);
 
         /* Calculate camera position to center on map characters */
         if (data->map.scene.loaded && data->map.scene.char_pos_count > 0) {

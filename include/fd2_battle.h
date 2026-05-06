@@ -9,6 +9,49 @@
 #define TERRAIN_INFO_WIDTH 456
 #define TERRAIN_INFO_HEIGHT 24
 
+/* Character data structure based on IDA dword_53A45
+ * Each character occupies 80 bytes
+ * Key fields from IDA analysis:
+ *   offset+0:  tile_x
+ *   offset+1:  tile_y
+ *   offset+4:  portrait_id
+ *   offset+5:  faction/flags (bit0 = moved flag)
+ *   offset+6:  character type
+ *   offset+7:  icon_id
+ *   offset+26: active status byte (bit mask for 8 characters per row)
+ *   offset+32: icon_id (alternate)
+ *   offset+33: direction
+ *   offset+39: death flag (non-zero = dead)
+ *   offset+59: animation data size
+ *   offset+64: animation state
+ *   offset+70: level/stats
+ */
+typedef struct {
+    uint8_t tile_x;         /* offset+0: tile X coordinate */
+    uint8_t tile_y;         /* offset+1: tile Y coordinate */
+    uint8_t padding_2_3[2]; /* offset+2-3 */
+    uint8_t portrait_id;    /* offset+4: portrait ID */
+    uint8_t flags;          /* offset+5: bit0=moved flag */
+    uint8_t char_type;      /* offset+6: character type */
+    uint8_t icon_id;        /* offset+7: icon/animation ID */
+    uint8_t padding_8_25[18]; /* offset+8-25 */
+    uint8_t active_mask;    /* offset+26: active status bit mask */
+    uint8_t padding_27_31[5]; /* offset+27-31 */
+    uint8_t icon_id_alt;    /* offset+32: alternate icon ID */
+    uint8_t direction;      /* offset+33: facing direction */
+    uint8_t padding_34_38[5]; /* offset+34-38 */
+    uint8_t death_flag;     /* offset+39: 0=alive, non-zero=dead */
+    uint8_t padding_40_58[19]; /* offset+40-58 */
+    uint8_t anim_data_size; /* offset+59: animation data size */
+    uint8_t padding_60_63[3];  /* offset+60-63 */
+    uint8_t anim_state[4];  /* offset+64-67: animation state */
+    uint8_t padding_68_69[2];  /* offset+68-69 */
+    uint8_t level_stats;    /* offset+70: level/stats */
+    uint8_t padding_71_79[9];  /* offset+71-79 */
+} battle_char_data_t;
+
+#define MAX_BATTLE_CHARS 64
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,6 +126,8 @@ typedef struct {
     u8 terrain_info_buffer[TERRAIN_INFO_WIDTH * TERRAIN_INFO_HEIGHT];
 
     /* Player turn state - based on IDA sub_1CFF0, sub_1D51D */
+    battle_char_data_t char_data[MAX_BATTLE_CHARS]; /* 角色数据 (80字节/角色) */
+    int total_char_count;          /* 总角色数 */
     int current_char_idx;          /* n2_3: 当前选择的角色索引 */
     int active_char_count;         /* 活跃角色数量 */
     int active_char_ids[40];       /* 活跃角色ID列表 (5行x8列=40) */

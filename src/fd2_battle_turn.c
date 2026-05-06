@@ -36,17 +36,19 @@
 int battle_get_active_chars(state_battle_data_t* data, int* out_ids, int max_ids) {
     int count = 0;
     
-    /* 遍历5行 */
-    for (int row = 0; row < 5 && count < max_ids; ++row) {
-        /* 获取该行的位标志 (偏移+26) */
-        if (row >= data->sprite_count) continue;
+    /* 遍历所有角色，检查活跃状态和死亡标志 */
+    for (int i = 0; i < data->total_char_count && count < max_ids; ++i) {
+        /* 检查死亡标志 (offset+39): 0=存活, 非0=死亡 */
+        if (data->char_data[i].death_flag != 0) {
+            continue; /* 跳过死亡角色 */
+        }
         
-        /* 检查每个单位是否活跃 */
-        if (data->sprites[row].loaded && data->sprites[row].icon_id > 0) {
+        /* 检查活跃状态位掩码 (offset+26) */
+        if (data->char_data[i].active_mask & 0x01) {
             /* 检查是否已移动 */
-            if (!data->char_moved[row]) {
+            if (!data->char_moved[i]) {
                 if (out_ids) {
-                    out_ids[count] = row;
+                    out_ids[count] = i;
                 }
                 ++count;
             }

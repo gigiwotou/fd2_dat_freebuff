@@ -50,8 +50,10 @@ void state_continue_enter(fd2_game_t* game) {
             data->char_positions[i][0] = char_data[0];
             data->char_positions[i][1] = char_data[1];
             data->char_icons[i] = char_data[7];
-            fprintf(stderr, "  char[%d]: x=%d, y=%d, icon_id=%d\n",
-                   i, char_data[0], char_data[1], char_data[7]);
+            /* Copy full 80-byte char data for battle state */
+            memcpy(game->save_char_full_data[i], char_data, BATTLE_SAVE_CHAR_DATA_SIZE);
+            fprintf(stderr, "  char[%d]: x=%d, y=%d, icon_id=%d, death_flag=%d, active_mask=0x%02X\n",
+                   i, char_data[0], char_data[1], char_data[7], char_data[39], char_data[26]);
         }
     } else {
         data->num_fighters = 0;
