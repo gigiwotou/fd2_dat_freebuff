@@ -129,8 +129,10 @@ void state_battle_enter(fd2_game_t* game) {
                 data->char_data[i].tile_y = char_pos->y;
                 data->char_data[i].portrait_id = char_pos->portrait_id;
                 data->char_data[i].icon_id = char_pos->portrait_id;
-                data->char_data[i].active_mask = 0x01; /* Default active */
-                data->char_data[i].death_flag = 0; /* Default alive for map */
+                /* IDA sub_1C269: offset+26位掩码判断活跃角色
+                   每行8个角色，5行共40个，每位=1表示活跃 */
+                data->char_data[i].active_mask = 0x01; /* 角色i活跃 */
+                data->char_data[i].active_byte = 0x80; /* offset+5: bit7=1活跃 */
             }
         }
 
@@ -144,17 +146,6 @@ void state_battle_enter(fd2_game_t* game) {
                game->from_save ? "from SAVE" : "from FDFIELD.DAT");
 
         for (int i = 0; i < data->total_char_count && data->sprite_count < num_sprites; i++) {
-            /* Check active status - based on IDA sub_19DF7 (0x19e98-0x19ea4):
-             *   byte[eax+5] & 1  != 0 => skip (bit0=1 means moved/inactive)
-             *   byte[eax+5] & 0x80 == 0 => skip (bit7=0 means dead/inactive)
-             * Only active when: (active_byte & 1) == 0 && (active_byte & 0x80) != 0 */
-            uint8_t ab = data->char_data[i].active_byte;
-            if ((ab & 1) != 0 || (ab & 0x80) == 0) {
-                printf("  char[%d]: INACTIVE (active_byte=0x%02X, bit0=%d, bit7=%d), skipping sprite\n",
-                       i, ab, ab & 1, (ab >> 7) & 1);
-                continue;
-            }
-
             int tile_x = data->char_data[i].tile_x;
             int tile_y = data->char_data[i].tile_y;
             int icon_id = data->char_data[i].icon_id;
