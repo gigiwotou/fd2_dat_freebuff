@@ -77,10 +77,30 @@ typedef struct {
     int selected_char_idx;
     int cursor_char_frame_id;
 
-    /* Terrain info display - based on IDA sub_126F7 */
+    /* Terraininfo display - based on IDA sub_126F7 */
     const u8* terrain_info_data;
     u32 terrain_info_data_size;
     u8 terrain_info_buffer[TERRAIN_INFO_WIDTH * TERRAIN_INFO_HEIGHT];
+
+    /* Player turn state - based on IDA sub_1CFF0, sub_1D51D */
+    int current_char_idx;          /* n2_3: 当前选择的角色索引 */
+    int active_char_count;         /* 活跃角色数量 */
+    int active_char_ids[40];       /* 活跃角色ID列表 (5行x8列=40) */
+    bool char_moved[64];          /* 角色是否已移动标记 */
+
+    /* Movement range state - based on IDA sub_14818 */
+    int move_range;                /* 移动力 */
+    int move_start_x;              /* 移动起始x */
+    int move_start_y;              /* 移动起始y */
+    u8* move_range_data;           /* 移动范围标记数据 */
+
+    /* Menu state - based on IDA sub_18D8C, sub_177FC */
+    int menu_selected;             /* 当前菜单选择 (0=攻击,1=道具,2=休息,3=魔法) */
+    bool menu_visible;             /* 菜单是否可见 */
+    int menu_options[4];           /* 菜单选项可用性 */
+
+    /* Turn phase - 回合阶段 */
+    int turn_phase;                /* 0=选择角色,1=显示移动范围,2=选择移动目标,3=显示菜单,4=执行功能 */
 } state_battle_data_t;
 
 /* Character query - based on IDA sub_12C0D */
@@ -112,6 +132,19 @@ int decode_rle_image(const u8* src, u8* dst, int dst_stride, int width, int heig
 int load_cursor_image(fd2_game_t* game, state_battle_data_t* data);
 void battle_render_cursor(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
 void battle_render_debug_grid(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
+
+/* Player turn logic - based on IDA analysis */
+void battle_turn_init(state_battle_data_t* data);
+void battle_turn_cleanup(state_battle_data_t* data);
+int battle_get_active_chars(state_battle_data_t* data, int* out_ids, int max_ids);
+int battle_char_selection(state_battle_data_t* data, fd2_game_t* game);
+int battle_calc_move_range(state_battle_data_t* data, int start_x, int start_y, int move_power);
+int battle_select_move_target(state_battle_data_t* data, fd2_game_t* game, int mode, int* out_x, int* out_y);
+int battle_menu_selection(state_battle_data_t* data, fd2_game_t* game, int* menu_state);
+int battle_action_menu(state_battle_data_t* data, fd2_game_t* game);
+void battle_render_char_list(state_battle_data_t* data, fd2_game_t* game);
+void battle_render_menu(state_battle_data_t* data, fd2_game_t* game, int* menu_state);
+void battle_highlight_menu_option(state_battle_data_t* data, int option_idx);
 
 /* Battle state */
 void state_battle_enter(fd2_game_t* game);

@@ -44,6 +44,9 @@ void state_battle_enter(fd2_game_t* game) {
     data->terrain_info_data_size = 0;
     memset(data->terrain_info_buffer, 0, sizeof(data->terrain_info_buffer));
 
+    /* Initialize player turn state */
+    battle_turn_init(data);
+
     /* Initialize resource pointers to NULL */
     data->fdother_resource_5 = NULL;
     data->fdother_resource_5_size = 0;
@@ -357,6 +360,9 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
 void state_battle_exit(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)game->state_data;
     if (data) {
+        /* Free player turn resources */
+        battle_turn_cleanup(data);
+        
         /* Free resources loaded via sub_111BA */
         if (data->fdother_resource_5) {
             free(data->fdother_resource_5);
