@@ -179,6 +179,17 @@ int load_cursor_image(fd2_game_t* game, state_battle_data_t* data);
 void battle_render_cursor(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
 void battle_render_debug_grid(state_battle_data_t* data, u8* screen, int screen_w, int screen_h);
 
+/* Battle entry and main loop - based on IDA sub_18D8C, sub_1CFF0 */
+int battle_entry(fd2_game_t* game, int n17, int* dst, int a6);
+int battle_main_loop(fd2_game_t* game, int n19, int n17);
+int battle_attack_handler(fd2_game_t* game, int n6, int n6_3, u8* a7);
+
+/* Active character list - based on IDA sub_1C269 */
+int battle_get_active_char_ids(state_battle_data_t* data, int* out_ids, int max_ids);
+
+/* Movement range and display list - based on IDA sub_14818 */
+int battle_build_display_list(state_battle_data_t* data, int n16, int n19, int n2, u8* out_list);
+
 /* Player turn logic - based on IDA analysis */
 void battle_turn_init(state_battle_data_t* data);
 void battle_turn_cleanup(state_battle_data_t* data);
