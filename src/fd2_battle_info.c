@@ -2,9 +2,23 @@
  * FD2 Battle Info Panel
  * 
  * 基于 IDA Pro MCP 分析:
- * - sub_12D7B: 显示角色信息 (调用 sub_12CEA)
- * - sub_12CEA: 定位并显示角色信息面板
- * - sub_173E7/sub_1741C: 菜单/信息UI渲染
+ * 
+ * 渲染架构 (sub_1741C, sub_11CAC, sub_12CEA, sub_12D7B):
+ * 1. 渲染到地图缓冲区: dword_53A49 + 32904 (0x8088)
+ * 2. 使用 sub_11EEE 渲染文字 (x=456, y=13)
+ * 3. 使用 sub_127A9 渲染地形信息
+ * 4. 使用 sub_1ACF3 绘制边框 (使用FDSHAP.DAT精灵)
+ * 5. 使用 sub_11EB0 拷贝到VGA屏幕 (0xA0504)
+ *    - src_buffer: dword_53A49 + 32904
+ *    - src_pitch: 456
+ *    - dst_buffer: 0xA0504 (VGA)
+ *    - dst_pitch: 320
+ *    - 渲染区域: 312 x 192
+ * 
+ * 资源使用:
+ * - FDTXT.DAT: 字体字形资源
+ * - FDSHAP.DAT: 精灵/边框资源
+ * - FDOTHER.DAT: 菜单/UI背景资源
  */
 
 #include "fd2_game.h"
@@ -12,14 +26,27 @@
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
-/* 信息面板位置 */
-#define INFO_PANEL_X    180
-#define INFO_PANEL_Y    10
-#define INFO_PANEL_W    140
-#define INFO_PANEL_H    100
+/* 信息面板位置和尺寸 (基于IDA sub_11EB0参数: w=312, h=192) */
+/* 映射到320x200屏幕，面板在右侧 */
+#define INFO_PANEL_X    160
+#define INFO_PANEL_Y    8
+#define INFO_PANEL_W    152
+#define INFO_PANEL_H    112
 
-/* 文字颜色 */
+/* 内部渲染缓冲区尺寸 (模拟原游戏的456步长缓冲区) */
+#define BUF_PITCH       456
+#define BUF_W           312
+#define BUF_H           192
+
+/* 字体参数 */
+#define FONT_CHAR_W     8
+#define FONT_CHAR_H     12
+#define FONT_LINE_H     14
+
+/* 颜色索引 (游戏调色板) */
+#define COLOR_BLACK     0
 #define COLOR_WHITE     63
 #define COLOR_YELLOW    62
 #define COLOR_GREEN     48
@@ -27,217 +54,378 @@
 #define COLOR_BLUE      44
 #define COLOR_CYAN      47
 #define COLOR_GRAY      15
-#define COLOR_BLACK     0
-
-/* 字体大小 */
-#define FONT_W          8
-#define FONT_H          8
+#define COLOR_ORANGE    200
 
 /* ========================================================================
- * 简易字体渲染 - 使用 FD2 的字体系统
+ * 帧缓冲拷贝 - 对应 IDA sub_11EB0
+ * 从源缓冲区逐行拷贝到目标屏幕
+ * for(i=0; i<h; i++) { memmove(dst, src, w); dst+=dst_pitch; src+=src_pitch; }
  * ======================================================================== */
-static void draw_char(u8* screen, int screen_w, int screen_h, int x, int y, int c, u8 color) {
-    if (x < 0 || y < 0 || x >= screen_w || y >= screen_h) return;
+static void fb_copy(u8* dst_screen, int dst_pitch,
+                    const u8* src_buffer, int src_pitch,
+                    int dst_x, int dst_y, int w, int h) {
+    if (!dst_screen || !src_buffer) return;
     
-    /* 使用简单的 8x8 字体点阵
-       这里使用一个简化的实现，只显示 ASCII 字符的基本形状 */
-    for (int row = 0; row < FONT_H; row++) {
-        for (int col = 0; col < FONT_W; col++) {
-            int px = x + col;
-            int py = y + row;
-            if (px >= 0 && px < screen_w && py >= 0 && py < screen_h) {
-                /* 简单的字符点阵，这里用填充代替实际字体 */
-                if (c >= 32 && c < 127) {
-                    screen[py * screen_w + px] = color;
+    for (int row = 0; row < h; row++) {
+        int sy = dst_y + row;
+        if (sy < 0 || sy >= FD2_SCREEN_H) continue;
+        
+        for (int col = 0; col < w; col++) {
+            int sx = dst_x + col;
+            if (sx < 0 || sx >= FD2_SCREEN_W) continue;
+            
+            u8 px = src_buffer[row * src_pitch + col];
+            if (px != 0) {
+                dst_screen[sy * FD2_SCREEN_W + sx] = px;
+            }
+        }
+    }
+}
+
+/* ========================================================================
+ * 简易 8x12 字体点阵 - 当 FDTXT.DAT 未加载时使用
+ * ======================================================================== */
+static const u8 font_8x12[95][12] = {
+    /* Space */ {0,0,0,0,0,0,0,0,0,0,0,0},
+    /* ! */ {0x00,0x18,0x3C,0x3C,0x3C,0x18,0x18,0x00,0x18,0x18,0x00,0x00},
+    /* " */ {0x00,0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    /* # */ {0x00,0x18,0x18,0x7E,0x3C,0x7E,0x3C,0x7E,0x18,0x18,0x00,0x00},
+    /* $ */ {0x18,0x3C,0x66,0x60,0x3C,0x06,0x06,0x66,0x3C,0x18,0x00,0x00},
+    /* % */ {0x00,0x66,0x6C,0x18,0x30,0x60,0x66,0x06,0x0C,0x66,0x00,0x00},
+    /* & */ {0x18,0x3C,0x66,0x3C,0x3C,0x36,0x66,0x66,0x3C,0x18,0x00,0x00},
+    /* ' */ {0x00,0x18,0x3C,0x3C,0x18,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    /* ( */ {0x00,0x18,0x3C,0x66,0x66,0x66,0x66,0x66,0x3C,0x18,0x00,0x00},
+    /* ) */ {0x00,0x66,0x3C,0x18,0x18,0x18,0x18,0x18,0x3C,0x66,0x00,0x00},
+    /* * */ {0x00,0x00,0x18,0x3C,0x7E,0x3C,0x18,0x00,0x00,0x00,0x00,0x00},
+    /* + */ {0x00,0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00,0x00,0x00,0x00},
+    /* , */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x18,0x3C,0x18,0x00,0x00},
+    /* - */ {0x00,0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    /* . */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00},
+    /* / */ {0x00,0x06,0x0C,0x18,0x30,0x60,0x60,0xC0,0xC0,0x00,0x00,0x00},
+    /* 0 */ {0x00,0x3C,0x66,0x66,0x6E,0x76,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* 1 */ {0x00,0x18,0x38,0x18,0x18,0x18,0x18,0x18,0x7E,0x00,0x00,0x00},
+    /* 2 */ {0x00,0x3C,0x66,0x06,0x0C,0x18,0x30,0x60,0x7E,0x00,0x00,0x00},
+    /* 3 */ {0x00,0x3C,0x66,0x06,0x1C,0x06,0x06,0x66,0x3C,0x00,0x00,0x00},
+    /* 4 */ {0x00,0x18,0x38,0x68,0x6C,0x66,0x7E,0x06,0x0F,0x00,0x00,0x00},
+    /* 5 */ {0x00,0x7E,0x60,0x60,0x7C,0x06,0x06,0x66,0x3C,0x00,0x00,0x00},
+    /* 6 */ {0x00,0x3C,0x60,0x60,0x7C,0x66,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* 7 */ {0x00,0x7E,0x06,0x0C,0x18,0x30,0x30,0x30,0x30,0x00,0x00,0x00},
+    /* 8 */ {0x00,0x3C,0x66,0x66,0x3C,0x66,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* 9 */ {0x00,0x3C,0x66,0x66,0x3E,0x06,0x06,0x66,0x3C,0x00,0x00,0x00},
+    /* : */ {0x00,0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
+    /* ; */ {0x00,0x00,0x18,0x18,0x00,0x00,0x18,0x3C,0x18,0x00,0x00,0x00},
+    /* < */ {0x00,0x06,0x0C,0x18,0x30,0x60,0x30,0x18,0x0C,0x06,0x00,0x00},
+    /* = */ {0x00,0x00,0x00,0x7E,0x00,0x00,0x7E,0x00,0x00,0x00,0x00,0x00},
+    /* > */ {0x00,0x60,0x30,0x18,0x0C,0x06,0x0C,0x18,0x30,0x60,0x00,0x00},
+    /* ? */ {0x00,0x3C,0x66,0x06,0x0C,0x18,0x18,0x00,0x18,0x18,0x00,0x00},
+    /* A */ {0x00,0x18,0x3C,0x66,0x66,0x7E,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* B */ {0x00,0x7C,0x66,0x66,0x7C,0x66,0x66,0x66,0x7C,0x00,0x00,0x00},
+    /* C */ {0x00,0x3C,0x66,0x60,0x60,0x60,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* D */ {0x00,0x78,0x6C,0x66,0x66,0x66,0x66,0x6C,0x78,0x00,0x00,0x00},
+    /* E */ {0x00,0x7E,0x60,0x60,0x7C,0x60,0x60,0x60,0x7E,0x00,0x00,0x00},
+    /* F */ {0x00,0x7E,0x60,0x60,0x7C,0x60,0x60,0x60,0x60,0x00,0x00,0x00},
+    /* G */ {0x00,0x3C,0x66,0x60,0x6E,0x66,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* H */ {0x00,0x66,0x66,0x66,0x7E,0x66,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* I */ {0x00,0x7E,0x18,0x18,0x18,0x18,0x18,0x18,0x7E,0x00,0x00,0x00},
+    /* J */ {0x00,0x06,0x06,0x06,0x06,0x06,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* K */ {0x00,0x66,0x6C,0x78,0x70,0x78,0x6C,0x66,0x66,0x00,0x00,0x00},
+    /* L */ {0x00,0x60,0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0x00,0x00,0x00},
+    /* M */ {0x00,0x63,0x77,0x7F,0x6B,0x63,0x63,0x63,0x63,0x00,0x00,0x00},
+    /* N */ {0x00,0x66,0x66,0x6E,0x7E,0x76,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* O */ {0x00,0x3C,0x66,0x66,0x66,0x66,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* P */ {0x00,0x7C,0x66,0x66,0x7C,0x60,0x60,0x60,0x60,0x00,0x00,0x00},
+    /* Q */ {0x00,0x3C,0x66,0x66,0x66,0x66,0x6E,0x6C,0x3E,0x00,0x00,0x00},
+    /* R */ {0x00,0x7C,0x66,0x66,0x7C,0x6C,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* S */ {0x00,0x3C,0x66,0x60,0x3C,0x06,0x06,0x66,0x3C,0x00,0x00,0x00},
+    /* T */ {0x00,0x7E,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x00,0x00,0x00},
+    /* U */ {0x00,0x66,0x66,0x66,0x66,0x66,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* V */ {0x00,0x66,0x66,0x66,0x66,0x66,0x3C,0x18,0x18,0x00,0x00,0x00},
+    /* W */ {0x00,0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0x63,0x00,0x00,0x00},
+    /* X */ {0x00,0x66,0x66,0x3C,0x18,0x3C,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* Y */ {0x00,0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0x18,0x00,0x00,0x00},
+    /* Z */ {0x00,0x7E,0x06,0x0C,0x18,0x30,0x60,0x60,0x7E,0x00,0x00,0x00},
+    /* a */ {0x00,0x00,0x00,0x3C,0x06,0x3E,0x66,0x66,0x3E,0x00,0x00,0x00},
+    /* b */ {0x00,0x60,0x60,0x7C,0x66,0x66,0x66,0x66,0x7C,0x00,0x00,0x00},
+    /* c */ {0x00,0x00,0x00,0x3C,0x66,0x60,0x60,0x66,0x3C,0x00,0x00,0x00},
+    /* d */ {0x00,0x06,0x06,0x3E,0x66,0x66,0x66,0x66,0x3E,0x00,0x00,0x00},
+    /* e */ {0x00,0x00,0x00,0x3C,0x66,0x7E,0x60,0x66,0x3C,0x00,0x00,0x00},
+    /* f */ {0x00,0x1C,0x36,0x30,0x7C,0x30,0x30,0x30,0x30,0x00,0x00,0x00},
+    /* g */ {0x00,0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x6C,0x00,0x00,0x00},
+    /* h */ {0x00,0x60,0x60,0x7C,0x66,0x66,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* i */ {0x00,0x18,0x00,0x38,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00},
+    /* j */ {0x00,0x06,0x00,0x06,0x06,0x06,0x06,0x06,0x66,0x3C,0x00,0x00},
+    /* k */ {0x00,0x60,0x60,0x6C,0x78,0x6C,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* l */ {0x00,0x38,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00},
+    /* m */ {0x00,0x00,0x00,0x76,0x6B,0x6B,0x63,0x63,0x63,0x00,0x00,0x00},
+    /* n */ {0x00,0x00,0x00,0x7C,0x66,0x66,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* o */ {0x00,0x00,0x00,0x3C,0x66,0x66,0x66,0x66,0x3C,0x00,0x00,0x00},
+    /* p */ {0x00,0x00,0x00,0x7C,0x66,0x66,0x7C,0x60,0x60,0x00,0x00,0x00},
+    /* q */ {0x00,0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x06,0x00,0x00,0x00},
+    /* r */ {0x00,0x00,0x00,0x7C,0x66,0x66,0x60,0x60,0x60,0x00,0x00,0x00},
+    /* s */ {0x00,0x00,0x00,0x3E,0x60,0x3C,0x06,0x7C,0x00,0x00,0x00,0x00},
+    /* t */ {0x00,0x30,0x30,0x7C,0x30,0x30,0x30,0x30,0x1C,0x00,0x00,0x00},
+    /* u */ {0x00,0x00,0x00,0x66,0x66,0x66,0x66,0x66,0x3E,0x00,0x00,0x00},
+    /* v */ {0x00,0x00,0x00,0x66,0x66,0x66,0x66,0x3C,0x18,0x00,0x00,0x00},
+    /* w */ {0x00,0x00,0x00,0x63,0x63,0x6B,0x7F,0x77,0x63,0x00,0x00,0x00},
+    /* x */ {0x00,0x00,0x00,0x66,0x66,0x3C,0x18,0x66,0x66,0x00,0x00,0x00},
+    /* y */ {0x00,0x00,0x00,0x66,0x66,0x66,0x3E,0x06,0x6C,0x00,0x00,0x00},
+    /* z */ {0x00,0x00,0x00,0x7E,0x0C,0x18,0x30,0x7E,0x00,0x00,0x00,0x00},
+    /* { */ {0x00,0x18,0x18,0x18,0x70,0x18,0x18,0x18,0x18,0x00,0x00,0x00},
+    /* | */ {0x00,0x18,0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x18,0x00,0x00},
+    /* } */ {0x00,0x66,0x66,0x66,0x0E,0x66,0x66,0x66,0x66,0x00,0x00,0x00},
+    /* ~ */ {0x00,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+};
+
+/* ========================================================================
+ * 在渲染缓冲区中绘制一个字符 (基于 sub_11EEE 的memmove循环逻辑)
+ * ======================================================================== */
+static void draw_char_to_buf(u8* buf, int buf_pitch, int x, int y, char c, u8 color) {
+    if (x < 0 || y < 0) return;
+    
+    int char_idx = c - 32;
+    if (char_idx < 0 || char_idx >= 95) return;
+    
+    const u8* glyph = font_8x12[char_idx];
+    
+    for (int row = 0; row < FONT_CHAR_H; row++) {
+        u8 bits = glyph[row];
+        for (int col = 0; col < FONT_CHAR_W; col++) {
+            int bx = x + col;
+            int by = y + row;
+            if (bx >= 0 && bx < BUF_W && by >= 0 && by < BUF_H) {
+                if (bits & (0x80 >> col)) {
+                    buf[by * buf_pitch + bx] = color;
                 }
             }
         }
     }
 }
 
-static void draw_string(u8* screen, int screen_w, int screen_h, int x, int y, const char* str, u8 color) {
-    if (!str || !screen) return;
+/* ========================================================================
+ * 在渲染缓冲区中绘制字符串 (对应 sub_11EEE)
+ * ======================================================================== */
+static void draw_string_to_buf(u8* buf, int buf_pitch, int x, int y,
+                                const char* str, u8 color) {
+    if (!str) return;
     
     int cx = x;
-    int cy = y;
     int len = strlen(str);
     
     for (int i = 0; i < len; i++) {
         char c = str[i];
-        if (c == '\n') {
-            cx = x;
-            cy += FONT_H;
-        } else if (c == '\t') {
-            cx += FONT_W * 4;
-        } else {
-            draw_char(screen, screen_w, screen_h, cx, cy, c, color);
-            cx += FONT_W;
+        if (c == ' ') {
+            cx += FONT_CHAR_W;
+        } else if (c >= 32 && c <= 126) {
+            draw_char_to_buf(buf, buf_pitch, cx, y, c, color);
+            cx += FONT_CHAR_W;
         }
     }
 }
 
-static void draw_rect(u8* screen, int screen_w, int screen_h, int x, int y, int w, int h, u8 color) {
+/* ========================================================================
+ * 在渲染缓冲区中绘制数字 (对应 sub_1875D 使用精灵31/42渲染数字)
+ * ======================================================================== */
+static void draw_number_to_buf(u8* buf, int buf_pitch, int x, int y,
+                                int num, u8 color) {
+    char buf_str[16];
+    snprintf(buf_str, sizeof(buf_str), "%d", num);
+    draw_string_to_buf(buf, buf_pitch, x, y, buf_str, color);
+}
+
+/* ========================================================================
+ * 在渲染缓冲区中绘制矩形背景 (对应 sub_1ACF3 的面板背景)
+ * ======================================================================== */
+static void draw_rect_to_buf(u8* buf, int buf_pitch, int x, int y,
+                              int w, int h, u8 color) {
     for (int row = 0; row < h; row++) {
         for (int col = 0; col < w; col++) {
-            int px = x + col;
-            int py = y + row;
-            if (px >= 0 && px < screen_w && py >= 0 && py < screen_h) {
-                screen[py * screen_w + px] = color;
+            int bx = x + col;
+            int by = y + row;
+            if (bx >= 0 && bx < BUF_W && by >= 0 && by < BUF_H) {
+                buf[by * buf_pitch + bx] = color;
             }
         }
     }
 }
 
-static void draw_rect_border(u8* screen, int screen_w, int screen_h, int x, int y, int w, int h, u8 color) {
-    /* Top border */
-    for (int i = 0; i < w; i++) {
-        int px = x + i;
-        if (px >= 0 && px < screen_w && y >= 0 && y < screen_h) {
-            screen[y * screen_w + px] = color;
-        }
+/* ========================================================================
+ * 在渲染缓冲区中绘制边框 (对应 sub_1ACF3 使用FDSHAP.DAT精灵绘制边框)
+ * ======================================================================== */
+static void draw_border_to_buf(u8* buf, int buf_pitch, int x, int y,
+                                int w, int h, u8 color) {
+    /* 上边框 */
+    for (int col = 0; col < w; col++) {
+        buf[y * buf_pitch + (x + col)] = color;
     }
-    /* Bottom border */
-    for (int i = 0; i < w; i++) {
-        int px = x + i;
-        int py = y + h - 1;
-        if (px >= 0 && px < screen_w && py >= 0 && py < screen_h) {
-            screen[py * screen_w + px] = color;
-        }
+    /* 下边框 */
+    for (int col = 0; col < w; col++) {
+        buf[(y + h - 1) * buf_pitch + (x + col)] = color;
     }
-    /* Left border */
-    for (int i = 0; i < h; i++) {
-        int py = y + i;
-        if (x >= 0 && x < screen_w && py >= 0 && py < screen_h) {
-            screen[py * screen_w + x] = color;
-        }
+    /* 左边框 */
+    for (int row = 0; row < h; row++) {
+        buf[(y + row) * buf_pitch + x] = color;
     }
-    /* Right border */
-    for (int i = 0; i < h; i++) {
-        int py = y + i;
-        int px = x + w - 1;
-        if (px >= 0 && px < screen_w && py >= 0 && py < screen_h) {
-            screen[py * screen_w + px] = color;
-        }
+    /* 右边框 */
+    for (int row = 0; row < h; row++) {
+        buf[(y + row) * buf_pitch + (x + w - 1)] = color;
     }
 }
 
-static void draw_filled_rect_with_border(u8* screen, int screen_w, int screen_h, int x, int y, int w, int h, u8 bg, u8 border) {
-    /* Background */
-    draw_rect(screen, screen_w, screen_h, x, y, w, h, bg);
-    /* Border */
-    draw_rect_border(screen, screen_w, screen_h, x, y, w, h, border);
+/* ========================================================================
+ * 从 FDSHAP.DAT 加载并使用精灵绘制边框
+ * 对应 sub_1ACF3 的逻辑
+ * ======================================================================== */
+static void draw_border_from_fdshap(u8* buf, int buf_pitch, int x, int y,
+                                     int w, int h, fd2_game_t* game) {
+    if (!game || !fd2_resources_is_loaded(&game->resources, FD2_DAT_FDSHAP)) return;
+    
+    /* FDSHAP.DAT 包含战场精灵
+     * 根据IDA: sub_1ACF3 使用 FDSHAP.DAT 渲染边框精灵
+     * 精灵索引通过 sub_12E38 获取
+     * 
+     * 这里尝试加载边框精灵资源 */
+    u32 sprite_size;
+    const u8* sprite_data = fd2_resources_get(&game->resources, FD2_DAT_FDSHAP, 0, &sprite_size);
+    if (!sprite_data || sprite_size < 4) return;
+    
+    int sw = sprite_data[0] | (sprite_data[1] << 8);
+    int sh = sprite_data[2] | (sprite_data[3] << 8);
+    
+    if (sw <= 0 || sh <= 0 || sw > 256 || sh > 256) return;
+    
+    /* 解压缩精灵 */
+    u8* pixels = (u8*)calloc(sw * sh, sizeof(u8));
+    if (!pixels) return;
+    
+    if (fd2_rle_decompress(sprite_data + 4, sprite_size - 4, pixels, sw, sh) == 0) {
+        /* 将精灵作为边框背景绘制 */
+        for (int row = 0; row < sh && row < h; row++) {
+            for (int col = 0; col < sw && col < w; col++) {
+                int bx = x + col;
+                int by = y + row;
+                if (bx >= 0 && bx < BUF_W && by >= 0 && by < BUF_H) {
+                    u8 p = pixels[row * sw + col];
+                    if (p != 0) {
+                        buf[by * buf_pitch + bx] = p;
+                    }
+                }
+            }
+        }
+    }
+    
+    free(pixels);
 }
 
 /* ========================================================================
  * battle_render_char_info - 渲染角色信息面板
  * 
- * 基于 IDA sub_12D7B -> sub_12CEA 的逻辑
- * 显示选中角色的:
- * - 名称/编号
+ * 基于 IDA sub_12D7B -> sub_12CEA -> sub_11CAC -> sub_1741C
+ * 
+ * 渲染流程:
+ * 1. 创建缓冲区 (模拟 dword_53A49 + 32904)
+ * 2. 填充黑色背景
+ * 3. 绘制边框 (使用FDSHAP.DAT精灵)
+ * 4. 渲染文字信息 (使用sub_11EEE风格的字体渲染)
+ * 5. 使用 sub_11EB0 风格的fb_copy将缓冲区拷贝到屏幕
+ * 
+ * 显示内容:
+ * - 角色编号/名称
+ * - 职业/类型
+ * - 等级
  * - HP (当前/最大)
  * - MP (当前/最大)
- * - 等级
- * - 职业/类型
- * - 位置
+ * - 位置 (tile_x, tile_y)
+ * - 状态 (ALIVE/DEAD/MOVED)
  * ======================================================================== */
 void battle_render_char_info(state_battle_data_t* data, fd2_game_t* game, int char_idx) {
     if (!data || !game || char_idx < 0 || char_idx >= data->total_char_count) {
         return;
     }
     
+    battle_char_data_t* ch = &data->char_data[char_idx];
     u8* screen = game->render.screen;
     if (!screen) return;
     
-    battle_char_data_t* ch = &data->char_data[char_idx];
+    /* 步骤1: 创建渲染缓冲区 (模拟原游戏的 456步长 缓冲区) */
+    u8* render_buf = (u8*)calloc(BUF_PITCH * BUF_H, sizeof(u8));
+    if (!render_buf) return;
     
-    /* 绘制背景面板 */
-    draw_filled_rect_with_border(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                                 INFO_PANEL_X, INFO_PANEL_Y, INFO_PANEL_W, INFO_PANEL_H,
-                                 COLOR_BLACK, COLOR_WHITE);
+    /* 步骤2: 填充黑色背景 */
+    draw_rect_to_buf(render_buf, BUF_PITCH, 0, 0, BUF_W, BUF_H, COLOR_BLACK);
     
-    /* 角色名称 */
-    char name_buf[64];
-    snprintf(name_buf, sizeof(name_buf), "Char #%d", char_idx);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 3,
-                name_buf, COLOR_YELLOW);
+    /* 步骤3: 绘制边框 - 尝试使用FDSHAP.DAT精灵 */
+    draw_border_from_fdshap(render_buf, BUF_PITCH, 2, 2, BUF_W - 4, BUF_H - 4, game);
     
-    /* 职业/类型 */
-    char type_buf[32];
-    const char* type_str = "Unknown";
-    if (ch->char_type == 0) type_str = "Ally";
-    else if (ch->char_type == 1) type_str = "Enemy";
+    /* 如果精灵未加载，使用简单边框 */
+    draw_border_to_buf(render_buf, BUF_PITCH, 2, 2, BUF_W - 4, BUF_H - 4, COLOR_WHITE);
+    
+    /* 步骤4: 渲染文字信息 (使用FDTXT.DAT风格的字体) */
+    int text_x = 8;
+    int text_y = 10;
+    
+    /* 角色编号 */
+    char idx_buf[16];
+    snprintf(idx_buf, sizeof(idx_buf), "No.%02d", char_idx);
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, idx_buf, COLOR_YELLOW);
+    text_y += FONT_LINE_H;
+    
+    /* 类型/职业 */
+    const char* type_str = "???";
+    if (ch->char_type == 0) type_str = "ALLY";
+    else if (ch->char_type == 1) type_str = "ENEMY";
     else if (ch->char_type == 2) type_str = "NPC";
-    else if (ch->char_type == 23) type_str = "Special";
-    else if (ch->char_type == 30) type_str = "Boss";
-    
-    snprintf(type_buf, sizeof(type_buf), "Type: %s", type_str);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 14,
-                type_buf, COLOR_CYAN);
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, type_str, COLOR_CYAN);
+    text_y += FONT_LINE_H;
     
     /* 等级 */
-    char level_buf[32];
-    snprintf(level_buf, sizeof(level_buf), "Lv: %d", ch->direction);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 25,
-                level_buf, COLOR_GREEN);
+    char lv_buf[16];
+    snprintf(lv_buf, sizeof(lv_buf), "Lv:%d", ch->direction);
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, lv_buf, COLOR_GREEN);
+    text_y += FONT_LINE_H;
     
     /* HP */
     char hp_buf[32];
-    /* 使用 icon_id 作为当前 HP, icon_id_alt 作为最大 HP 的近似值 */
-    int current_hp = ch->icon_id;
-    int max_hp = ch->icon_id_alt;
-    if (max_hp <= 0) max_hp = 100;
-    snprintf(hp_buf, sizeof(hp_buf), "HP: %d/%d", current_hp, max_hp);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 36,
-                hp_buf, COLOR_GREEN);
+    snprintf(hp_buf, sizeof(hp_buf), "HP:%d/%d", ch->icon_id,
+             ch->icon_id_alt > 0 ? ch->icon_id_alt : 100);
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, hp_buf, COLOR_GREEN);
+    text_y += FONT_LINE_H;
     
     /* MP */
     char mp_buf[32];
-    snprintf(mp_buf, sizeof(mp_buf), "MP: %d/%d", 
-             ch->portrait_id, ch->portrait_id > 0 ? ch->portrait_id * 2 : 50);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 47,
-                mp_buf, COLOR_BLUE);
+    snprintf(mp_buf, sizeof(mp_buf), "MP:%d/%d", ch->portrait_id,
+             ch->portrait_id > 0 ? ch->portrait_id * 2 : 50);
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, mp_buf, COLOR_BLUE);
+    text_y += FONT_LINE_H;
     
     /* 位置 */
     char pos_buf[32];
-    snprintf(pos_buf, sizeof(pos_buf), "Pos: (%d,%d)", ch->tile_x, ch->tile_y);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 58,
-                pos_buf, COLOR_GRAY);
+    snprintf(pos_buf, sizeof(pos_buf), "POS:(%d,%d)", ch->tile_x, ch->tile_y);
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, pos_buf, COLOR_GRAY);
+    text_y += FONT_LINE_H;
     
-    /* 状态标志 */
-    char status_buf[32];
+    /* 状态 */
+    const char* status_str = "ALIVE";
+    u8 status_color = COLOR_GREEN;
     if (ch->death_flag) {
-        snprintf(status_buf, sizeof(status_buf), "Status: DEAD");
-        draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                    INFO_PANEL_X + 5, INFO_PANEL_Y + 69,
-                    status_buf, COLOR_RED);
-    } else if ((ch->active_byte & 1) != 0) {
-        snprintf(status_buf, sizeof(status_buf), "Status: INACTIVE");
-        draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                    INFO_PANEL_X + 5, INFO_PANEL_Y + 69,
-                    status_buf, COLOR_GRAY);
-    } else {
-        snprintf(status_buf, sizeof(status_buf), "Status: ALIVE");
-        draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                    INFO_PANEL_X + 5, INFO_PANEL_Y + 69,
-                    status_buf, COLOR_GREEN);
+        status_str = "DEAD";
+        status_color = COLOR_RED;
+    } else if (ch->active_byte & 1) {
+        status_str = "MOVED";
+        status_color = COLOR_ORANGE;
     }
+    draw_string_to_buf(render_buf, BUF_PITCH, text_x, text_y, status_str, status_color);
     
-    /* 图标ID */
-    char icon_buf[32];
-    snprintf(icon_buf, sizeof(icon_buf), "Icon: %d", ch->icon_id);
-    draw_string(screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                INFO_PANEL_X + 5, INFO_PANEL_Y + 80,
-                icon_buf, COLOR_GRAY);
+    /* 步骤5: 使用 fb_copy (对应 sub_11EB0) 将缓冲区拷贝到屏幕 */
+    fb_copy(screen, FD2_SCREEN_W, render_buf, BUF_PITCH,
+            INFO_PANEL_X, INFO_PANEL_Y, INFO_PANEL_W, INFO_PANEL_H);
+    
+    /* 释放缓冲区 */
+    free(render_buf);
 }
 
 /* ========================================================================
  * battle_render_info_panel - 如果有选中角色则渲染信息面板
+ * 基于 sub_1CFF0 (战场主循环) 中的调用逻辑
  * ======================================================================== */
 void battle_render_info_panel(state_battle_data_t* data, fd2_game_t* game) {
     if (!data || !game) return;
