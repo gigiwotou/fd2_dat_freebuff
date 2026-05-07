@@ -155,20 +155,46 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     memset(n15, 0, 270080);
     
     /* 加载5个动画帧 */
+    printf("[OPENING] Loading FDOTHER indices 69-73...\n");
     for (int n5 = 0; n5 < 5; ++n5) {
         int index = n5 + 69;
-        int dst_y = (n5 < 4) ? (147 * n5) : (147 * 4);  /* 索引73从588开始 */
+        int dst_y = (n5 < 4) ? (147 * n5) : (147 * 4);
         
         u32 dat_size = 0;
         const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, index, &dat_size);
         
+        printf("[OPENING]   Index %d: dat_size=%u, dst_y=%d\n", index, dat_size, dst_y);
+        
         if (dat_data) {
-            fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
+            int ret = fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
+            printf("[OPENING]   Decompress result: %d\n", ret);
         }
+    }
+    
+    /* 检查n15缓冲区内容 (打印前16字节) */
+    {
+        u8* check = (u8*)n15;
+        printf("[OPENING] n15 buffer check (first 32 bytes at offset 0): ");
+        for (int i = 0; i < 32; i++) {
+            printf("%02x ", check[i]);
+        }
+        printf("\n");
+        
+        /* 检查offset 535*320处 */
+        check = (u8*)n15 + 535 * 320;
+        printf("[OPENING] n15 buffer check (at offset 535*320): ");
+        for (int i = 0; i < 32; i++) {
+            printf("%02x ", check[i]);
+        }
+        printf("\n");
     }
     
     /* 清屏为黑色 */
     fd2_render_fill_screen(&sm->render, 0);
+    
+    /* 设置亮度为63（正常亮度）- 对应原游戏 sub_11D40(0, 255, 64) */
+    fd2_render_set_brightness(&sm->render, 63);
+    
     fd2_render_present(&sm->render);
 
     printf("[OPENING] Starting main animation loop (535 frames)...\n");
@@ -235,19 +261,31 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         
         n12++;
         
-        /* 处理事件 */
-        SDL_PumpEvents();
-        
-        /* 检查按键 */
-        if (fd2_check_key_pressed()) {
-            goto opening_menu;
-        }
-        
+        /* 渲染并延迟 */
         fd2_render_present(&sm->render);
         fd2_delay(30);
         
         if (n535 == 0) {
             fd2_delay(1000);
+        }
+        
+        /* 检查按键跳过 (对应原游戏 sub_10620()) */
+        /* 只在延迟后检查，不消耗所有事件 */
+        {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    goto opening_menu;
+                }
+                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+                    /* 原游戏 sub_10620() 检查特定按键 */
+                    /* 这里我们只检查ESC和Enter跳过动画 */
+                    SDL_Keycode sym = event.key.keysym.sym;
+                    if (sym == SDLK_ESCAPE || sym == SDLK_RETURN || sym == SDLK_SPACE) {
+                        goto opening_menu;
+                    }
+                }
+            }
         }
         
         --n535;
