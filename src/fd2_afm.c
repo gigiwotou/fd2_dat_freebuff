@@ -58,15 +58,16 @@ static int cmd_copy_palette(fd2_afm_t* afm, const u8* data, u32 avail) {
  *             else → literal byte value
  */
 static int cmd_rle_palette(fd2_afm_t* afm, const u8* data, u32 avail) {
-    (void)avail;
     int written = 0;
     int consumed = 0;
 
     while (written < FD2_PALETTE_BYTES) {
+        if ((u32)consumed >= avail) break;
         u8 byte = data[consumed++];
         if ((byte & 0xC0) == 0xC0) {
             /* RLE run */
             int count = byte & 0x3F;
+            if ((u32)consumed >= avail) break;
             u8 value = data[consumed++];
             int fill = (written + count > FD2_PALETTE_BYTES)
                        ? (FD2_PALETTE_BYTES - written) : count;
@@ -74,7 +75,9 @@ static int cmd_rle_palette(fd2_afm_t* afm, const u8* data, u32 avail) {
             written += count;
         } else {
             /* Literal */
-            afm->palette[written++] = byte;
+            if (written < FD2_PALETTE_BYTES) {
+                afm->palette[written++] = byte;
+            }
         }
     }
 
@@ -134,15 +137,16 @@ static int cmd_copy_frame(fd2_afm_t* afm, const u8* data, u32 avail) {
  * Same RLE format as cmd 0x02 but targeting the frame buffer.
  */
 static int cmd_rle_frame(fd2_afm_t* afm, const u8* data, u32 avail) {
-    (void)avail;
     int written = 0;
     int consumed = 0;
 
     while (written < FD2_SCREEN_SIZE) {
+        if ((u32)consumed >= avail) break;
         u8 byte = data[consumed++];
         if ((byte & 0xC0) == 0xC0) {
             /* RLE run */
             int count = byte & 0x3F;
+            if ((u32)consumed >= avail) break;
             u8 value = data[consumed++];
             int fill = (written + count > FD2_SCREEN_SIZE)
                        ? (FD2_SCREEN_SIZE - written) : count;
@@ -150,7 +154,9 @@ static int cmd_rle_frame(fd2_afm_t* afm, const u8* data, u32 avail) {
             written += count;
         } else {
             /* Literal */
-            afm->frame[written++] = byte;
+            if (written < FD2_SCREEN_SIZE) {
+                afm->frame[written++] = byte;
+            }
         }
     }
 
@@ -253,6 +259,12 @@ static const afm_cmd_fn afm_commands[10] = {
     cmd_multi_copy_frame,   /* 0x09 */
 };
 
+/* Internal command dispatch function */
+int fd2_afm_dispatch_cmd(fd2_afm_t* afm, u8 cmd, const u8* data, u32 avail) {
+    if (cmd >= 10) return -1;
+    return afm_commands[cmd](afm, data, avail);
+}
+
 /* ========================================================================
  * Frame Dispatch (sub_36FF4)
  *
@@ -279,6 +291,12 @@ static int dispatch_frame(fd2_afm_t* afm, u16 param, const u8* data, u32 data_si
         int consumed = afm_commands[cmd](afm, ptr, (u32)(end - ptr));
         if (consumed < 0) {
             return -1;
+        }
+        /* 确保consumed不会超出边界 */
+        if (consumed > (end - ptr)) {
+            fprintf(stderr, "fd2_afm: cmd %u consumed %d bytes but only %ld available\n", 
+                    cmd, consumed, (long)(end - ptr));
+            consumed = (int)(end - ptr);
         }
         ptr += consumed;
     }
@@ -442,69 +460,104 @@ int fd2_afm_play(int anim_index, int frame_delay, int check_input,
     memset(frame_buf, 0, FD2_SCREEN_SIZE);
     memset(palette_buf, 0, 768);
 
-    /* 3. 加载ANI.DAT资源 */
-    if (!fd2_resources_is_loaded(resources, FD2_DAT_ANI)) {
-        if (fd2_resources_load_dat(resources, FD2_DAT_ANI) != 0) {
-            fprintf(stderr, "fd2_afm_play: Failed to load ANI.DAT\n");
-            free(palette_buf);
-            free(frame_buf);
-            return -1;
-        }
-    }
-
-    const fd2_dat_t* ani_dat = fd2_resources_get_dat(resources, FD2_DAT_ANI);
-    if (!ani_dat) {
-        fprintf(stderr, "fd2_afm_play: ANI.DAT not available\n");
+    /* 3. 构建ANI.DAT路径 */
+    const char* data_dir = resources->data_dir;
+    char ani_path[512];
+    snprintf(ani_path, sizeof(ani_path), "%s/ANI.DAT", data_dir);
+    
+    /* 4. fopen("ANI.DAT", "rb") */
+    FILE* fp = fopen(ani_path, "rb");
+    if (!fp) {
+        fprintf(stderr, "fd2_afm_play: Failed to open %s\n", ani_path);
         free(palette_buf);
         free(frame_buf);
         return -1;
     }
 
-    /* 4. 获取动画资源 (原游戏通过fseek定位到4*anim_index+6) */
-    /* ANI.DAT索引表: 前6字节是头部, 然后每个索引4字节偏移 */
-    u32 resource_size = 0;
-    const u8* resource_data = fd2_resources_get(resources, FD2_DAT_ANI, anim_index, &resource_size);
-    if (!resource_data || resource_size < FD2_AFM_HEADER_SIZE) {
-        fprintf(stderr, "fd2_afm_play: Invalid ANI.DAT resource %d (size=%u)\n",
-                anim_index, resource_size);
-        free(palette_buf);
-        free(frame_buf);
-        return -1;
-    }
-
-    /* 5. 解析AFM头 (对应原游戏 sub_373CA读取173字节) */
-    u16 total_frames = (u16)(resource_data[FD2_AFM_FRAMES_OFF])
-                     | (u16)(resource_data[FD2_AFM_FRAMES_OFF + 1] << 8);
-
-    printf("[AFM] Playing animation %d, %d frames\n", anim_index, total_frames);
-
-    /* 6. 如果anim_index==1, 加载FDOTHER.DAT索引78 (原游戏逻辑) */
-    const u8* fdother_78 = NULL;
+    /* 5. 如果anim_index==1, 加载FDOTHER.DAT索引78 (原游戏逻辑) */
+    u8* fdother_78 = NULL;
     if (anim_index == 1) {
-        u32 s78_size = 0;
-        fdother_78 = fd2_resources_get(resources, FD2_DAT_FDOTHER, 78, &s78_size);
+        fdother_78 = (u8*)fd2_dat_load_resource(ani_path, NULL, 78);
         /* TODO: sub_25A96(fdother_78, 0, 1) - 可能需要额外处理 */
     }
 
-    /* 7. 播放循环 (对应原游戏 for i=0 to v15) */
-    fd2_afm_t afm;
-    fd2_afm_init(&afm);
+    /* 6. fseek(_rb_, 4*a5 + 6, 0) - 定位到动画索引 */
+    fseek(fp, 4 * anim_index + 6, SEEK_SET);
 
-    if (fd2_afm_open(&afm, resource_data, resource_size) != 0) {
-        fprintf(stderr, "fd2_afm_play: Failed to open AFM animation\n");
+    /* 7. sub_373CA(v8, 1u, 8, _rb_) - 读取8字节 (动画偏移) */
+    u8 index_data[8];
+    if (fread(index_data, 1, 8, fp) != 8) {
+        fprintf(stderr, "fd2_afm_play: Failed to read animation index\n");
+        fclose(fp);
         free(palette_buf);
         free(frame_buf);
         return -1;
     }
 
+    /* 8. fseek(_rb_, *(DWORD*)v8, 0) - 定位到动画数据 */
+    u32 anim_offset = index_data[0] | (index_data[1] << 8) | 
+                      (index_data[2] << 16) | (index_data[3] << 24);
+    fseek(fp, anim_offset, SEEK_SET);
+
+    /* 9. sub_373CA(v8, 1u, 173, _rb_) - 读取173字节头 */
+    u8 afm_header[173];
+    if (fread(afm_header, 1, 173, fp) != 173) {
+        fprintf(stderr, "fd2_afm_play: Failed to read AFM header\n");
+        fclose(fp);
+        free(palette_buf);
+        free(frame_buf);
+        return -1;
+    }
+
+    /* 10. v15 = *(WORD*)(v8 + 165) - 获取帧数 */
+    u16 total_frames = afm_header[165] | (afm_header[166] << 8);
+
+    printf("[AFM] Playing animation %d from offset 0x%x, %d frames\n", 
+           anim_index, anim_offset, total_frames);
+    fflush(stdout);
+
+    /* 11. 播放循环 */
     int interrupted = 0;
-    Uint32 last_frame_time = SDL_GetTicks();
 
     for (u16 i = 0; i < total_frames; i++) {
-        /* 解码当前帧 */
-        if (fd2_afm_decode_next_frame(&afm) != 0) {
-            fprintf(stderr, "fd2_afm_play: Frame %d decode failed\n", i);
+        /* sub_373CA(v12, 1u, 8, _rb_) - 读取8字节帧头 */
+        u8 frame_header[8];
+        if (fread(frame_header, 1, 8, fp) != 8) {
+            fprintf(stderr, "fd2_afm_play: Failed to read frame %d header\n", i);
             break;
+        }
+
+        u16 frame_size = frame_header[0] | (frame_header[1] << 8);
+        u16 frame_param = frame_header[2] | (frame_header[3] << 8);
+
+        /* sub_373CA(v8, 1u, v12[0], _rb_) - 读取帧数据 */
+        if (frame_size > FD2_SCREEN_SIZE) {
+            fprintf(stderr, "fd2_afm_play: Frame %d too large (%u bytes)\n", i, frame_size);
+            break;
+        }
+        if (fread(frame_buf, 1, frame_size, fp) != frame_size) {
+            fprintf(stderr, "fd2_afm_play: Failed to read frame %d data\n", i);
+            break;
+        }
+
+        /* sub_36FF4(v12[1], v8) - 分发帧命令 */
+        fd2_afm_t afm;
+        fd2_afm_init(&afm);
+        /* 注意: dispatch_frame需要afm上下文，但原始代码直接操作缓冲区 */
+        /* 我们需要手动执行帧命令 */
+        const u8* ptr = frame_buf;
+        const u8* end = frame_buf + frame_size;
+        
+        for (u16 j = 0; j < frame_param; j++) {
+            if (ptr >= end) break;
+            u8 cmd = *ptr++;
+            if (cmd >= 10) break;
+            
+            /* 执行命令 - 这里需要实现命令分发 */
+            /* 由于afm_commands是静态的，我们需要在外部调用 */
+            int consumed = fd2_afm_dispatch_cmd(&afm, cmd, ptr, (u32)(end - ptr));
+            if (consumed < 0) break;
+            ptr += consumed;
         }
 
         /* 渲染到屏幕 (对应原游戏 sub_4E381) */
@@ -542,13 +595,15 @@ int fd2_afm_play(int anim_index, int frame_delay, int check_input,
     }
 
 cleanup:
-    /* 8. 释放资源 */
+    /* 12. 释放资源 */
+    fclose(fp);
     free(palette_buf);
     free(frame_buf);
 
     /* 如果anim_index==1, 释放FDOTHER.DAT (对应原游戏逻辑) */
     if (anim_index == 1 && fdother_78) {
         /* TODO: sub_25A96(fdother_78, -1, 1); free(fdother_78); */
+        free(fdother_78);
     }
 
     return interrupted ? 1 : 0;

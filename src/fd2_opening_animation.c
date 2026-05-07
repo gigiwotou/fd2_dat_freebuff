@@ -145,177 +145,111 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     /*   sub_4E98D(..., 0, 147*n5, n15, 320, -1); */
     /* } */
     
-    printf("[OPENING] Loading animation frames (FDOTHER indices 69-73)...\n");
-    
-    /* 分配动画缓冲区 (235200字节 = 320*147*5) */
-    /* 原游戏: n15 = malloc(0x396C0) = 235200字节 */
-    printf("[OPENING] Allocating animation buffer (235200 bytes)...\n");
-    fflush(stdout);
-    void* n15 = malloc(235200);
+    /* 分配动画缓冲区 (320*147*4 + 320*200 = 206080 + 64000 = 270080字节) */
+    /* 索引69-72是320x147，索引73是320x200 */
+    void* n15 = malloc(270080);
     if (!n15) {
         printf("[OPENING] Failed to allocate animation buffer\n");
-        fflush(stdout);
         return 0;
     }
-    memset(n15, 0, 235200);
-    
-    printf("[OPENING] Animation buffer allocated at %p\n", n15);
-    fflush(stdout);
+    memset(n15, 0, 270080);
     
     /* 加载5个动画帧 */
     for (int n5 = 0; n5 < 5; ++n5) {
-        int index = n5 + 69;  /* 索引69-73 */
-        int dst_y = 147 * n5;  /* 目标Y偏移 */
+        int index = n5 + 69;
+        int dst_y = (n5 < 4) ? (147 * n5) : (147 * 4);  /* 索引73从588开始 */
         
-        printf("[OPENING] Loading FDOTHER index %d to y=%d...\n", index, dst_y);
-        fflush(stdout);
-        
-        /* 从资源管理器获取数据 */
         u32 dat_size = 0;
         const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, index, &dat_size);
         
         if (dat_data) {
-            /* sub_4E98D: RLE解压缩渲染到n15缓冲区 */
-            /* 每帧图像最大尺寸320x147 */
-            /* 参数: dst_y = 147*n5, stride = 320, palette_offset = -1 */
-            int ret = fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
-            printf("[OPENING] Decompress result: %d (dat_size=%u)\n", ret, dat_size);
-            fflush(stdout);
-        } else {
-            printf("[OPENING] Failed to load FDOTHER index %d\n", index);
-            fflush(stdout);
+            fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
         }
     }
     
-    /* sub_4E381() - 刷新屏幕 */
-    printf("[OPENING] Animation frames loaded, presenting screen...\n");
-    fflush(stdout);
-    
     /* 清屏为黑色 */
     fd2_render_fill_screen(&sm->render, 0);
-    
-    printf("[OPENING] Screen cleared, calling present...\n");
-    fflush(stdout);
     fd2_render_present(&sm->render);
-    printf("[OPENING] Screen presented, starting animation loop...\n");
+
+    printf("[OPENING] Starting main animation loop (535 frames)...\n");
     fflush(stdout);
 
     /* ====================================================================
      * 阶段2: 主动画循环 (n535: 535→0)
      * 对应原游戏 for (n535=535; ; --n535) 循环
      * ==================================================================== */
-    printf("[OPENING] Starting main animation loop (535 frames)...\n");
-    
+    /* 阶段2: 主动画循环 (n535: 535→0) */
     int n535 = FD2_ANIM_FRAME_START;
-    int v33 = 0;  /* 时间点索引 */
-    int n12 = 12; /* 时间点计数器 */
+    int v33 = 0;
+    int n12 = 0;
 
     while (1) {
         if (n535 < 0) {
-            /* 动画播放完毕，进入菜单阶段 */
-            printf("[OPENING] Animation loop completed, entering menu\n");
+            printf("[OPENING] Animation loop finished, entering menu\n");
+            fflush(stdout);
             goto opening_menu;
         }
         
-        /* 每50帧打印一次进度 */
-        if (n535 % 50 == 0) {
-            printf("[OPENING] Animation frame: %d\n", n535);
+        if (n535 == 535 || n535 == 400 || n535 == 300 || n535 == 200 || n535 == 100 || n535 == 50 || n535 == 10) {
+            printf("[OPENING] Frame: %d\n", n535);
+            fflush(stdout);
         }
         
-        /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
-        /* 垂直滚动blit: 从n15缓冲区复制到屏幕 */
+        /* 垂直滚动blit */
         {
             int src_offset = n535 * 320;
-            int screen_size = 320 * 200;
             
-            if (src_offset < screen_size) {
-                /* sub_11EB0本质是memmove循环 */
-                /* sub_11EB0(dst, stride, src, arg4, arg5, arg6, arg7, arg8, arg9, count) */
-                /* 实际调用: sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
-                /* 复制200行，每行320字节，dst步长320，src步长320 */
-                
+            if (src_offset < 270080) {
                 u8* src = (u8*)n15 + src_offset;
                 u8* dst = sm->render.screen;
                 
                 for (int row = 0; row < 200; ++row) {
-                    if (src_offset + row * 320 < 235200) {
+                    if (src_offset + row * 320 < 270080) {
                         memcpy(dst, src, 320);
-                        dst += 320;
-                        src += 320;
                     }
+                    dst += 320;
+                    src += 320;
                 }
             }
         }
         
-        if (n535 == FD2_ANIM_FRAME_START) {
-            /* sub_1F525() - 首次淡入 */
-            printf("[OPENING] First frame, fade in\n");
-        }
-        
         /* 关键帧事件触发 */
         switch (n535) {
-            case FD2_ANIM_FRAME_MID_0:  /* 330 */
-                /* sub_1F882() */
-                /* sub_1F81E(4, 90, 99) */
-                /* sub_1F81E(5, 50, 0) */
-                printf("[OPENING] Key frame 330 - animation event 0\n");
-                /* TODO: 加载并渲染对应资源 */
-                goto render_frame;
-                
-            case FD2_ANIM_FRAME_MID_1:  /* 210 */
-                /* sub_1F882() */
-                /* sub_1F81E(6, 90, 99) */
-                /* sub_1F81E(7, 50, 0) */
-                printf("[OPENING] Key frame 210 - animation event 1\n");
-                goto render_frame;
-                
-            case FD2_ANIM_FRAME_MID_2:  /* 110 */
-                /* sub_1F882() */
-                /* sub_1F81E(8, 90, 99) */
-                printf("[OPENING] Key frame 110 - animation event 2\n");
-                goto render_frame;
-                
-            case FD2_ANIM_FRAME_END:    /* 10 */
-                /* sub_1F73F(75, 76, n15, 10) */
-                printf("[OPENING] Key frame 10 - animation event 3\n");
+            case 450:
+            case 330:
+            case 210:
+            case 110:
+            case 25:
+            case 10:
                 break;
         }
         
-        /* 检查是否到达时间点 */
+        /* 检查时间点 */
         if (v33 < FD2_OPENING_TIME_COUNT && n535 == g_opening_time_points[v33]) {
             n12 = 0;
-            /* sub_25A96(..., 0, 1) - 播放音效 */
-            /* FDOTHER_DAT = sub_111BA(..., 102) */
-            /* sub_11D40(0, 255, 0) */
-            printf("[OPENING] Time point reached: %d\n", n535);
             v33++;
         }
         
         if (n12 == 11) {
-            /* FDOTHER_DAT = sub_111BA(..., 101) */
-            /* sub_11D40(0, 255, 0) */
-            printf("[OPENING] Time counter reached 11\n");
         }
         
         n12++;
         
-        /* 处理SDL事件防止窗口无响应 */
+        /* 处理事件 */
         SDL_PumpEvents();
         
-        fd2_delay(30);  /* delay(30) */
-        
-        if (n535 == 0) {
-            fd2_delay(1000);  /* delay(1000) */
-        }
-        
-        /* sub_10620() - 检查按键跳过 */
+        /* 检查按键 */
         if (fd2_check_key_pressed()) {
-            printf("[OPENING] Animation skipped by user\n");
             goto opening_menu;
         }
         
-render_frame:
         fd2_render_present(&sm->render);
+        fd2_delay(30);
+        
+        if (n535 == 0) {
+            fd2_delay(1000);
+        }
+        
         --n535;
     }
 
@@ -397,15 +331,16 @@ opening_menu:
     int n2_2 = 0;  /* 当前选中项 */
     int v27 = 0;   /* 选择标志 */
     
+    printf("[OPENING] Waiting for menu input...\n");
+    fflush(stdout);
+    
     while (!v27) {
-        /* sub_1FF79(_FDOTHER.DAT__2, n2_2, n2_1) - 更新菜单高亮 */
-        
-        /* int386(22, &n3, &n3) - 读取键盘 */
+        /* 处理SDL事件 */
         SDL_Event event;
-        while (SDL_WaitEvent(&event)) {
+        while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 v27 = 1;
-                n2_2 = 255;  /* 退出 */
+                n2_2 = 255;
                 break;
             }
             
@@ -415,7 +350,6 @@ opening_menu:
                 
                 if (hi_byte == 72 || lo_byte == 72) {
                     /* 上箭头 - 向上移动 */
-                    /* sub_25A96(..., 2, 1) - 播放音效 */
                     int n2_3 = n2_1 - 1;
                     if (n2_2) {
                         --n2_2;
@@ -423,11 +357,10 @@ opening_menu:
                         n2_2 = n2_3;
                     }
                     printf("[OPENING] Menu select: %d (up)\n", n2_2);
-                    break;
+                    fflush(stdout);
                 }
                 else if (hi_byte == 80 || lo_byte == 80) {
                     /* 下箭头 - 向下移动 */
-                    /* sub_25A96(..., 2, 1) - 播放音效 */
                     int n2_3 = n2_1 - 1;
                     if (n2_2 == n2_3) {
                         n2_2 = 0;
@@ -435,18 +368,25 @@ opening_menu:
                         ++n2_2;
                     }
                     printf("[OPENING] Menu select: %d (down)\n", n2_2);
-                    break;
+                    fflush(stdout);
                 }
                 else if (lo_byte == 13 || lo_byte == 32 || 
-                         hi_byte == 224 || hi_byte == 82) {
-                    /* Enter/Space/Insert/扩展键 - 确认 */
-                    /* sub_25A96(..., 1, 1) - 播放音效 */
+                         lo_byte == 27 || hi_byte == 82) {
+                    /* Enter/Space/ESC/Insert - 确认或退出 */
+                    if (lo_byte == 27) {
+                        /* ESC - 退出 */
+                        n2_2 = 255;
+                    }
                     v27 = 1;
                     printf("[OPENING] Menu confirmed: %d\n", n2_2);
-                    break;
+                    fflush(stdout);
                 }
             }
         }
+        
+        /* 渲染菜单 */
+        fd2_render_present(&sm->render);
+        fd2_delay(16);
     }
     
     /* 11. 闪烁效果 (4次) */
