@@ -154,6 +154,14 @@ void state_battle_enter(fd2_game_t* game) {
                 continue;
             }
 
+            /* IDA sub_14818: 检查 offset+5 的 bit0
+               (v19[5] & 1) == 0 才显示在战场上
+               bit0 == 1 表示死亡角色，不显示 */
+            if ((data->char_data[i].active_byte & 1) != 0) {
+                printf("  char[%d]: SKIP (dead, offset+5=0x%02X bit0=1)\n", i, data->char_data[i].active_byte);
+                continue;
+            }
+
             map_sprite_t* sprite = &data->sprites[data->sprite_count];
             sprite->tile_x = tile_x;
             sprite->tile_y = tile_y;
