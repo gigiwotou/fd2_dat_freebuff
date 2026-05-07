@@ -291,6 +291,12 @@ call :compile_release %SRC_DIR%\fd2_battle_sprite.c %OBJ_RELEASE_DIR%\fd2_battle
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_battle_cursor.c %OBJ_RELEASE_DIR%\fd2_battle_cursor.o
 if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_menu.c %OBJ_RELEASE_DIR%\fd2_battle_menu.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_terrain_info.c %OBJ_RELEASE_DIR%\fd2_battle_terrain_info.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_battle_turn.c %OBJ_RELEASE_DIR%\fd2_battle_turn.o
+if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_save_load.c %OBJ_RELEASE_DIR%\fd2_save_load.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_continue.c %OBJ_RELEASE_DIR%\fd2_continue.o
