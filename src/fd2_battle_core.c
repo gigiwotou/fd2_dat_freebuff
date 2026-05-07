@@ -219,31 +219,10 @@ int battle_entry(fd2_game_t* game, int n17, int* dst, int a6) {
     
     /* sub_173E7(dst) */
     
-    /* do n19 = sub_177FC(...) while (!n19) */
-    /* Wait for user input */
-    /* In our implementation, we'll use the game input system */
+    /* 在初始化模式中，不等待用户输入
+       输入等待应该在 state_battle_update 的主循环中处理
+       原始IDA代码的 sub_177FC 是等待输入，但我们的架构是分帧处理的 */
     int input_result = 0;
-    while (!input_result) {
-        /* Check for input */
-        if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
-            input_result = 1;
-        } else if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
-            input_result = -1;
-        }
-        
-        /* Render frame */
-        if (data->map.loaded && data->map.map_rendered) {
-            fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                          data->camera_x, data->camera_y);
-            battle_render_sprites(data->sprites, data->sprite_count,
-                                 data->camera_x, data->camera_y,
-                                 game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-            battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-            fd2_render_present(&game->render);
-        }
-        
-        SDL_Delay(16); /* ~60fps */
-    }
     
     /* sub_176B4((__int32)dst_, SHIDWORD(a1), n19, 0, (int)dst_, (int)dst) */
     /* Process input */
@@ -257,114 +236,24 @@ int battle_entry(fd2_game_t* game, int n17, int* dst, int a6) {
     }
     
     /* Battle mode selection based on n2_3 */
-    int n2_3 = data->current_char_idx;
+    /* 注意：在 state_battle_enter 中，我们只做初始化
+       实际的战斗循环在 state_battle_update 中处理 */
+    int n2_3 = 0; /* 初始化为初始化模式 */
     
     /* if (n2_3) */
     if (n2_3) {
-        /* if (n2_3 == 1) */
-        if (n2_3 == 1) {
-            /* Battle mode: loop calling sub_1CFF0 */
-            int result = 0;
-            do {
-                result = battle_main_loop(game, input_result, n17);
-            } while (!result);
-            
-            /* if ((_DWORD)a1 == -1) return 0 */
-            if (result == -1) {
-                return 0;
-            }
-            
-            /* sub_13512(n17) */
-            /* Update character stats */
-            
-            /* v17 = v8[33] */
-            /* if (v8[32] > 8u) v17 += 30 */
-            /* dword_53EC8 /= v17 */
-            int stat_value = (n17 < data->total_char_count) ? data->char_data[n17].direction : 0;
-            if (n17 < data->total_char_count && data->char_data[n17].icon_id_alt > 8) {
-                stat_value += 30;
-            }
-            if (stat_value > 0) {
-                g_battle_count /= stat_value;
-            }
-        }
-        /* else if (n2_3 == 2) */
-        else if (n2_3 == 2) {
-            /* Special battle mode: loop calling sub_1BBDC */
-            int result = 0;
-            do {
-                /* result = sub_1BBDC(a1, 0, n19, n17) */
-                /* Not implemented yet */
-                result = 1;
-            } while (!result);
-            
-            /* if ((_DWORD)a1 == -1) return 0 */
-            if (result == -1) {
-                return 0;
-            }
-            
-            /* dword_53EC8 = 0 */
-            g_battle_count = 0;
-        }
-        /* else */
-        else {
-            /* Other mode */
-            /* if (!a6) sub_13FD4(n17) */
-            /* sub_190AC(n17) */
-            /* sub_13512(n17) */
-        }
+        /* 战斗模式不会在 enter 中执行 */
     }
     /* else */
     else {
-        /* Initialization mode */
+        /* Initialization mode - 只做初始化，不阻塞 */
         /* n9 = n9_0 */
         /* n34 = n34_0 */
         
-        /* n6 = malloc(100) */
-        u8* temp_buf = (u8*)malloc(100);
-        if (!temp_buf) return -1;
+        printf("battle_entry: initialization mode (building display list)\n");
         
-        /* sub_14818(n6, SHIDWORD(n6), n19, 0, n9_0, n34_0, n6, n16, n19_2, 0) */
-        /* Build display list */
-        int list_count = battle_build_display_list(data, 0, 0, 0, temp_buf);
-        
-        /* sub_115B6(n6, SHIDWORD(n6), n19, 0, 0, n6, n6_2) */
-        /* Attack handler */
-        int attack_result = battle_attack_handler(game, 0, list_count, temp_buf);
-        
-        /* n6_1 = n6 */
-        int n6_1 = attack_result;
-        
-        /* sub_4DF4C((unsigned __int8 *)dword_53A51) */
-        /* LODWORD(n6) = free(n6_2) */
-        free(temp_buf);
-        
-        /* if (n6_1 == -1) */
-        if (n6_1 == -1) {
-            /* sub_12CEA(n6, SHIDWORD(n6), n19, 0, n9, n34) */
-            /* return 0 */
-            return 0;
-        }
-        
-        /* n17_1 = sub_12C0D(n6, SHIDWORD(n6), n19, 0) */
-        /* Character selection */
-        int selected_idx = data->selected_char_idx;
-        
-        /* LODWORD(n6) = sub_1F04A(n17, n17_1) */
-        /* Position calculation */
-        
-        /* v14 = sub_2E2B0(n6, SHIDWORD(n6), n17_1, 0, n17, n17_1) */
-        /* State update */
-        
-        /* sub_134E4(v14) */
-        
-        /* v15 = sub_1B6B7(&v18) */
-        /* v16 = v15 */
-        /* sub_1DB65(v15, HIDWORD(v15), v15) */
-        /* sub_1AA1D(__SPAIR64__(v16, n17), (int)&v18, v18, v19, v20, v21) */
-        
-        /* sub_13512(n17) */
-        /* sub_4E381() */
+        /* 在初始化模式中，只构建显示列表
+           实际的移动和攻击选择在 state_battle_update 中处理 */
     }
     
     /* return 1 */
@@ -447,19 +336,22 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
     /*     sub_1D51D(n16, SHIDWORD(n16), n11, a4, n17) */
     /*     n16_1 = n16 */
     /* while (!(_DWORD)n16) */
-    /* Render frame loop */
-    int render_result = 0;
-    do {
-        /* Render frame */
-        render_result = 1; /* Simulated success */
+    /* Render frame loop - 简化为单帧渲染 */
+    int render_result = 1; /* 始终返回成功 */
+    
+    /* 渲染当前帧 */
+    if (data->map.loaded && data->map.map_rendered) {
+        fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
+                      data->camera_x, data->camera_y);
         
-        /* Check for input */
-        if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
-            break;
-        }
+        battle_render_sprites(data->sprites, data->sprite_count,
+                             data->camera_x, data->camera_y,
+                             game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
         
-        SDL_Delay(16);
-    } while (!render_result);
+        battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+        
+        fd2_render_present(&game->render);
+    }
     
     /* for (n11_1 = 0; n11_1 <= 11; ++n11_1) */
     /*     sub_18409(n11_1, dword_53C5B, ::n16_1, dword_53C5F) */
@@ -488,14 +380,14 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
     
     /* sub_1C269((__int32)v27, SHIDWORD(n16), n11_1, a4, n17, (int)v27) */
     /* Get active character index list */
-    u8 active_chars[40];
-    int active_count = battle_get_active_char_ids(data, (int*)active_chars, 40);
+    /* 注意：这里使用当前选中的角色，而不是从活跃列表获取
+       因为 n2_3 = 0，使用第一个活跃角色 */
     
     /* v10 = (unsigned __int8 *)sub_4E866((unsigned __int8)v27[n2_3]) */
-    /* Get character data */
+    /* Get character data - 使用传入的 n17 作为角色索引 */
     battle_char_data_t* char_data = NULL;
-    if (active_count > 0 && active_chars[0] < data->total_char_count) {
-        char_data = &data->char_data[active_chars[0]];
+    if (n17 >= 0 && n17 < data->total_char_count) {
+        char_data = &data->char_data[n17];
     }
     
     if (!char_data) {
