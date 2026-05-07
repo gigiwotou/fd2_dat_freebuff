@@ -239,6 +239,17 @@ void state_battle_enter(fd2_game_t* game) {
             if (data->camera_y < 0) data->camera_y = 0;
         }
 
+        /* 调用 battle_entry 初始化战场核心逻辑 (基于 IDA sub_18D8C) */
+        int dst[4] = {0};
+        int n17 = 0; /* 当前角色索引，从第一个角色开始 */
+        int result = battle_entry(game, n17, dst, 0);
+        if (result == -1) {
+            printf("state_battle: battle_entry failed, returning to menu\n");
+        } else {
+            printf("state_battle: battle_entry completed (result=%d, dst=[%d,%d,%d])\n",
+                   result, dst[0], dst[1], dst[2]);
+        }
+
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
                        data->camera_x, data->camera_y);
 
@@ -303,6 +314,26 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
     }
 
     data->cursor_blink++;
+
+    /* 战场核心逻辑主循环 (基于 IDA sub_1CFF0) */
+    /* 当有角色被选中时，进入战斗主循环 */
+    if (data->selected_char_idx >= 0) {
+        int n19 = 1; /* 战斗动作ID */
+        int n17 = data->selected_char_idx;
+        int loop_result = battle_main_loop(game, n19, n17);
+        
+        if (loop_result == -1) {
+            printf("battle: main loop failed\n");
+            data->selected_char_idx = -1;
+        } else if (loop_result == 0) {
+            printf("battle: battle ended (fled/failed)\n");
+            return FD2_STATE_MENU;
+        } else {
+            printf("battle: main loop completed successfully\n");
+            /* 战斗继续，重置选择以等待下一个角色 */
+            data->selected_char_idx = -1;
+        }
+    }
 
     /* Handle START key - select character at cursor position (based on IDA sub_12C0D) */
     if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
