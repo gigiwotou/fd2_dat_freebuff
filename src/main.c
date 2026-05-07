@@ -21,8 +21,19 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         data_dir = argv[1];
     } else {
-        /* 默认使用game目录 */
-        data_dir = "game";
+        /* 默认使用exe所在目录 */
+        char* base_path = SDL_GetBasePath();
+        if (base_path) {
+            /* SDL_GetBasePath 返回目录路径，带斜杠，需要去掉末尾的斜杠 */
+            size_t len = strlen(base_path);
+            if (len > 0 && (base_path[len-1] == '/' || base_path[len-1] == '\\')) {
+                base_path[len-1] = '\0';
+            }
+            data_dir = base_path;
+        } else {
+            /* 回退：使用当前目录 */
+            data_dir = ".";
+        }
     }
 
     printf("[DEBUG] Starting initialization...\n");
