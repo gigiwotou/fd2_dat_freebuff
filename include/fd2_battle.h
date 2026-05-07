@@ -31,7 +31,7 @@ typedef struct {
     uint8_t tile_y;         /* offset+1: tile Y coordinate */
     uint8_t padding_2_3[2]; /* offset+2-3 */
     uint8_t portrait_id;    /* offset+4: portrait ID */
-    uint8_t active_byte;    /* offset+5: bit0=moved, bit7=alive flag (IDA sub_19DF7: bit0==0 && bit7==1 => active) */
+    uint8_t active_byte;    /* offset+5: bit0=death flag (0=alive/show, 1=dead/hidden), IDA sub_14818 */
     uint8_t char_type;      /* offset+6: character type */
     uint8_t icon_id;        /* offset+7: icon/animation ID */
     uint8_t death_status;   /* offset+8: 0=alive, 28=dead */
