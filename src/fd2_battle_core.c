@@ -350,6 +350,9 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
         
         battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
         
+        /* 渲染角色信息面板 (基于 IDA sub_12D7B, sub_12CEA) */
+        battle_render_info_panel(data, game);
+        
         fd2_render_present(&game->render);
     }
     

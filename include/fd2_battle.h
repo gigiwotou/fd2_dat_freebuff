@@ -190,6 +190,10 @@ int battle_get_active_char_ids(state_battle_data_t* data, int* out_ids, int max_
 /* Movement range and display list - based on IDA sub_14818 */
 int battle_build_display_list(state_battle_data_t* data, int n16, int n19, int n2, u8* out_list);
 
+/* Character info panel - based on IDA sub_12D7B, sub_12CEA */
+void battle_render_char_info(state_battle_data_t* data, fd2_game_t* game, int char_idx);
+void battle_render_info_panel(state_battle_data_t* data, fd2_game_t* game);
+
 /* Player turn logic - based on IDA analysis */
 void battle_turn_init(state_battle_data_t* data);
 void battle_turn_cleanup(state_battle_data_t* data);
