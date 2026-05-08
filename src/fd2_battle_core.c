@@ -309,20 +309,6 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
     /* sub_1CEED(n16, SHIDWORD(n16), n19, a4, n17, -1, ::n16_1) */
     /* Render battle UI */
     
-    /* Render current state */
-    if (data->map.loaded && data->map.map_rendered) {
-        fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                      data->camera_x, data->camera_y);
-        
-        battle_render_sprites(data->sprites, data->sprite_count,
-                             data->camera_x, data->camera_y,
-                             game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-        
-        battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-        
-        fd2_render_present(&game->render);
-    }
-    
     /* for (n11 = 11; n11 >= 0; --n11) */
     /*     sub_18409(n11, dword_53C5B, ::n16_1, dword_53C5F) */
     /* Reverse render pipeline setup (layers 11 to 0) */
@@ -339,7 +325,7 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
     /* Render frame loop - 简化为单帧渲染 */
     int render_result = 1; /* 始终返回成功 */
     
-    /* 渲染当前帧 */
+    /* 渲染当前帧 - 只渲染一次避免闪烁 */
     if (data->map.loaded && data->map.map_rendered) {
         fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
                       data->camera_x, data->camera_y);

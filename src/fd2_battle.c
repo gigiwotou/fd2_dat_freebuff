@@ -332,7 +332,7 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
             return FD2_STATE_MENU;
         }
         
-        /* 按B键取消选择角色 (对应原游戏中ESC取消) */
+        /* 按X/S/ESC键取消选择角色 (对应原游戏中取消操作) */
         if (fd2_action_pressed(&game->input, FD2_ACTION_B) ||
             fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
             data->selected_char_idx = -1;
@@ -355,64 +355,70 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
         }
     }
 
-    /* Render map */
+    /* Render map - skip when battle_main_loop already rendered with info panel */
     if (data->map.loaded && data->map.map_rendered) {
-        fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
-                       data->camera_x, data->camera_y);
+        /* 当battle_main_loop已渲染带信息面板的画面时，跳过常规渲染避免闪烁 */
+        if (data->selected_char_idx >= 0) {
+            /* battle_main_loop已经渲染了完整画面，跳过 */
+        } else {
+            /* 常规渲染：地图+精灵+光标+地形信息 */
+            fd2_map_render(&data->map, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H,
+                           data->camera_x, data->camera_y);
 
 #ifdef FD2_DEBUG
-        if (data->debug_grid_enabled) {
-            battle_render_debug_grid(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-        }
+            if (data->debug_grid_enabled) {
+                battle_render_debug_grid(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+            }
 #endif
 
-        /* Draw sprites */
-        battle_render_sprites(data->sprites, data->sprite_count,
-                              data->camera_x, data->camera_y,
-                              game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+            /* Draw sprites */
+            battle_render_sprites(data->sprites, data->sprite_count,
+                                  data->camera_x, data->camera_y,
+                                  game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
 
-        /* Draw selected character highlight - white border */
-        if (data->selected_char_idx >= 0 && data->selected_char_idx < data->sprite_count) {
-            map_sprite_t* sprite = &data->sprites[data->selected_char_idx];
-            int sx = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
-            int sy = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
+            /* Draw selected character highlight - white border */
+            if (data->selected_char_idx >= 0 && data->selected_char_idx < data->sprite_count) {
+                map_sprite_t* sprite = &data->sprites[data->selected_char_idx];
+                int sx = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
+                int sy = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
 
-            u8 highlight_color = 63; /* White */
+                u8 highlight_color = 63; /* White */
 
-            /* Draw border */
-            for (int x = 0; x < MAP_TILE_SIZE; x++) {
-                int px = sx + x;
-                if (px >= 0 && px < FD2_SCREEN_W) {
-                    if (sy >= 0 && sy < FD2_SCREEN_H) {
-                        game->render.screen[sy * FD2_SCREEN_W + px] = highlight_color;
+                /* Draw border */
+                for (int x = 0; x < MAP_TILE_SIZE; x++) {
+                    int px = sx + x;
+                    if (px >= 0 && px < FD2_SCREEN_W) {
+                        if (sy >= 0 && sy < FD2_SCREEN_H) {
+                            game->render.screen[sy * FD2_SCREEN_W + px] = highlight_color;
+                        }
+                        int bottom = sy + MAP_TILE_SIZE - 1;
+                        if (bottom >= 0 && bottom < FD2_SCREEN_H) {
+                            game->render.screen[bottom * FD2_SCREEN_W + px] = highlight_color;
+                        }
                     }
-                    int bottom = sy + MAP_TILE_SIZE - 1;
-                    if (bottom >= 0 && bottom < FD2_SCREEN_H) {
-                        game->render.screen[bottom * FD2_SCREEN_W + px] = highlight_color;
+                }
+                for (int y = 0; y < MAP_TILE_SIZE; y++) {
+                    int py = sy + y;
+                    if (py >= 0 && py < FD2_SCREEN_H) {
+                        if (sx >= 0 && sx < FD2_SCREEN_W) {
+                            game->render.screen[py * FD2_SCREEN_W + sx] = highlight_color;
+                        }
+                        int right = sx + MAP_TILE_SIZE - 1;
+                        if (right >= 0 && right < FD2_SCREEN_W) {
+                            game->render.screen[py * FD2_SCREEN_W + right] = highlight_color;
+                        }
                     }
                 }
             }
-            for (int y = 0; y < MAP_TILE_SIZE; y++) {
-                int py = sy + y;
-                if (py >= 0 && py < FD2_SCREEN_H) {
-                    if (sx >= 0 && sx < FD2_SCREEN_W) {
-                        game->render.screen[py * FD2_SCREEN_W + sx] = highlight_color;
-                    }
-                    int right = sx + MAP_TILE_SIZE - 1;
-                    if (right >= 0 && right < FD2_SCREEN_W) {
-                        game->render.screen[py * FD2_SCREEN_W + right] = highlight_color;
-                    }
-                }
-            }
+
+            /* Draw cursor */
+            battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+
+            /* Draw terrain info UI - based on IDA sub_126F7 */
+            battle_render_terrain_info(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+
+            fd2_render_present(&game->render);
         }
-
-        /* Draw cursor */
-        battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-
-        /* Draw terrain info UI - based on IDA sub_126F7 */
-        battle_render_terrain_info(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
-
-        fd2_render_present(&game->render);
     }
 
     return FD2_STATE_BATTLE;
