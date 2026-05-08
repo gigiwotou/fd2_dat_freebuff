@@ -316,7 +316,9 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
     data->cursor_blink++;
 
     /* 战场核心逻辑主循环 (基于 IDA sub_1CFF0) */
-    /* 当有角色被选中时，进入战斗主循环 */
+    /* 当有角色被选中时，进入战斗主循环
+     * 注意：原游戏中信息面板会持续显示直到操作完成
+     * 这里修改为单帧渲染模式，保持 selected_char_idx 直到有输入操作 */
     if (data->selected_char_idx >= 0) {
         int n19 = 1; /* 战斗动作ID */
         int n17 = data->selected_char_idx;
@@ -328,10 +330,13 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
         } else if (loop_result == 0) {
             printf("battle: battle ended (fled/failed)\n");
             return FD2_STATE_MENU;
-        } else {
-            printf("battle: main loop completed successfully\n");
-            /* 战斗继续，重置选择以等待下一个角色 */
+        }
+        
+        /* 按B键取消选择角色 (对应原游戏中ESC取消) */
+        if (fd2_action_pressed(&game->input, FD2_ACTION_B) ||
+            fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
             data->selected_char_idx = -1;
+            printf("battle: deselected character\n");
         }
     }
 
