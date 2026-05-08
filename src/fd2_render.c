@@ -248,6 +248,36 @@ void fd2_render_fade_from_black(fd2_render_t* render, int steps, int step_ms) {
     }
 }
 
+void fd2_render_set_palette_from_fdother(fd2_render_t* render,
+                                         const u8* pal_6bit,
+                                         int start_color, int end_color,
+                                         int color_offset) {
+    if (!render || !pal_6bit) return;
+
+    u8 palette_8bit[FD2_PALETTE_BYTES];
+    memcpy(palette_8bit, render->palette, FD2_PALETTE_BYTES);
+
+    while (start_color <= end_color) {
+        int idx = start_color * 3;
+
+        int red = pal_6bit[idx + 0] - color_offset;
+        int green = pal_6bit[idx + 1] - color_offset;
+        int blue = pal_6bit[idx + 2] - color_offset;
+
+        if (red < 0) red = 0;
+        if (green < 0) green = 0;
+        if (blue < 0) blue = 0;
+
+        palette_8bit[idx + 0] = (u8)((red << 2) | (red >> 4));
+        palette_8bit[idx + 1] = (u8)((green << 2) | (green >> 4));
+        palette_8bit[idx + 2] = (u8)((blue << 2) | (blue >> 4));
+
+        ++start_color;
+    }
+
+    fd2_render_set_palette_8bit(render, palette_8bit);
+}
+
 void fd2_render_fade_to_color(fd2_render_t* render, int steps, int step_ms,
                                int base_r6, int base_g6, int base_b6) {
     if (!render) return;
@@ -337,10 +367,11 @@ void fd2_render_blit_afm(fd2_render_t* render, const u8* afm_frame,
 
 void fd2_render_present(fd2_render_t* render) {
     if (!render || !render->initialized) {
+        fprintf(stderr, "[RENDER] NOT initialized!\n");
         return;
     }
 
-    /* 处理SDL事件防止窗口锁死 */
+    /* 添加事件处理防止SDL窗口锁死 */
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {

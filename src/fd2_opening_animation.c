@@ -55,6 +55,34 @@ static void fd2_delay(int ms) {
 }
 
 /*
+ * sub_1F525: 淡入效果 (原游戏 0x1F525)
+ * 
+ * 原游戏逻辑:
+ *   for (n64=64; n64>=0; --n64) {
+ *     sub_11D40(0, 255, n64);
+ *     delay(2);
+ *   }
+ * 
+ * 原游戏sub_11D40: 颜色值 = FDOTHER[原始RGB] - n64
+ * - n64=64: 颜色值 = 原始值-64，更暗
+ * - n64=0: 颜色值 = 原始值，正常亮度
+ * 
+ * 功能: 从暗到亮的淡入效果 (65步×2ms ≈ 130ms)
+ */
+static void sub_1F525(fd2_render_t* render) {
+    /* 使用简化的亮度渐变实现淡入效果 */
+    /* 从暗(低亮度)渐变到正常(亮度63) */
+    for (int brightness = 0; brightness <= 63; ++brightness) {
+        fd2_render_set_brightness(render, brightness);
+        fd2_render_present(render);
+        fd2_delay(2);
+    }
+    /* 确保最终亮度为63 */
+    fd2_render_set_brightness(render, 63);
+    fd2_render_present(render);
+}
+
+/*
  * sub_10620: 检查键盘缓冲区变化 (原游戏 0x10620)
  * 
  * 原游戏实现:
@@ -92,6 +120,135 @@ static void fd2_reset_key_state(void) {
 }
 
 /*
+ * sub_1F882: 等待按键/音效控制 (原游戏 0x1F882)
+ * 
+ * 功能: 等待用户按键，同时播放音效
+ * 简化实现: 仅等待按键
+ */
+static void sub_1F882(void) {
+    SDL_Event event;
+    while (1) {
+        while (SDL_WaitEvent(&event)) {
+            if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+                return;
+            }
+            if (event.type == SDL_QUIT) {
+                return;
+            }
+        }
+    }
+}
+
+/*
+ * sub_11EB0: 区域拷贝 (原游戏 0x11EB0)
+ * 
+ * 原游戏逻辑:
+ *   for (i=0; i<a10; ++i) {
+ *     memmove(a5, a7, a9);
+ *     a5 += a6;  // dst_stride
+ *     a7 += a8;  // src_stride
+ *   }
+ * 
+ * 在动画中的调用: sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200)
+ * = 从n15+320*n535拷贝200行到屏幕(655360)，每行320字节
+ */
+static void sub_11EB0(u8* dst, int dst_stride,
+                      const u8* src, int src_stride,
+                      int copy_size, int num_lines) {
+    for (int i = 0; i < num_lines; ++i) {
+        memmove(dst, src, copy_size);
+        dst += dst_stride;
+        src += src_stride;
+    }
+}
+
+/*
+ * sub_1F81E: AFM动画播放 (原游戏 0x1F81E)
+ * 
+ * 原游戏逻辑:
+ *   if (n99 != -1) {
+ *     清屏;
+ *     加载FDOTHER.DAT索引n99;
+ *   }
+ *   设置黑色调色板;
+ *   sub_20421(n4, n15, 0);  // 播放AFM动画
+ *   sub_1F882();            // 等待按键
+ */
+static void sub_1F81E(fd2_state_machine_t* sm, int n99, int n4, int n15) {
+    fd2_resources_t* res = fd2_get_resources();
+    
+    if (n99 != -1) {
+        fd2_render_fill_screen(&sm->render, 0);
+        /* 加载FDOTHER.DAT索引n99 (如果需要) */
+    }
+    
+    /* 设置黑色调色板 */
+    fd2_render_set_brightness(&sm->render, 0);
+    
+    /* 播放AFM动画 */
+    printf("[OPENING] sub_1F81E: Playing AFM animation n4=%d, n15=%d\n", n4, n15);
+    fd2_afm_play(n4, n15, 0, &sm->render, res);
+    
+    /* 等待按键 */
+    sub_1F882();
+}
+
+/*
+ * sub_1F73F: 复杂特效 (原游戏 0x1F73F)
+ * 
+ * 原游戏逻辑:
+ *   sub_1F882();           // 等待按键
+ *   清屏;
+ *   加载FDOTHER索引n5;
+ *   加载FDOTHER索引n100;
+ *   sub_4E98D解码到屏幕;
+ *   sub_1F525();           // 淡入
+ *   播放音效;
+ *   sub_1F882();           // 等待按键
+ *   加载FDOTHER索引101;
+ *   sub_11EB0拷贝到n15+n99*320;
+ *   sub_1F525();           // 淡入
+ */
+static void sub_1F73F(fd2_state_machine_t* sm, int n100, int n5, void* n15, int n99) {
+    fd2_resources_t* res = fd2_get_resources();
+    
+    /* 等待按键 */
+    sub_1F882();
+    
+    /* 清屏 */
+    fd2_render_fill_screen(&sm->render, 0);
+    
+    /* 加载FDOTHER索引n5并解码到屏幕 */
+    u32 dat_size = 0;
+    const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, n5, &dat_size);
+    if (dat_data) {
+        fd2_rle_decompress_to_buffer(dat_data, dat_size, sm->render.screen, 0, 320, -1);
+    }
+    
+    /* 淡入效果 */
+    sub_1F525(&sm->render);
+    
+    /* 等待按键 */
+    sub_1F882();
+    
+    /* 加载FDOTHER索引101 */
+    /* (资源加载在初始化阶段已完成) */
+    
+    /* 拷贝到n15+n99*320位置 */
+    int dst_offset = n99 * 320;
+    if (dst_offset + 64000 <= 270080) {
+        sub_11EB0((u8*)n15 + dst_offset, 320,
+                  sm->render.screen, 320,
+                  320, 200);
+    }
+    
+    /* 再次淡入 */
+    sub_1F525(&sm->render);
+    
+    printf("[OPENING] sub_1F73F: n100=%d, n5=%d, n99=%d\n", n100, n5, n99);
+}
+
+/*
  * fd2_play_opening_animation: 开场动画完整播放 (原游戏 sub_1F894)
  * 
  * 返回: 0=选择Start, 1=选择Load, 其他=退出
@@ -108,34 +265,78 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
      * 阶段1: 初始化资源加载 (对应原游戏 0x1F894-0x1FA85)
      * ==================================================================== */
     
-    /* 1. memset(655360, 0, 64000) - 清屏 */
+    fd2_resources_t* res = fd2_get_resources();
+    
+    /* 1. sub_111BA(..., "FDOTHER.DAT", 77) - 加载初始化资源 */
+    u32 size_77 = 0;
+    const u8* data_77 = fd2_resources_get(res, FD2_DAT_FDOTHER, 77, &size_77);
+    printf("[OPENING] Loaded FDOTHER index 77, size=%u\n", size_77);
+    
+    /* 2. memset(655360, 0, 64000) - 清屏 */
     fd2_render_fill_screen(&sm->render, 0);
     
-    /* 2. 加载FDOTHER.DAT资源 (按顺序加载) */
-    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 77) */
-    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 76) */
-    /* _FDOTHER.DAT__1 = sub_111BA(..., "FDOTHER.DAT", 74) */
-    /* sub_4E98D渲染，sub_1F525淡入，sub_17AA9精灵渲染 */
+    /* 3. sub_111BA(..., "FDOTHER.DAT", 76) - 加载调色板数据 */
+    /* 注意：索引76可能是复合资源，不是纯调色板 */
+    u32 size_76 = 0;
+    const u8* data_76 = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &size_76);
+    printf("[OPENING] Loaded FDOTHER index 76, size=%u\n", size_76);
     
-    /* 3. sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
+    /* 4. sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
     fd2_render_set_brightness(&sm->render, 63);
     
-    /* 4. sub_1F882() - 音效控制 */
-    /* sub_1F882(1) + sub_1F882(30) - 播放音效 */
+    /* 5. sub_111BA(..., "FDOTHER.DAT", 74) - 加载初始图像 */
+    u32 size_74 = 0;
+    const u8* data_74 = fd2_resources_get(res, FD2_DAT_FDOTHER, 74, &size_74);
+    printf("[OPENING] Loaded FDOTHER index 74, size=%u\n", size_74);
     
-    /* 5. 加载索引99，清屏，设置黑色调色板 */
-    /* memset(655360, 0, 64000) */
+    /* 6. sub_4E98D解码到屏幕 */
+    if (data_74) {
+        fd2_rle_decompress_to_buffer(data_74, size_74, sm->render.screen, 0, 320, -1);
+        fd2_render_present(&sm->render);
+    }
+    
+    /* 7. sub_1F525() - 淡入效果 */
+    sub_1F525(&sm->render);
+    
+    /* 8. sub_17AA9(1), sub_17AA9(30) - 播放音效 */
+    /* TODO: 实现音效播放 */
+    printf("[OPENING] Playing sound effects 1 and 30\n");
+    
+    /* 9. sub_1F882() - 等待按键 */
+    printf("[OPENING] Waiting for key press after initial image...\n");
+    fflush(stdout);
+    sub_1F882();
+    
+    /* 10. sub_111BA(..., "FDOTHER.DAT", 99) - 加载音乐资源 */
+    u32 size_99 = 0;
+    const u8* data_99 = fd2_resources_get(res, FD2_DAT_FDOTHER, 99, &size_99);
+    printf("[OPENING] Loaded FDOTHER index 99 (music), size=%u\n", size_99);
+    
+    /* 11. memset(655360, 0, 64000) - 清屏 */
     fd2_render_fill_screen(&sm->render, 0);
-    /* sub_11D40(0, 255, 0) - 黑色调色板(亮度0) */
+    
+    /* 12. sub_11D40(0, 255, 0) - 黑色调色板(亮度0) */
     fd2_render_set_brightness(&sm->render, 0);
     
-    /* 6. sub_20421(3, 90, 1) - 播放AFM动画索引3, 延迟90ms */
+    /* 13. sub_20421(3, 90, 1) - 播放AFM动画索引3 */
     printf("[OPENING] Playing AFM animation index 3...\n");
-    fd2_resources_t* res = fd2_get_resources();
     fd2_afm_play(3, 90, 1, &sm->render, res);
     
-    /* 7. 加载索引101，设置调色板(偏移64) */
-    /* sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
+    /* 清除AFM动画期间积累的所有SDL事件 */
+    SDL_Event dummy_event;
+    while (SDL_PollEvent(&dummy_event)) { }
+    
+    /* 14. sub_1F882() - 等待按键 */
+    printf("[OPENING] Waiting for key press after AFM animation...\n");
+    fflush(stdout);
+    sub_1F882();
+    
+    /* 15. sub_111BA(..., "FDOTHER.DAT", 101) - 加载背景资源 */
+    u32 size_101 = 0;
+    const u8* data_101 = fd2_resources_get(res, FD2_DAT_FDOTHER, 101, &size_101);
+    printf("[OPENING] Loaded FDOTHER index 101 (bg), size=%u\n", size_101);
+    
+    /* 16. sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
     fd2_render_set_brightness(&sm->render, 63);
     
     /* 8. 加载FDOTHER索引69-73 (5个动画帧图像) 到缓冲区 */
@@ -209,54 +410,108 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     int v33 = 0;
     int n12 = 0;
 
+    Uint32 loop_start = SDL_GetTicks();
+    printf("[OPENING] Animation loop starting at tick=%u\n", loop_start);
+    fflush(stdout);
+
     while (1) {
         if (n535 < 0) {
-            printf("[OPENING] Animation loop finished, entering menu\n");
+            Uint32 loop_end = SDL_GetTicks();
+            printf("[OPENING] Animation loop finished at tick=%u (duration=%ums), entering menu\n", 
+                   loop_end, loop_end - loop_start);
             fflush(stdout);
             goto opening_menu;
         }
         
-        if (n535 == 535 || n535 == 400 || n535 == 300 || n535 == 200 || n535 == 100 || n535 == 50 || n535 == 10) {
-            printf("[OPENING] Frame: %d\n", n535);
-            fflush(stdout);
-        }
-        
-        /* 垂直滚动blit */
+        /* 对应原游戏: sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
+        /* 从n15+n535*320拷贝200行到屏幕 */
         {
             int src_offset = n535 * 320;
-            
-            if (src_offset < 270080) {
-                u8* src = (u8*)n15 + src_offset;
-                u8* dst = sm->render.screen;
-                
-                for (int row = 0; row < 200; ++row) {
-                    if (src_offset + row * 320 < 270080) {
-                        memcpy(dst, src, 320);
-                    }
-                    dst += 320;
-                    src += 320;
-                }
+            if (src_offset >= 0 && src_offset + 64000 <= 270080) {
+                sub_11EB0(sm->render.screen, 320,
+                          (u8*)n15 + src_offset, 320,
+                          320, 200);
             }
         }
         
-        /* 关键帧事件触发 */
+        /* n535==535: sub_1F525() 淡入效果 */
+        if (n535 == 535) {
+            sub_1F525(&sm->render);
+        }
+        
+        /* n535==25: 跳出循环到标签LABEL_31 */
+        if (n535 == 25) {
+            printf("[OPENING] Frame 25: breaking to menu\n");
+            fflush(stdout);
+            
+            /* sub_1F81E(0, 15, 0) */
+            sub_1F81E(sm, -1, 0, 15);
+            
+            /* sub_11EB0拷贝 */
+            {
+                int src_offset = n535 * 320;
+                if (src_offset >= 0 && src_offset + 64000 <= 270080) {
+                    sub_11EB0(sm->render.screen, 320,
+                              (u8*)n15 + src_offset, 320,
+                              320, 200);
+                }
+            }
+            
+            /* sub_1F525()淡入 */
+            sub_1F525(&sm->render);
+            
+            goto opening_menu;
+        }
+        
+        /* 关键帧事件触发 - switch语句 */
         switch (n535) {
             case 450:
+                /* sub_1F73F(100, 99, n15, 450) */
+                sub_1F73F(sm, 100, 99, n15, 450);
+                break;
+                
             case 330:
+                /* sub_1F882() */
+                sub_1F882();
+                /* sub_1F81E(4, 90, 99) */
+                sub_1F81E(sm, 99, 4, 90);
+                /* sub_1F81E(5, 50, 0) */
+                sub_1F81E(sm, 0, 5, 50);
+                break;
+                
             case 210:
+                /* sub_1F882() */
+                sub_1F882();
+                /* sub_1F81E(6, 90, 99) */
+                sub_1F81E(sm, 99, 6, 90);
+                /* sub_1F81E(7, 50, 0) */
+                sub_1F81E(sm, 0, 7, 50);
+                break;
+                
             case 110:
-            case 25:
+                /* sub_1F882() */
+                sub_1F882();
+                /* sub_1F81E(8, 90, 99) */
+                sub_1F81E(sm, 99, 8, 90);
+                break;
+                
             case 10:
+                /* sub_1F73F(75, 76, n15, 10) */
+                sub_1F73F(sm, 75, 76, n15, 10);
                 break;
         }
         
-        /* 检查时间点 */
+        /* 检查时间点 - 对应原游戏 dst_[v33] 数组检查 */
         if (v33 < FD2_OPENING_TIME_COUNT && n535 == g_opening_time_points[v33]) {
             n12 = 0;
+            /* sub_25A96(..., 0, 1) - 资源加载 */
+            /* 简化处理：仅重置计数器 */
             v33++;
         }
         
         if (n12 == 11) {
+            /* sub_111BA(..., 101) + sub_11D40(0, 255, 0) */
+            /* 简化处理 */
         }
         
         n12++;
@@ -270,22 +525,8 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         }
         
         /* 检查按键跳过 (对应原游戏 sub_10620()) */
-        /* 只在延迟后检查，不消耗所有事件 */
-        {
-            SDL_Event event;
-            while (SDL_PollEvent(&event)) {
-                if (event.type == SDL_QUIT) {
-                    goto opening_menu;
-                }
-                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
-                    /* 原游戏 sub_10620() 检查特定按键 */
-                    /* 这里我们只检查ESC和Enter跳过动画 */
-                    SDL_Keycode sym = event.key.keysym.sym;
-                    if (sym == SDLK_ESCAPE || sym == SDLK_RETURN || sym == SDLK_SPACE) {
-                        goto opening_menu;
-                    }
-                }
-            }
+        if (fd2_check_key_pressed()) {
+            goto opening_menu;
         }
         
         --n535;

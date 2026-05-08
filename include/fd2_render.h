@@ -138,6 +138,17 @@ void fd2_render_fade_to_black(fd2_render_t* render, int steps, int step_ms);
 void fd2_render_fade_from_black(fd2_render_t* render, int steps, int step_ms);
 
 /*
+ * Set palette from FDOTHER 6-bit RGB data with offset (sub_11D40).
+ * pal_6bit: 768 bytes of 6-bit RGB from FDOTHER.DAT
+ * start_color, end_color: color range to set (0-255)
+ * color_offset: subtracted from each RGB component (for brightness/fade)
+ */
+void fd2_render_set_palette_from_fdother(fd2_render_t* render,
+                                         const u8* pal_6bit,
+                                         int start_color, int end_color,
+                                         int color_offset);
+
+/*
  * Fade the current palette to a uniform color over the given number of steps.
  * Matches sub_2DF01 with descending step counter (e.g. Phase 3 fade-out).
  * base_r6/g6/b6: 6-bit VGA color values (0-63) to fade towards.
