@@ -23,6 +23,7 @@ int fd2_dat_load(fd2_dat_t* dat, const char* path) {
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
+    /* 文件格式: 6字节魔数 + N*4字节偏移表 + 资源数据 */
     if (file_size < 10) {
         fprintf(stderr, "fd2_dat_load: file too small (%ld bytes)\n", file_size);
         fclose(f);
@@ -49,8 +50,24 @@ int fd2_dat_load(fd2_dat_t* dat, const char* path) {
         return -1;
     }
 
-    u32 resource_count;
-    memcpy(&resource_count, data + 6, 4);
+    /* 偏移表从字节6开始，每个条目4字节（起始偏移）
+     * 资源数量 = 从最后一个条目往前找，直到找到合理的数量
+     * 简单方法: 扫描直到start_offset >= file_size
+     */
+    u32 resource_count = 0;
+    for (u32 i = 0; ; i++) {
+        u32 offset;
+        memcpy(&offset, data + 6 + i * 4, 4);
+        if (offset >= (u32)file_size) {
+            resource_count = i;
+            break;
+        }
+        /* 安全检查: 最多422个资源 (FDOTHER.DAT的最大值) */
+        if (i >= 500) {
+            resource_count = i;
+            break;
+        }
+    }
 
     fd2_resource_t* resources = (fd2_resource_t*)calloc(resource_count, sizeof(fd2_resource_t));
     if (!resources) {
@@ -61,7 +78,7 @@ int fd2_dat_load(fd2_dat_t* dat, const char* path) {
     /* Pass 1: read all offsets */
     for (u32 i = 0; i < resource_count; i++) {
         u32 offset;
-        memcpy(&offset, data + 10 + i * 4, 4);
+        memcpy(&offset, data + 6 + i * 4, 4);
         resources[i].start = offset;
     }
 

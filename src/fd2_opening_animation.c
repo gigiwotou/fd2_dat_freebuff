@@ -1,12 +1,12 @@
 /**
  * FD2 开场动画系统
- * 对应原游戏 sub_1F894 (地址: 0x1F894)
+ * 对应原游戏 sub_1F894 (地址: 0x1F894, 大小: 0x6E5)
  * 
- * 原游戏启动时调用此函数播放开场动画序列
+ * 原游戏启动时由sub_25EBB调用此函数播放开场动画序列
  * 
  * 完整动画流程 (基于IDA 1:1实现):
  * 1. 初始化阶段: 加载FDOTHER.DAT多个索引(77,76,74,99,101,69-73)
- * 2. 主动画循环 (n535: 535→0): 垂直滚动blit，关键帧触发事件
+ * 2. 主动画循环 (n535/esi: 535→0): 垂直滚动blit，关键帧触发事件
  * 3. 菜单阶段: 淡入淡出，存档检查，用户选择
  */
 
@@ -45,8 +45,8 @@
 #define FD2_ANIM_FRAME_MID_4         25   /* 触发sub_1F81E(0,15,0) */
 #define FD2_ANIM_FRAME_END           10   /* 触发sub_1F73F(75,76) */
 
-/* 时间点数组 (原游戏 dst_数组) */
-static const int g_opening_time_points[] = {500, 400, 300, 200, 100, 50, 30, 20, 10, 5, 3, 1};
+/* 时间点数组 (原游戏 dst_数组 [esp+0h] var_6C, 15个DWORD) */
+static const int g_opening_time_points[] = {500, 400, 300, 200, 100, 50, 30, 20, 10, 5, 3, 1, 0, 0, 0};
 #define FD2_OPENING_TIME_COUNT 12
 
 /* 模拟原游戏 delay() 函数 */
@@ -54,31 +54,78 @@ static void fd2_delay(int ms) {
     SDL_Delay(ms);
 }
 
+    /* 全局调色板数据 (对应原游戏 FDOTHER_DAT) */
+static u8 g_palette_6bit[768];
+static int g_palette_loaded = 0;
+static const u8* g_current_palette_data = NULL;  /* 当前FDOTHER_DAT指针 */
+
+/*
+ * sub_11D40: 设置VGA调色板 (原游戏 0x11D40)
+ * 
+ * 原游戏逻辑:
+ *   while (a5 <= a6) {
+ *     outp(968, a5);  // 写入调色板寄存器地址
+ *     outp(969, FDOTHER_DAT[3*a5] - a7);     // R
+ *     outp(969, FDOTHER_DAT[3*a5+1] - a7);   // G
+ *     outp(969, FDOTHER_DAT[3*a5+2] - a7);   // B
+ *     ++a5;
+ *   }
+ * 
+ * 参数:
+ *   start_color: 起始颜色索引 (a5)
+ *   end_color:   结束颜色索引 (a6)
+ *   color_offset: 颜色偏移/亮度调整 (a7)
+ */
+static void sub_11D40(fd2_render_t* render, int start_color, int end_color, int color_offset) {
+    const u8* palette_data = g_current_palette_data ? g_current_palette_data : g_palette_6bit;
+    if (!g_palette_loaded) return;
+    
+    u8 palette_8bit[768];
+    memcpy(palette_8bit, render->palette, 768);
+    
+    for (int i = start_color; i <= end_color; i++) {
+        int idx = i * 3;
+        
+        /* 原游戏反汇编：
+         * v8 = FDOTHER_DAT[3*a5] - a7;
+         * if (v8 < 0) LOBYTE(v8) = 0;
+         * outp(969, v8);
+         */
+        int r = (int)palette_data[idx + 0] - color_offset;
+        int g = (int)palette_data[idx + 1] - color_offset;
+        int b = (int)palette_data[idx + 2] - color_offset;
+        
+        if (r < 0) r = 0;
+        if (g < 0) g = 0;
+        if (b < 0) b = 0;
+        
+        /* 6-bit转8-bit: v8 = (v6 << 2) | (v6 >> 4) */
+        palette_8bit[idx + 0] = (u8)((r << 2) | (r >> 4));
+        palette_8bit[idx + 1] = (u8)((g << 2) | (g >> 4));
+        palette_8bit[idx + 2] = (u8)((b << 2) | (b >> 4));
+    }
+    
+    fd2_render_set_palette_8bit(render, palette_8bit);
+}
+
 /*
  * sub_1F525: 淡入效果 (原游戏 0x1F525)
  * 
  * 原游戏逻辑:
  *   for (n64=64; n64>=0; --n64) {
- *     sub_11D40(0, 255, n64);
+ *     sub_11D40(0, 255, n64);  // colorOffset从64递减到0
  *     delay(2);
  *   }
- * 
- * 原游戏sub_11D40: 颜色值 = FDOTHER[原始RGB] - n64
- * - n64=64: 颜色值 = 原始值-64，更暗
- * - n64=0: 颜色值 = 原始值，正常亮度
  * 
  * 功能: 从暗到亮的淡入效果 (65步×2ms ≈ 130ms)
  */
 static void sub_1F525(fd2_render_t* render) {
-    /* 使用简化的亮度渐变实现淡入效果 */
-    /* 从暗(低亮度)渐变到正常(亮度63) */
-    for (int brightness = 0; brightness <= 63; ++brightness) {
-        fd2_render_set_brightness(render, brightness);
+    for (int n64 = 64; n64 >= 0; --n64) {
+        sub_11D40(render, 0, 255, n64);
         fd2_render_present(render);
         fd2_delay(2);
     }
-    /* 确保最终亮度为63 */
-    fd2_render_set_brightness(render, 63);
+    sub_11D40(render, 0, 255, 0);
     fd2_render_present(render);
 }
 
@@ -95,47 +142,43 @@ static void sub_1F525(fd2_render_t* render) {
  * SDL2实现: 非阻塞检查是否有新按键按下
  * 返回: 1=有按键, 0=无按键
  */
-static int g_key_pressed = 0;
-
+/*
+ * sub_10620: 检测按键 (原游戏 0x10620)
+ * 
+ * 原游戏通过读取BIOS键盘缓冲区(0x41A, 0x41C)来检测按键
+ * SDL2实现: 非阻塞检查是否有新按键按下
+ * 返回: 1=有按键, 0=无按键
+ * 
+ * 注意: 这是即时检测，不是全局状态！
+ */
 static int fd2_check_key_pressed(void) {
-    if (g_key_pressed) return 1;
-    
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_KEYDOWN && !event.key.repeat) {
-            g_key_pressed = 1;
-            return 1;
-        }
-        if (event.type == SDL_QUIT) {
-            g_key_pressed = 1;
-            return 1;
-        }
+    /* 使用SDL_GetKeyboardState获取当前按键状态，不消费事件 */
+    const Uint8* state = SDL_GetKeyboardState(NULL);
+    /* 检测回车键和空格键（原游戏检测scan code 28和57） */
+    if (state[SDL_SCANCODE_RETURN] || state[SDL_SCANCODE_SPACE] || 
+        state[SDL_SCANCODE_ESCAPE] || state[SDL_SCANCODE_UP] || state[SDL_SCANCODE_DOWN]) {
+        return 1;
     }
     return 0;
 }
 
-/* 重置按键状态 */
-static void fd2_reset_key_state(void) {
-    g_key_pressed = 0;
-}
-
 /*
- * sub_1F882: 等待按键/音效控制 (原游戏 0x1F882)
+ * sub_1F882: 淡入效果 (原游戏 0x1F882)
  * 
- * 功能: 等待用户按键，同时播放音效
- * 简化实现: 仅等待按键
+ * 反汇编代码:
+ *   for (n64=0; n64<64; ++n64) {
+ *     sub_11D40(0, 255, n64);  // 亮度从64递减到0
+ *     delay(2);
+ *   }
+ * 
+ * 功能: 从暗到亮的淡入效果 (64步×2ms ≈ 128ms)
+ * 注意: 这不是等待按键函数！
  */
-static void sub_1F882(void) {
-    SDL_Event event;
-    while (1) {
-        while (SDL_WaitEvent(&event)) {
-            if (event.type == SDL_KEYDOWN && !event.key.repeat) {
-                return;
-            }
-            if (event.type == SDL_QUIT) {
-                return;
-            }
-        }
+static void sub_1F882(fd2_render_t* render) {
+    for (int n64 = 0; n64 < 64; ++n64) {
+        sub_11D40(render, 0, 255, n64);
+        fd2_render_present(render);
+        fd2_delay(2);
     }
 }
 
@@ -148,9 +191,6 @@ static void sub_1F882(void) {
  *     a5 += a6;  // dst_stride
  *     a7 += a8;  // src_stride
  *   }
- * 
- * 在动画中的调用: sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200)
- * = 从n15+320*n535拷贝200行到屏幕(655360)，每行320字节
  */
 static void sub_11EB0(u8* dst, int dst_stride,
                       const u8* src, int src_stride,
@@ -165,84 +205,85 @@ static void sub_11EB0(u8* dst, int dst_stride,
 /*
  * sub_1F81E: AFM动画播放 (原游戏 0x1F81E)
  * 
- * 原游戏逻辑:
+ * 反编译代码:
  *   if (n99 != -1) {
- *     清屏;
- *     加载FDOTHER.DAT索引n99;
+ *     memset(655360, 0, 64000);
+ *     FDOTHER_DAT = sub_111BA(..., n99);
  *   }
- *   设置黑色调色板;
- *   sub_20421(n4, n15, 0);  // 播放AFM动画
- *   sub_1F882();            // 等待按键
+ *   sub_11D40(0, 255, 0);        // 黑色调色板
+ *   sub_20421(n4, n15, 0);       // 播放AFM动画
+ *   return sub_1F882();          // 等待按键
+ * 
+ * 调用方式 (从汇编):
+ *   n535==330: push 99; push 90; push 4; call sub_1F81E  → sub_1F81E(4, 90, 99)
+ *   n535==330: push 0;  push 50; push 5; call sub_1F81E  → sub_1F81E(5, 50, 0)
  */
-static void sub_1F81E(fd2_state_machine_t* sm, int n99, int n4, int n15) {
+static void sub_1F81E(fd2_state_machine_t* sm, int n4, int n15, int n99) {
     fd2_resources_t* res = fd2_get_resources();
     
     if (n99 != -1) {
         fd2_render_fill_screen(&sm->render, 0);
-        /* 加载FDOTHER.DAT索引n99 (如果需要) */
     }
     
-    /* 设置黑色调色板 */
-    fd2_render_set_brightness(&sm->render, 0);
+    sub_11D40(&sm->render, 0, 255, 0);
     
-    /* 播放AFM动画 */
-    printf("[OPENING] sub_1F81E: Playing AFM animation n4=%d, n15=%d\n", n4, n15);
+    printf("[OPENING] sub_1F81E: Playing AFM n4=%d, n15=%d, n99=%d\n", n4, n15, n99);
     fd2_afm_play(n4, n15, 0, &sm->render, res);
     
-    /* 等待按键 */
-    sub_1F882();
+    sub_1F882(&sm->render);
 }
 
 /*
  * sub_1F73F: 复杂特效 (原游戏 0x1F73F)
  * 
- * 原游戏逻辑:
- *   sub_1F882();           // 等待按键
- *   清屏;
- *   加载FDOTHER索引n5;
- *   加载FDOTHER索引n100;
- *   sub_4E98D解码到屏幕;
- *   sub_1F525();           // 淡入
- *   播放音效;
- *   sub_1F882();           // 等待按键
- *   加载FDOTHER索引101;
- *   sub_11EB0拷贝到n15+n99*320;
- *   sub_1F525();           // 淡入
+ * 反编译代码:
+ *   sub_1F882();                          // 等待按键
+ *   memset(655360, 0, 64000);             // 清屏
+ *   FDOTHER_DAT = sub_111BA(..., n5);     // 加载索引n5
+ *   _FDOTHER.DAT_ = sub_111BA(..., n100); // 加载索引n100
+ *   sub_4E98D(_FDOTHER.DAT_, 0, 0, 655360, 320, -1); // 解码到屏幕
+ *   sub_1F525();                          // 淡入
+ *   sub_17AA9(1);                         // 音效
+ *   sub_17AA9(6);                         // 音效
+ *   sub_1F882();                          // 等待按键
+ *   FDOTHER_DAT = sub_111BA(..., 101);    // 加载索引101
+ *   sub_11EB0(n15+320*n99, n99, ..., 655360, 320, n15+320*n99, 320, 320, 200);
+ *   return sub_1F525();                   // 再次淡入
+ * 
+ * 调用方式 (从汇编):
+ *   n535==450: push 450; push n15; push 99; push 100; call sub_1F73F
+ *   n535==10:  push 10;  push n15; push 76; push 75;  call sub_1F73F
  */
 static void sub_1F73F(fd2_state_machine_t* sm, int n100, int n5, void* n15, int n99) {
     fd2_resources_t* res = fd2_get_resources();
     
-    /* 等待按键 */
-    sub_1F882();
+    sub_1F882(&sm->render);
     
-    /* 清屏 */
     fd2_render_fill_screen(&sm->render, 0);
     
-    /* 加载FDOTHER索引n5并解码到屏幕 */
     u32 dat_size = 0;
     const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, n5, &dat_size);
     if (dat_data) {
         fd2_rle_decompress_to_buffer(dat_data, dat_size, sm->render.screen, 0, 320, -1);
     }
     
-    /* 淡入效果 */
+    dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, n100, &dat_size);
+    if (dat_data) {
+        fd2_rle_decompress_to_buffer(dat_data, dat_size, sm->render.screen, 0, 320, -1);
+        fd2_render_present(&sm->render);
+    }
+    
     sub_1F525(&sm->render);
     
-    /* 等待按键 */
-    sub_1F882();
+    sub_1F882(&sm->render);
     
-    /* 加载FDOTHER索引101 */
-    /* (资源加载在初始化阶段已完成) */
-    
-    /* 拷贝到n15+n99*320位置 */
     int dst_offset = n99 * 320;
-    if (dst_offset + 64000 <= 270080) {
-        sub_11EB0((u8*)n15 + dst_offset, 320,
-                  sm->render.screen, 320,
+    if (dst_offset >= 0 && dst_offset + 64000 <= 270080) {
+        sub_11EB0(sm->render.screen, 320,
+                  (u8*)n15 + dst_offset, 320,
                   320, 200);
     }
     
-    /* 再次淡入 */
     sub_1F525(&sm->render);
     
     printf("[OPENING] sub_1F73F: n100=%d, n5=%d, n99=%d\n", n100, n5, n99);
@@ -256,243 +297,253 @@ static void sub_1F73F(fd2_state_machine_t* sm, int n100, int n5, void* n15, int 
 int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     if (!sm) return -1;
 
-    printf("[OPENING] Starting opening animation sequence...\n");
-    
-    /* 重置按键状态 */
-    fd2_reset_key_state();
+    printf("[OPENING] Starting opening animation sequence (sub_1F894)...\n");
+
+    fd2_resources_t* res = fd2_get_resources();
 
     /* ====================================================================
-     * 阶段1: 初始化资源加载 (对应原游戏 0x1F894-0x1FA85)
+     * 变量初始化 (对应原游戏 0x1F899-0x1F8C3)
+     * ==================================================================== */
+    int n2_1 = 1;        /* var_1C: 菜单选项数 */
+    int v27 = 0;         /* var_2C: 菜单选择标志 */
+    int n2_2 = 0;        /* var_28: 当前选中项 */
+    int n12 = 12;        /* var_20: 计数器 */
+    int v33 = 0;         /* var_14: 时间点索引 */
+
+    /* ====================================================================
+     * 阶段1: 初始化资源加载 (对应原游戏 0x1F8E6-0x1FA80)
      * ==================================================================== */
     
-    fd2_resources_t* res = fd2_get_resources();
+    /* sub_111BA(..., "FDOTHER.DAT", 77) */
+    {
+        u32 size = 0;
+        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 77, &size);
+        printf("[OPENING] Loaded FDOTHER index 77, size=%u\n", size);
+    }
     
-    /* 1. sub_111BA(..., "FDOTHER.DAT", 77) - 加载初始化资源 */
-    u32 size_77 = 0;
-    const u8* data_77 = fd2_resources_get(res, FD2_DAT_FDOTHER, 77, &size_77);
-    printf("[OPENING] Loaded FDOTHER index 77, size=%u\n", size_77);
-    
-    /* 2. memset(655360, 0, 64000) - 清屏 */
+    /* memset(655360, 0, 64000) - 清屏 */
     fd2_render_fill_screen(&sm->render, 0);
     
-    /* 3. sub_111BA(..., "FDOTHER.DAT", 76) - 加载调色板数据 */
-    /* 注意：索引76可能是复合资源，不是纯调色板 */
-    u32 size_76 = 0;
-    const u8* data_76 = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &size_76);
-    printf("[OPENING] Loaded FDOTHER index 76, size=%u\n", size_76);
+    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 76)
+     * 索引76包含768字节的6-bit RGB调色板数据 (256颜色×3字节)
+     */
+    {
+        u32 size = 0;
+        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &size);
+        printf("[OPENING] Loaded FDOTHER index 76, size=%u\n", size);
+        
+        /* 提取调色板数据到全局缓冲区 */
+        if (data && size >= 768) {
+            memcpy(g_palette_6bit, data, 768);
+            g_palette_loaded = 1;
+            printf("[OPENING] Palette loaded from index 76\n");
+            
+            /* 打印前几个调色板值用于验证 */
+            printf("[OPENING] Palette[0] = R:%d G:%d B:%d\n", g_palette_6bit[0], g_palette_6bit[1], g_palette_6bit[2]);
+            printf("[OPENING] Palette[1] = R:%d G:%d B:%d\n", g_palette_6bit[3], g_palette_6bit[4], g_palette_6bit[5]);
+            printf("[OPENING] Palette[2] = R:%d G:%d B:%d\n", g_palette_6bit[6], g_palette_6bit[7], g_palette_6bit[8]);
+        } else {
+            printf("[OPENING] ERROR: Index 76 size %u < 768\n", size);
+        }
+    }
     
-    /* 4. sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
-    fd2_render_set_brightness(&sm->render, 63);
+    /* sub_11D40(0, 255, 64) - 设置调色板(亮度64=最暗) */
+    sub_11D40(&sm->render, 0, 255, 64);
     
-    /* 5. sub_111BA(..., "FDOTHER.DAT", 74) - 加载初始图像 */
+    /* _FDOTHER.DAT__1 = sub_111BA(..., "FDOTHER.DAT", 74) */
     u32 size_74 = 0;
     const u8* data_74 = fd2_resources_get(res, FD2_DAT_FDOTHER, 74, &size_74);
     printf("[OPENING] Loaded FDOTHER index 74, size=%u\n", size_74);
     
-    /* 6. sub_4E98D解码到屏幕 */
+    /* sub_4E98D(_FDOTHER.DAT__1, 0, 0, 655360, 320, -1) - 解码到屏幕 */
     if (data_74) {
-        fd2_rle_decompress_to_buffer(data_74, size_74, sm->render.screen, 0, 320, -1);
+        printf("[OPENING] Decoding FDOTHER index 74 to screen...\n");
+        int result = fd2_rle_decompress_to_buffer(data_74, size_74, sm->render.screen, 0, 320, -1);
+        printf("[OPENING] Decode result: %d\n", result);
+        
+        /* 调试：检查屏幕缓冲区 */
+        int non_zero = 0;
+        for (int i = 0; i < 64000; i++) {
+            if (sm->render.screen[i] != 0) non_zero++;
+        }
+        printf("[OPENING] Screen buffer: %d non-zero pixels out of 64000\n", non_zero);
+        
         fd2_render_present(&sm->render);
+        printf("[OPENING] First frame rendered\n");
+        fflush(stdout);
     }
     
-    /* 7. sub_1F525() - 淡入效果 */
+    /* sub_1F525() - 淡入效果 */
     sub_1F525(&sm->render);
     
-    /* 8. sub_17AA9(1), sub_17AA9(30) - 播放音效 */
-    /* TODO: 实现音效播放 */
+    /* sub_17AA9(1); sub_17AA9(30) - 音效 */
     printf("[OPENING] Playing sound effects 1 and 30\n");
     
-    /* 9. sub_1F882() - 等待按键 */
-    printf("[OPENING] Waiting for key press after initial image...\n");
-    fflush(stdout);
-    sub_1F882();
+    /* 淡入效果（原游戏sub_1F882） */
+    sub_1F882(&sm->render);
     
-    /* 10. sub_111BA(..., "FDOTHER.DAT", 99) - 加载音乐资源 */
-    u32 size_99 = 0;
-    const u8* data_99 = fd2_resources_get(res, FD2_DAT_FDOTHER, 99, &size_99);
-    printf("[OPENING] Loaded FDOTHER index 99 (music), size=%u\n", size_99);
+    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 99) */
+    {
+        u32 size = 0;
+        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 99, &size);
+        printf("[OPENING] Loaded FDOTHER index 99, size=%u\n", size);
+    }
     
-    /* 11. memset(655360, 0, 64000) - 清屏 */
+    /* memset(655360, 0, 64000) - 清屏 */
     fd2_render_fill_screen(&sm->render, 0);
     
-    /* 12. sub_11D40(0, 255, 0) - 黑色调色板(亮度0) */
-    fd2_render_set_brightness(&sm->render, 0);
+    /* sub_11D40(0, 255, 0) - 黑色调色板 */
+    sub_11D40(&sm->render, 0, 255, 0);
     
-    /* 13. sub_20421(3, 90, 1) - 播放AFM动画索引3 */
+    /* sub_20421(3, 90, 1) - 播放AFM动画 */
     printf("[OPENING] Playing AFM animation index 3...\n");
     fd2_afm_play(3, 90, 1, &sm->render, res);
     
-    /* 清除AFM动画期间积累的所有SDL事件 */
-    SDL_Event dummy_event;
-    while (SDL_PollEvent(&dummy_event)) { }
+    /* 淡入效果（原游戏sub_1F882） */
+    sub_1F882(&sm->render);
     
-    /* 14. sub_1F882() - 等待按键 */
-    printf("[OPENING] Waiting for key press after AFM animation...\n");
-    fflush(stdout);
-    sub_1F882();
+    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 101)
+     * 索引101包含索引69-73图像的调色板数据
+     */
+    {
+        u32 size = 0;
+        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 101, &size);
+        printf("[OPENING] Loaded FDOTHER index 101, size=%u\n", size);
+        
+        /* 保存为当前调色板数据源 */
+        if (data && size >= 768) {
+            g_current_palette_data = data;
+            printf("[OPENING] Palette source switched to index 101\n");
+        }
+    }
     
-    /* 15. sub_111BA(..., "FDOTHER.DAT", 101) - 加载背景资源 */
-    u32 size_101 = 0;
-    const u8* data_101 = fd2_resources_get(res, FD2_DAT_FDOTHER, 101, &size_101);
-    printf("[OPENING] Loaded FDOTHER index 101 (bg), size=%u\n", size_101);
+    /* sub_11D40(0, 255, 64) - 设置调色板(亮度64=最暗) */
+    sub_11D40(&sm->render, 0, 255, 64);
     
-    /* 16. sub_11D40(0, 255, 64) - 设置调色板(亮度63) */
-    fd2_render_set_brightness(&sm->render, 63);
-    
-    /* 8. 加载FDOTHER索引69-73 (5个动画帧图像) 到缓冲区 */
-    /* 原游戏: n15 = malloc(0x396C0) = 235200字节 */
-    /* for (n5=0; n5<5; ++n5) { */
-    /*   sub_111BA(..., "FDOTHER.DAT", n5+69); */
-    /*   sub_4E98D(..., 0, 147*n5, n15, 320, -1); */
-    /* } */
-    
-    /* 分配动画缓冲区 (320*147*4 + 320*200 = 206080 + 64000 = 270080字节) */
-    /* 索引69-72是320x147，索引73是320x200 */
-    void* n15 = malloc(270080);
+    /* n15 = malloc(0x396C0) = 235200字节 */
+    void* n15 = malloc(0x396C0);
     if (!n15) {
         printf("[OPENING] Failed to allocate animation buffer\n");
         return 0;
     }
-    memset(n15, 0, 270080);
+    memset(n15, 0, 0x396C0);
     
-    /* 加载5个动画帧 */
+    /* for (n5=0; n5<5; ++n5) 加载索引69-73 */
     printf("[OPENING] Loading FDOTHER indices 69-73...\n");
     for (int n5 = 0; n5 < 5; ++n5) {
         int index = n5 + 69;
-        int dst_y = (n5 < 4) ? (147 * n5) : (147 * 4);
+        int dst_y = 147 * n5;
         
         u32 dat_size = 0;
         const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, index, &dat_size);
         
-        printf("[OPENING]   Index %d: dat_size=%u, dst_y=%d\n", index, dat_size, dst_y);
+        printf("[OPENING]   Index %d: dat_size=%u, dst_y=%d (offset=%d)\n", index, dat_size, dst_y, dst_y * 320);
         
         if (dat_data) {
-            int ret = fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
-            printf("[OPENING]   Decompress result: %d\n", ret);
+            int result = fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
+            printf("[OPENING]     Decode result: %d\n", result);
+            
+            /* 检查解码后的内容 */
+            u8* dst_ptr = (u8*)n15 + dst_y * 320;
+            int non_zero = 0;
+            for (int i = 0; i < 147 * 320 && i < dat_size * 4; i++) {
+                if (dst_ptr[i] != 0) non_zero++;
+            }
+            printf("[OPENING]     Decoded pixels: %d non-zero out of %d checked\n", non_zero, 147 * 320 < dat_size * 4 ? 147 * 320 : dat_size * 4);
         }
     }
     
-    /* 检查n15缓冲区内容 (打印前16字节) */
+    /* 检查n15缓冲区总内容 */
     {
-        u8* check = (u8*)n15;
-        printf("[OPENING] n15 buffer check (first 32 bytes at offset 0): ");
-        for (int i = 0; i < 32; i++) {
-            printf("%02x ", check[i]);
+        int total_non_zero = 0;
+        for (int i = 0; i < 0x396C0; i++) {
+            if (((u8*)n15)[i] != 0) total_non_zero++;
         }
-        printf("\n");
-        
-        /* 检查offset 535*320处 */
-        check = (u8*)n15 + 535 * 320;
-        printf("[OPENING] n15 buffer check (at offset 535*320): ");
-        for (int i = 0; i < 32; i++) {
-            printf("%02x ", check[i]);
-        }
-        printf("\n");
+        printf("[OPENING] n15 buffer total: %d non-zero pixels out of %d\n", total_non_zero, 0x396C0);
     }
     
-    /* 清屏为黑色 */
-    fd2_render_fill_screen(&sm->render, 0);
-    
-    /* 设置亮度为63（正常亮度）- 对应原游戏 sub_11D40(0, 255, 64) */
-    fd2_render_set_brightness(&sm->render, 63);
-    
+    /* sub_4E381() - 刷新屏幕 */
     fd2_render_present(&sm->render);
-
-    printf("[OPENING] Starting main animation loop (535 frames)...\n");
-    fflush(stdout);
+    
+    /* malloc(160) */
+    void* n8_1 = malloc(160);
 
     /* ====================================================================
-     * 阶段2: 主动画循环 (n535: 535→0)
-     * 对应原游戏 for (n535=535; ; --n535) 循环
+     * 阶段2: 主动画循环 (n535/esi: 535→0)
+     * 对应原游戏 0x1FA85-0x1FC60
      * ==================================================================== */
-    /* 阶段2: 主动画循环 (n535: 535→0) */
-    int n535 = FD2_ANIM_FRAME_START;
-    int v33 = 0;
-    int n12 = 0;
-
-    Uint32 loop_start = SDL_GetTicks();
-    printf("[OPENING] Animation loop starting at tick=%u\n", loop_start);
+    printf("[OPENING] Starting main animation loop (535 frames)...\n");
     fflush(stdout);
-
-    while (1) {
+    
+    for (int n535 = 535; ; --n535) {
+        /* if (n535 < 0) goto LABEL_31 (菜单阶段) */
         if (n535 < 0) {
-            Uint32 loop_end = SDL_GetTicks();
-            printf("[OPENING] Animation loop finished at tick=%u (duration=%ums), entering menu\n", 
-                   loop_end, loop_end - loop_start);
-            fflush(stdout);
             goto opening_menu;
         }
         
-        /* 对应原游戏: sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
-        /* 从n15+n535*320拷贝200行到屏幕 */
+        /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
         {
             int src_offset = n535 * 320;
-            if (src_offset >= 0 && src_offset + 64000 <= 270080) {
+            if (src_offset >= 0 && src_offset + 64000 <= 0x396C0) {
                 sub_11EB0(sm->render.screen, 320,
                           (u8*)n15 + src_offset, 320,
                           320, 200);
             }
         }
         
-        /* n535==535: sub_1F525() 淡入效果 */
+        /* 刷新屏幕显示当前帧 */
+        fd2_render_present(&sm->render);
+        
+        /* if (n535 == 535) sub_1F525() */
         if (n535 == 535) {
             sub_1F525(&sm->render);
         }
         
-        /* n535==25: 跳出循环到标签LABEL_31 */
+        /* if (n535 == 25) break (跳出循环到LABEL_13) */
         if (n535 == 25) {
-            printf("[OPENING] Frame 25: breaking to menu\n");
+            printf("[OPENING] Frame 25: breaking\n");
             fflush(stdout);
             
             /* sub_1F81E(0, 15, 0) */
-            sub_1F81E(sm, -1, 0, 15);
+            sub_1F81E(sm, 0, 15, 0);
             
-            /* sub_11EB0拷贝 */
-            {
-                int src_offset = n535 * 320;
-                if (src_offset >= 0 && src_offset + 64000 <= 270080) {
-                    sub_11EB0(sm->render.screen, 320,
-                              (u8*)n15 + src_offset, 320,
-                              320, 200);
-                }
-            }
-            
-            /* sub_1F525()淡入 */
-            sub_1F525(&sm->render);
-            
-            goto opening_menu;
+            /* goto LABEL_13 */
+            goto label_13;
         }
         
-        /* 关键帧事件触发 - switch语句 */
+        /* switch (n535) */
         switch (n535) {
+            case 330:
+                /* sub_1F882() - 淡入效果 */
+                sub_1F882(&sm->render);
+                /* sub_1F81E(4, 90, 99) */
+                sub_1F81E(sm, 4, 90, 99);
+                /* sub_1F81E(5, 50, 0) */
+                sub_1F81E(sm, 5, 50, 0);
+                /* goto LABEL_13 */
+                goto label_13;
+                
+            case 210:
+                /* sub_1F882() - 淡入效果 */
+                sub_1F882(&sm->render);
+                /* sub_1F81E(6, 90, 99) */
+                sub_1F81E(sm, 6, 90, 99);
+                /* sub_1F81E(7, 50, 0) */
+                sub_1F81E(sm, 7, 50, 0);
+                /* goto LABEL_13 */
+                goto label_13;
+                
+            case 110:
+                /* sub_1F882() - 淡入效果 */
+                sub_1F882(&sm->render);
+                /* sub_1F81E(8, 90, 99) */
+                sub_1F81E(sm, 8, 90, 99);
+                /* goto LABEL_13 */
+                goto label_13;
+                
             case 450:
                 /* sub_1F73F(100, 99, n15, 450) */
                 sub_1F73F(sm, 100, 99, n15, 450);
-                break;
-                
-            case 330:
-                /* sub_1F882() */
-                sub_1F882();
-                /* sub_1F81E(4, 90, 99) */
-                sub_1F81E(sm, 99, 4, 90);
-                /* sub_1F81E(5, 50, 0) */
-                sub_1F81E(sm, 0, 5, 50);
-                break;
-                
-            case 210:
-                /* sub_1F882() */
-                sub_1F882();
-                /* sub_1F81E(6, 90, 99) */
-                sub_1F81E(sm, 99, 6, 90);
-                /* sub_1F81E(7, 50, 0) */
-                sub_1F81E(sm, 0, 7, 50);
-                break;
-                
-            case 110:
-                /* sub_1F882() */
-                sub_1F882();
-                /* sub_1F81E(8, 90, 99) */
-                sub_1F81E(sm, 99, 8, 90);
                 break;
                 
             case 10:
@@ -501,99 +552,127 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
                 break;
         }
         
-        /* 检查时间点 - 对应原游戏 dst_[v33] 数组检查 */
+        /* LABEL_24: 循环末尾逻辑 */
+label_24:
+        /* if (n535 == dst_[v33]) */
         if (v33 < FD2_OPENING_TIME_COUNT && n535 == g_opening_time_points[v33]) {
             n12 = 0;
-            /* sub_25A96(..., 0, 1) - 资源加载 */
-            /* 简化处理：仅重置计数器 */
+            /* sub_25A96(..., 0, 1) - 简化 */
             v33++;
         }
         
+        /* if (n12 == 11) */
         if (n12 == 11) {
-            /* sub_111BA(..., 101) + sub_11D40(0, 255, 0) */
-            /* 简化处理 */
+            /* sub_111BA(..., 101) + sub_11D40(0, 255, 0) - 简化 */
         }
         
-        n12++;
+        ++n12;
         
-        /* 渲染并延迟 */
-        fd2_render_present(&sm->render);
+        /* delay(30) */
         fd2_delay(30);
         
-        if (n535 == 0) {
+        /* if (!n535) delay(1000) */
+        if (!n535) {
             fd2_delay(1000);
         }
         
-        /* 检查按键跳过 (对应原游戏 sub_10620()) */
+        /* if (sub_10620()) goto LABEL_31 */
         if (fd2_check_key_pressed()) {
             goto opening_menu;
         }
+        continue;
         
-        --n535;
+        /* LABEL_13: 从n535==25/330/210/110跳转过来 */
+label_13:
+        /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
+        {
+            int src_offset = n535 * 320;
+            if (src_offset >= 0 && src_offset + 64000 <= 0x396C0) {
+                sub_11EB0(sm->render.screen, 320,
+                          (u8*)n15 + src_offset, 320,
+                          320, 200);
+            }
+        }
+        
+        /* 刷新屏幕显示当前帧 */
+        fd2_render_present(&sm->render);
+        
+        /* sub_111BA(..., "FDOTHER.DAT", 101) */
+        /* sub_1F525() */
+        sub_1F525(&sm->render);
+        
+        /* goto LABEL_24 */
+        goto label_24;
     }
 
 opening_menu:
     /* ====================================================================
-     * 阶段3: 菜单显示和用户选择
+     * 阶段3: 菜单显示和用户选择 (LABEL_31)
      * 对应原游戏 0x1FC66-0x1FF6A
      * ==================================================================== */
-    printf("[OPENING] Entering menu phase...\n");
+    printf("[OPENING] Entering menu phase (LABEL_31)...\n");
     
-    /* 1. 淡出效果 (n40: 40→0) */
+    /* for (n40=40; n40>=0; --n40) sub_2DF01(0, 255, n40, 0x3F, 0, 0); delay(8); */
     for (int n40 = 40; n40 >= 0; --n40) {
-        /* sub_2DF01(0, 255, n40, 0x3F, 0, 0) */
+        sub_11D40(&sm->render, 0, 255, n40);
+        fd2_render_present(&sm->render);
         fd2_delay(8);
     }
     fd2_delay(100);
     fd2_render_present(&sm->render);
     
-    /* 2. 释放旧资源 */
+    /* free(n15); free(_FDOTHER.DAT__1); */
     if (n15) {
         free(n15);
         n15 = NULL;
     }
+    if (n8_1) {
+        free(n8_1);
+        n8_1 = NULL;
+    }
     
-    /* 3. 加载菜单资源 */
     /* _FDOTHER.DAT__3 = sub_111BA(..., "FDOTHER.DAT", 7) */
     /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 8) */
     
-    /* 4. 清屏，设置黑色调色板 */
+    /* memset(655360, 0, 64000) */
     fd2_render_fill_screen(&sm->render, 0);
-    fd2_render_set_brightness(&sm->render, 0);
     
-    /* 5. sub_20421(1, 15, 1) - 播放AFM动画索引1 */
+    /* sub_11D40(0, 255, 0) */
+    sub_11D40(&sm->render, 0, 255, 0);
+    
+    /* sub_20421(1, 15, 1) */
+    printf("[OPENING] Playing AFM animation index 1...\n");
+    fd2_afm_play(1, 15, 1, &sm->render, res);
+    
     /* sub_25B45(..., 3, 1) */
-    /* sub_11DF2(0, 255, 64) - 设置调色板 */
-    fd2_render_set_brightness(&sm->render, 63);
+    /* sub_11DF2(0, 255, 64) */
+    sub_11D40(&sm->render, 0, 255, 64);
     
-    /* 6. 渲染菜单背景 */
     /* sub_16886(655360, 320, _FDOTHER.DAT__3, 0) */
+    /* 渲染菜单背景 */
     
-    /* 7. 淡入效果 (n40_1: 0→40) */
+    /* for (n40_1=0; n40_1<=40; ++n40_1) sub_2DF01(0, 255, n40_1, 0x38, 0x3C, 0x3F); delay(8); */
     for (int n40_1 = 0; n40_1 <= 40; ++n40_1) {
-        /* sub_2DF01(0, 255, n40_1, 0x38, 0x3C, 0x3F) */
+        fd2_render_set_brightness(&sm->render, n40_1);
+        fd2_render_present(&sm->render);
         fd2_delay(8);
     }
     fd2_render_present(&sm->render);
     
-    /* 8. 检查存档是否存在 */
-    int n2_1 = 1;  /* 菜单项数量 */
+    /* 检查存档是否存在 */
+    int n2_3;
     {
         FILE* fp = fopen("FD2.SAV", "rb");
         if (fp) {
             void* save_buf = malloc(22987);
             if (save_buf) {
                 fread(save_buf, 1, 22987, fp);
-                /* sub_4DF28 - 解密存档 */
-                /* 检查存档校验和 */
                 fclose(fp);
                 
-                /* 如果存档有效，菜单项增加 */
+                n2_1 = 2;
                 unsigned char* byte_ptr = (unsigned char*)save_buf + 12485;
                 if (*byte_ptr != 255) {
-                    n2_1 = 3;  /* Start, Load, Quit */
-                } else {
-                    n2_1 = 2;  /* Start, Quit */
+                    n2_1 = 3;
                 }
                 free(save_buf);
             } else {
@@ -602,19 +681,20 @@ opening_menu:
         }
     }
     
-    /* 9. 显示菜单选项 */
-    /* sub_1FF79(_FDOTHER.DAT__2, 0, n2_1) - 显示菜单 */
+    /* sub_1FF79(..., 0, n2_1) - 显示菜单 */
     printf("[OPENING] Displaying menu with %d options\n", n2_1);
     
-    /* 10. 等待用户输入 */
-    int n2_2 = 0;  /* 当前选中项 */
-    int v27 = 0;   /* 选择标志 */
+    /* 等待用户输入 */
+    n2_2 = 0;
+    v27 = 0;
     
     printf("[OPENING] Waiting for menu input...\n");
     fflush(stdout);
     
     while (!v27) {
-        /* 处理SDL事件 */
+        /* sub_1FF79(..., n2_2, n2_1) - 渲染菜单 */
+        
+        /* int386(22, &n3, &n3) - 读取键盘 */
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -624,12 +704,14 @@ opening_menu:
             }
             
             if (event.type == SDL_KEYDOWN && !event.key.repeat) {
-                u8 hi_byte = event.key.keysym.scancode >> 8;
-                u8 lo_byte = event.key.keysym.scancode & 0xFF;
+                int scancode = event.key.keysym.scancode;
+                int hi_byte = (scancode >> 8) & 0xFF;
+                int lo_byte = scancode & 0xFF;
+                
+                n2_3 = n2_1 - 1;
                 
                 if (hi_byte == 72 || lo_byte == 72) {
-                    /* 上箭头 - 向上移动 */
-                    int n2_3 = n2_1 - 1;
+                    /* 上箭头 */
                     if (n2_2) {
                         --n2_2;
                     } else {
@@ -639,8 +721,7 @@ opening_menu:
                     fflush(stdout);
                 }
                 else if (hi_byte == 80 || lo_byte == 80) {
-                    /* 下箭头 - 向下移动 */
-                    int n2_3 = n2_1 - 1;
+                    /* 下箭头 */
                     if (n2_2 == n2_3) {
                         n2_2 = 0;
                     } else {
@@ -650,12 +731,8 @@ opening_menu:
                     fflush(stdout);
                 }
                 else if (lo_byte == 13 || lo_byte == 32 || 
-                         lo_byte == 27 || hi_byte == 82) {
-                    /* Enter/Space/ESC/Insert - 确认或退出 */
-                    if (lo_byte == 27) {
-                        /* ESC - 退出 */
-                        n2_2 = 255;
-                    }
+                         hi_byte == 224 || hi_byte == 82) {
+                    /* Enter/Space/特殊键 */
                     v27 = 1;
                     printf("[OPENING] Menu confirmed: %d\n", n2_2);
                     fflush(stdout);
@@ -663,30 +740,21 @@ opening_menu:
             }
         }
         
-        /* 渲染菜单 */
         fd2_render_present(&sm->render);
         fd2_delay(16);
     }
     
-    /* 11. 闪烁效果 (4次) */
+    /* 闪烁效果 (4次) */
     for (int n4 = 0; n4 < 4; ++n4) {
-        /* sub_1FF79(..., -1, n2_1) - 隐藏高亮 */
         fd2_delay(80);
-        /* sub_1FF79(..., n2_2, n2_1) - 显示高亮 */
         fd2_delay(80);
     }
     
-    /* 12. 清理资源 */
-    /* sub_1F882() */
-    /* memset(655360, 0, 64000) */
+    /* 淡入效果 */
+    sub_1F882(&sm->render);
     fd2_render_fill_screen(&sm->render, 0);
-    /* free(_FDOTHER.DAT__2) */
-    /* sub_25A96(..., -1, 1) */
-    /* free(_FDOTHER.DAT_) */
-    
     fd2_render_present(&sm->render);
     
-    /* 13. 返回选择结果 */
     printf("[OPENING] Menu result: %d\n", n2_2);
     return n2_2;
 }
