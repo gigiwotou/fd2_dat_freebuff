@@ -308,7 +308,10 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     int v27 = 0;         /* var_2C: 菜单选择标志 */
     int n2_2 = 0;        /* var_28: 当前选中项 */
     int n12 = 12;        /* var_20: 计数器 */
-    int v33 = 0;         /* var_14: 时间点索引 */
+    unsigned char v33 = 0; /* var_14: 时间点索引 */
+    
+    /* dst_数组 = {450, 330, 210, 110, 25, 10} */
+    int dst_[6] = {450, 330, 210, 110, 25, 10};
 
     /* ====================================================================
      * 阶段1: 初始化资源加载 (对应原游戏 0x1F8E6-0x1FA80)
@@ -336,6 +339,7 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         if (data && size >= 768) {
             memcpy(g_palette_6bit, data, 768);
             g_palette_loaded = 1;
+            g_current_palette_data = g_palette_6bit;  /* 设置当前调色板指针 */
             printf("[OPENING] Palette loaded from index 76\n");
             
             /* 打印前几个调色板值用于验证 */
@@ -554,16 +558,42 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         
         /* LABEL_24: 循环末尾逻辑 */
 label_24:
-        /* if (n535 == dst_[v33]) */
-        if (v33 < FD2_OPENING_TIME_COUNT && n535 == g_opening_time_points[v33]) {
+        /* if (n535 == dst_[v33]) - 在特定帧切换调色板到索引102 */
+        if (v33 < 6 && n535 == dst_[v33]) {
             n12 = 0;
-            /* sub_25A96(..., 0, 1) - 简化 */
-            v33++;
+            
+            /* FDOTHER_DAT = sub_111BA(..., 102) - 切换到索引102调色板 */
+            {
+                u32 size = 0;
+                const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 102, &size);
+                if (data && size >= 768) {
+                    g_current_palette_data = data;
+                    printf("[OPENING] Palette -> index 102 at frame %d\n", n535);
+                }
+            }
+            
+            /* sub_11D40(0, 255, 0) - 正常亮度 */
+            sub_11D40(&sm->render, 0, 255, 0);
+            fd2_render_present(&sm->render);
+            
+            ++v33;
         }
         
-        /* if (n12 == 11) */
+        /* if (n12 == 11) - 切换回索引101调色板 */
         if (n12 == 11) {
-            /* sub_111BA(..., 101) + sub_11D40(0, 255, 0) - 简化 */
+            /* FDOTHER_DAT = sub_111BA(..., 101) */
+            {
+                u32 size = 0;
+                const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 101, &size);
+                if (data && size >= 768) {
+                    g_current_palette_data = data;
+                    printf("[OPENING] Palette -> index 101 (n12==11)\n");
+                }
+            }
+            
+            /* sub_11D40(0, 255, 0) - 正常亮度 */
+            sub_11D40(&sm->render, 0, 255, 0);
+            fd2_render_present(&sm->render);
         }
         
         ++n12;
