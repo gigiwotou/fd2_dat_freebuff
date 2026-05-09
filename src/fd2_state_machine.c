@@ -716,6 +716,15 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                 fd2_render_present(&sm->render);
             }
             
+            /* ============================================================
+             * 关键修复: IDLE状态时也要刷新屏幕
+             * 原游戏在空闲状态也会调用sub_4E381()刷新屏幕
+             * ============================================================ */
+            fd2_render_present(&sm->render);
+            
+            /* 控制帧率 */
+            SDL_Delay(16);  /* ~60 FPS */
+            
         } while (!i);
         
         if (i == -1) {

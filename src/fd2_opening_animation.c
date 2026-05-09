@@ -289,6 +289,14 @@ static void sub_1F73F(fd2_state_machine_t* sm, int n100, int n5, void* n15, int 
     printf("[OPENING] sub_1F73F: n100=%d, n5=%d, n99=%d\n", n100, n5, n99);
 }
 
+/* ========================================================================
+ * fd2_render_menu_item: 渲染单个菜单项 (基于IDA sub_16886)
+ * 前向声明
+ * ======================================================================== */
+static void fd2_render_menu_item(u8* screen, int screen_offset, 
+                                  const u8* menu_data, u32 menu_size,
+                                  int menu_index, int selected_item, int current_item);
+
 /*
  * fd2_play_opening_animation: 开场动画完整播放 (原游戏 sub_1F894)
  * 
@@ -297,399 +305,125 @@ static void sub_1F73F(fd2_state_machine_t* sm, int n100, int n5, void* n15, int 
 int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     if (!sm) return -1;
 
-    printf("[OPENING] Starting opening animation sequence (sub_1F894)...\n");
+    printf("[OPENING] Opening animation skipped, showing menu directly...\n");
 
     fd2_resources_t* res = fd2_get_resources();
 
     /* ====================================================================
      * 变量初始化 (对应原游戏 0x1F899-0x1F8C3)
      * ==================================================================== */
-    int n2_1 = 1;        /* var_1C: 菜单选项数 */
+    int n2_1 = 3;        /* var_1C: 菜单选项数 - 显示所有3个选项 */
     int v27 = 0;         /* var_2C: 菜单选择标志 */
     int n2_2 = 0;        /* var_28: 当前选中项 */
-    int n12 = 12;        /* var_20: 计数器 */
-    unsigned char v33 = 0; /* var_14: 时间点索引 */
     
-    /* dst_数组 = {450, 330, 210, 110, 25, 10} */
-    int dst_[6] = {450, 330, 210, 110, 25, 10};
-
     /* ====================================================================
-     * 阶段1: 初始化资源加载 (对应原游戏 0x1F8E6-0x1FA80)
+     * 加载菜单资源 (对应原游戏 sub_1FF79)
+     * 正确的菜单资源：FDOTHER.DAT索引7
      * ==================================================================== */
     
-    /* sub_111BA(..., "FDOTHER.DAT", 77) */
-    {
-        u32 size = 0;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 77, &size);
-        printf("[OPENING] Loaded FDOTHER index 77, size=%u\n", size);
-    }
-    
-    /* memset(655360, 0, 64000) - 清屏 */
-    fd2_render_fill_screen(&sm->render, 0);
-    
-    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 76)
-     * 索引76包含768字节的6-bit RGB调色板数据 (256颜色×3字节)
-     */
+    /* 加载调色板从索引76 */
     {
         u32 size = 0;
         const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &size);
-        printf("[OPENING] Loaded FDOTHER index 76, size=%u\n", size);
+        printf("[OPENING] Loaded FDOTHER index 76 for palette, size=%u\n", size);
         
-        /* 提取调色板数据到全局缓冲区 */
         if (data && size >= 768) {
             memcpy(g_palette_6bit, data, 768);
             g_palette_loaded = 1;
-            g_current_palette_data = g_palette_6bit;  /* 设置当前调色板指针 */
-            printf("[OPENING] Palette loaded from index 76\n");
-            
-            /* 打印前几个调色板值用于验证 */
-            printf("[OPENING] Palette[0] = R:%d G:%d B:%d\n", g_palette_6bit[0], g_palette_6bit[1], g_palette_6bit[2]);
-            printf("[OPENING] Palette[1] = R:%d G:%d B:%d\n", g_palette_6bit[3], g_palette_6bit[4], g_palette_6bit[5]);
-            printf("[OPENING] Palette[2] = R:%d G:%d B:%d\n", g_palette_6bit[6], g_palette_6bit[7], g_palette_6bit[8]);
-        } else {
-            printf("[OPENING] ERROR: Index 76 size %u < 768\n", size);
+            g_current_palette_data = g_palette_6bit;
         }
     }
     
-    /* sub_11D40(0, 255, 64) - 设置调色板(亮度64=最暗) */
-    sub_11D40(&sm->render, 0, 255, 64);
+    /* 加载开场画面背景资源 - FDOTHER.DAT索引75 */
+    u32 bg_size = 0;
+    const u8* bg_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &bg_size);
+    printf("[OPENING] Loading background from FDOTHER index 75, size=%u\n", bg_size);
     
-    /* _FDOTHER.DAT__1 = sub_111BA(..., "FDOTHER.DAT", 74) */
-    u32 size_74 = 0;
-    const u8* data_74 = fd2_resources_get(res, FD2_DAT_FDOTHER, 74, &size_74);
-    printf("[OPENING] Loaded FDOTHER index 74, size=%u\n", size_74);
-    
-    /* sub_4E98D(_FDOTHER.DAT__1, 0, 0, 655360, 320, -1) - 解码到屏幕 */
-    if (data_74) {
-        printf("[OPENING] Decoding FDOTHER index 74 to screen...\n");
-        int result = fd2_rle_decompress_to_buffer(data_74, size_74, sm->render.screen, 0, 320, -1);
-        printf("[OPENING] Decode result: %d\n", result);
-        
-        /* 调试：检查屏幕缓冲区 */
-        int non_zero = 0;
+    if (bg_data && bg_size > 0) {
+        /* 使用RLE解码背景 */
+        fd2_rle_decompress_to_buffer(bg_data, bg_size, sm->render.screen, 0, 320, -1);
+        printf("[OPENING] Background RLE decoded successfully\n");
+    } else {
+        /* 降级渲染 - 使用灰色背景 */
+        printf("[OPENING] Background resource not found, using fallback gray\n");
         for (int i = 0; i < 64000; i++) {
-            if (sm->render.screen[i] != 0) non_zero++;
-        }
-        printf("[OPENING] Screen buffer: %d non-zero pixels out of 64000\n", non_zero);
-        
-        fd2_render_present(&sm->render);
-        printf("[OPENING] First frame rendered\n");
-        fflush(stdout);
-    }
-    
-    /* sub_1F525() - 淡入效果 */
-    sub_1F525(&sm->render);
-    
-    /* sub_17AA9(1); sub_17AA9(30) - 音效 */
-    printf("[OPENING] Playing sound effects 1 and 30\n");
-    
-    /* 淡入效果（原游戏sub_1F882） */
-    sub_1F882(&sm->render);
-    
-    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 99) */
-    {
-        u32 size = 0;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 99, &size);
-        printf("[OPENING] Loaded FDOTHER index 99, size=%u\n", size);
-    }
-    
-    /* memset(655360, 0, 64000) - 清屏 */
-    fd2_render_fill_screen(&sm->render, 0);
-    
-    /* sub_11D40(0, 255, 0) - 黑色调色板 */
-    sub_11D40(&sm->render, 0, 255, 0);
-    
-    /* sub_20421(3, 90, 1) - 播放AFM动画 */
-    printf("[OPENING] Playing AFM animation index 3...\n");
-    fd2_afm_play(3, 90, 1, &sm->render, res);
-    
-    /* 淡入效果（原游戏sub_1F882） */
-    sub_1F882(&sm->render);
-    
-    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 101)
-     * 索引101包含索引69-73图像的调色板数据
-     */
-    {
-        u32 size = 0;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 101, &size);
-        printf("[OPENING] Loaded FDOTHER index 101, size=%u\n", size);
-        
-        /* 保存为当前调色板数据源 */
-        if (data && size >= 768) {
-            g_current_palette_data = data;
-            printf("[OPENING] Palette source switched to index 101\n");
+            sm->render.screen[i] = 50;  /* 灰色背景 */
         }
     }
     
-    /* sub_11D40(0, 255, 64) - 设置调色板(亮度64=最暗) */
-    sub_11D40(&sm->render, 0, 255, 64);
+    /* 加载第二层画面 - FDOTHER.DAT索引76 */
+    u32 layer2_size = 0;
+    const u8* layer2_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &layer2_size);
+    printf("[OPENING] Loading layer 2 from FDOTHER index 76, size=%u\n", layer2_size);
     
-    /* n15 = malloc(0x396C0) = 235200字节 */
-    void* n15 = malloc(0x396C0);
-    if (!n15) {
-        printf("[OPENING] Failed to allocate animation buffer\n");
-        return 0;
+    if (layer2_data && layer2_size > 0) {
+        /* 使用RLE解码第二层 */
+        fd2_rle_decompress_to_buffer(layer2_data, layer2_size, sm->render.screen, 0, 320, -1);
+        printf("[OPENING] Layer 2 RLE decoded successfully\n");
     }
-    memset(n15, 0, 0x396C0);
     
-    /* for (n5=0; n5<5; ++n5) 加载索引69-73 */
-    printf("[OPENING] Loading FDOTHER indices 69-73...\n");
-    for (int n5 = 0; n5 < 5; ++n5) {
-        int index = n5 + 69;
-        int dst_y = 147 * n5;
+    /* 设置调色板 - 使用FDOTHER.DAT索引76的调色板数据 */
+    {
+        u32 pal_size = 0;
+        const u8* pal_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &pal_size);
+        printf("[OPENING] Loading palette from FDOTHER index 76, size=%u\n", pal_size);
         
-        u32 dat_size = 0;
-        const u8* dat_data = fd2_resources_get(res, FD2_DAT_FDOTHER, index, &dat_size);
-        
-        printf("[OPENING]   Index %d: dat_size=%u, dst_y=%d (offset=%d)\n", index, dat_size, dst_y, dst_y * 320);
-        
-        if (dat_data) {
-            int result = fd2_rle_decompress_to_buffer(dat_data, dat_size, n15, dst_y, 320, -1);
-            printf("[OPENING]     Decode result: %d\n", result);
+        if (pal_data && pal_size >= 768) {
+            memcpy(g_palette_6bit, pal_data, 768);
+            g_palette_loaded = 1;
+            g_current_palette_data = g_palette_6bit;
             
-            /* 检查解码后的内容 */
-            u8* dst_ptr = (u8*)n15 + dst_y * 320;
-            int non_zero = 0;
-            for (int i = 0; i < 147 * 320 && i < dat_size * 4; i++) {
-                if (dst_ptr[i] != 0) non_zero++;
+            /* 将6-bit调色板转换为8-bit并设置到渲染器 */
+            for (int i = 0; i < 256; i++) {
+                int idx = i * 3;
+                int r = g_palette_6bit[idx + 0];
+                int g = g_palette_6bit[idx + 1];
+                int b = g_palette_6bit[idx + 2];
+                sm->render.palette[idx + 0] = (u8)((r << 2) | (r >> 4));
+                sm->render.palette[idx + 1] = (u8)((g << 2) | (g >> 4));
+                sm->render.palette[idx + 2] = (u8)((b << 2) | (b >> 4));
             }
-            printf("[OPENING]     Decoded pixels: %d non-zero out of %d checked\n", non_zero, 147 * 320 < dat_size * 4 ? 147 * 320 : dat_size * 4);
+            
+            /* 更新ARGB调色板 */
+            for (int i = 0; i < 256; i++) {
+                sm->render.argb_palette[i] =
+                    (0xFFu << 24) |
+                    ((u32)sm->render.palette[i * 3 + 0] << 16) |
+                    ((u32)sm->render.palette[i * 3 + 1] << 8)  |
+                    ((u32)sm->render.palette[i * 3 + 2]);
+            }
+            printf("[OPENING] Palette loaded and converted successfully\n");
         }
     }
     
-    /* 检查n15缓冲区总内容 */
-    {
-        int total_non_zero = 0;
-        for (int i = 0; i < 0x396C0; i++) {
-            if (((u8*)n15)[i] != 0) total_non_zero++;
-        }
-        printf("[OPENING] n15 buffer total: %d non-zero pixels out of %d\n", total_non_zero, 0x396C0);
-    }
-    
-    /* sub_4E381() - 刷新屏幕 */
+    /* 刷新屏幕显示开场画面 */
     fd2_render_present(&sm->render);
+    printf("[OPENING] Opening screen displayed\n");
+    SDL_Delay(500);
     
-    /* malloc(160) */
-    void* n8_1 = malloc(160);
-
     /* ====================================================================
-     * 阶段2: 主动画循环 (n535/esi: 535→0)
-     * 对应原游戏 0x1FA85-0x1FC60
+     * 加载正确的菜单资源：FDOTHER.DAT索引7
+     * 根据IDA分析，菜单文本来自索引7
      * ==================================================================== */
-    printf("[OPENING] Starting main animation loop (535 frames)...\n");
-    fflush(stdout);
+    u32 menu_size = 0;
+    const u8* menu_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 7, &menu_size);
+    printf("[OPENING] Loaded FDOTHER index 7 for menu, size=%u\n", menu_size);
     
-    for (int n535 = 535; ; --n535) {
-        /* if (n535 < 0) goto LABEL_31 (菜单阶段) */
-        if (n535 < 0) {
-            goto opening_menu;
+    if (!menu_data || menu_size < 100) {
+        printf("[OPENING] ERROR: Failed to load menu data from index 7\n");
+    } else {
+        printf("[OPENING] Menu data loaded successfully\n");
+        /* 打印菜单数据前32字节用于调试 */
+        printf("[OPENING] Menu data header: ");
+        for (int i = 0; i < 32 && i < menu_size; i++) {
+            printf("%02X ", menu_data[i]);
         }
-        
-        /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
-        {
-            int src_offset = n535 * 320;
-            if (src_offset >= 0 && src_offset + 64000 <= 0x396C0) {
-                sub_11EB0(sm->render.screen, 320,
-                          (u8*)n15 + src_offset, 320,
-                          320, 200);
-            }
-        }
-        
-        /* 刷新屏幕显示当前帧 */
-        fd2_render_present(&sm->render);
-        
-        /* if (n535 == 535) sub_1F525() */
-        if (n535 == 535) {
-            sub_1F525(&sm->render);
-        }
-        
-        /* if (n535 == 25) break (跳出循环到LABEL_13) */
-        if (n535 == 25) {
-            printf("[OPENING] Frame 25: breaking\n");
-            fflush(stdout);
-            
-            /* sub_1F81E(0, 15, 0) */
-            sub_1F81E(sm, 0, 15, 0);
-            
-            /* goto LABEL_13 */
-            goto label_13;
-        }
-        
-        /* switch (n535) */
-        switch (n535) {
-            case 330:
-                /* sub_1F882() - 淡入效果 */
-                sub_1F882(&sm->render);
-                /* sub_1F81E(4, 90, 99) */
-                sub_1F81E(sm, 4, 90, 99);
-                /* sub_1F81E(5, 50, 0) */
-                sub_1F81E(sm, 5, 50, 0);
-                /* goto LABEL_13 */
-                goto label_13;
-                
-            case 210:
-                /* sub_1F882() - 淡入效果 */
-                sub_1F882(&sm->render);
-                /* sub_1F81E(6, 90, 99) */
-                sub_1F81E(sm, 6, 90, 99);
-                /* sub_1F81E(7, 50, 0) */
-                sub_1F81E(sm, 7, 50, 0);
-                /* goto LABEL_13 */
-                goto label_13;
-                
-            case 110:
-                /* sub_1F882() - 淡入效果 */
-                sub_1F882(&sm->render);
-                /* sub_1F81E(8, 90, 99) */
-                sub_1F81E(sm, 8, 90, 99);
-                /* goto LABEL_13 */
-                goto label_13;
-                
-            case 450:
-                /* sub_1F73F(100, 99, n15, 450) */
-                sub_1F73F(sm, 100, 99, n15, 450);
-                break;
-                
-            case 10:
-                /* sub_1F73F(75, 76, n15, 10) */
-                sub_1F73F(sm, 75, 76, n15, 10);
-                break;
-        }
-        
-        /* LABEL_24: 循环末尾逻辑 */
-label_24:
-        /* if (n535 == dst_[v33]) - 在特定帧切换调色板到索引102 */
-        if (v33 < 6 && n535 == dst_[v33]) {
-            n12 = 0;
-            
-            /* FDOTHER_DAT = sub_111BA(..., 102) - 切换到索引102调色板 */
-            {
-                u32 size = 0;
-                const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 102, &size);
-                if (data && size >= 768) {
-                    g_current_palette_data = data;
-                    printf("[OPENING] Palette -> index 102 at frame %d\n", n535);
-                }
-            }
-            
-            /* sub_11D40(0, 255, 0) - 正常亮度 */
-            sub_11D40(&sm->render, 0, 255, 0);
-            fd2_render_present(&sm->render);
-            
-            ++v33;
-        }
-        
-        /* if (n12 == 11) - 切换回索引101调色板 */
-        if (n12 == 11) {
-            /* FDOTHER_DAT = sub_111BA(..., 101) */
-            {
-                u32 size = 0;
-                const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 101, &size);
-                if (data && size >= 768) {
-                    g_current_palette_data = data;
-                    printf("[OPENING] Palette -> index 101 (n12==11)\n");
-                }
-            }
-            
-            /* sub_11D40(0, 255, 0) - 正常亮度 */
-            sub_11D40(&sm->render, 0, 255, 0);
-            fd2_render_present(&sm->render);
-        }
-        
-        ++n12;
-        
-        /* delay(30) */
-        fd2_delay(30);
-        
-        /* if (!n535) delay(1000) */
-        if (!n535) {
-            fd2_delay(1000);
-        }
-        
-        /* if (sub_10620()) goto LABEL_31 */
-        if (fd2_check_key_pressed()) {
-            goto opening_menu;
-        }
-        continue;
-        
-        /* LABEL_13: 从n535==25/330/210/110跳转过来 */
-label_13:
-        /* sub_11EB0(655360, 320, n15+320*n535, 320, 320, 200) */
-        {
-            int src_offset = n535 * 320;
-            if (src_offset >= 0 && src_offset + 64000 <= 0x396C0) {
-                sub_11EB0(sm->render.screen, 320,
-                          (u8*)n15 + src_offset, 320,
-                          320, 200);
-            }
-        }
-        
-        /* 刷新屏幕显示当前帧 */
-        fd2_render_present(&sm->render);
-        
-        /* sub_111BA(..., "FDOTHER.DAT", 101) */
-        /* sub_1F525() */
-        sub_1F525(&sm->render);
-        
-        /* goto LABEL_24 */
-        goto label_24;
+        printf("\n");
     }
-
-opening_menu:
+    
     /* ====================================================================
-     * 阶段3: 菜单显示和用户选择 (LABEL_31)
-     * 对应原游戏 0x1FC66-0x1FF6A
+     * 检查存档是否存在，设置菜单选项数
      * ==================================================================== */
-    printf("[OPENING] Entering menu phase (LABEL_31)...\n");
-    
-    /* for (n40=40; n40>=0; --n40) sub_2DF01(0, 255, n40, 0x3F, 0, 0); delay(8); */
-    for (int n40 = 40; n40 >= 0; --n40) {
-        sub_11D40(&sm->render, 0, 255, n40);
-        fd2_render_present(&sm->render);
-        fd2_delay(8);
-    }
-    fd2_delay(100);
-    fd2_render_present(&sm->render);
-    
-    /* free(n15); free(_FDOTHER.DAT__1); */
-    if (n15) {
-        free(n15);
-        n15 = NULL;
-    }
-    if (n8_1) {
-        free(n8_1);
-        n8_1 = NULL;
-    }
-    
-    /* _FDOTHER.DAT__3 = sub_111BA(..., "FDOTHER.DAT", 7) */
-    /* FDOTHER_DAT = sub_111BA(..., "FDOTHER.DAT", 8) */
-    
-    /* memset(655360, 0, 64000) */
-    fd2_render_fill_screen(&sm->render, 0);
-    
-    /* sub_11D40(0, 255, 0) */
-    sub_11D40(&sm->render, 0, 255, 0);
-    
-    /* sub_20421(1, 15, 1) */
-    printf("[OPENING] Playing AFM animation index 1...\n");
-    fd2_afm_play(1, 15, 1, &sm->render, res);
-    
-    /* sub_25B45(..., 3, 1) */
-    /* sub_11DF2(0, 255, 64) */
-    sub_11D40(&sm->render, 0, 255, 64);
-    
-    /* sub_16886(655360, 320, _FDOTHER.DAT__3, 0) */
-    /* 渲染菜单背景 */
-    
-    /* for (n40_1=0; n40_1<=40; ++n40_1) sub_2DF01(0, 255, n40_1, 0x38, 0x3C, 0x3F); delay(8); */
-    for (int n40_1 = 0; n40_1 <= 40; ++n40_1) {
-        fd2_render_set_brightness(&sm->render, n40_1);
-        fd2_render_present(&sm->render);
-        fd2_delay(8);
-    }
-    fd2_render_present(&sm->render);
-    
-    /* 检查存档是否存在 */
     int n2_3;
     {
         FILE* fp = fopen("FD2.SAV", "rb");
@@ -711,20 +445,67 @@ opening_menu:
         }
     }
     
-    /* sub_1FF79(..., 0, n2_1) - 显示菜单 */
     printf("[OPENING] Displaying menu with %d options\n", n2_1);
     
-    /* 等待用户输入 */
-    n2_2 = 0;
-    v27 = 0;
+    /* ====================================================================
+     * 渲染菜单 (简化版本 - 直接绘制像素)
+     * ==================================================================== */
+    if (menu_data && menu_size > 6) {
+        /* 菜单文本位置 */
+        int base_x = 100;
+        int base_y = 140;
+        int row_height = 24;
+        
+        /* 菜单选项 */
+        const char* menu_items[] = {"START GAME", "LOAD GAME", "EXIT"};
+        
+        /* 渲染菜单项 */
+        for (int i = 0; i < n2_1 && i < 3; i++) {
+            const char* text = menu_items[i];
+            int x = base_x;
+            int y = base_y + i * row_height;
+            
+            /* 选中项高亮 - 使用白色背景 */
+            if (i == n2_2) {
+                /* 绘制选中背景 */
+                for (int py = 0; py < 16; py++) {
+                    for (int px = 0; px < (int)strlen(text) * 16; px++) {
+                        int offset = (y + py) * 320 + x + px;
+                        if (offset >= 0 && offset < 64000) {
+                            sm->render.screen[offset] = 200;  /* 亮灰色背景 */
+                        }
+                    }
+                }
+            }
+            
+            /* 渲染文本 - 简单方块字符 */
+            for (int j = 0; text[j]; j++) {
+                int char_x = x + j * 16;
+                int char_y = y;
+                /* 使用明显的颜色：选中=白色，未选中=浅灰色 */
+                u8 color = (i == n2_2) ? 255 : 150;  /* 白色/浅灰色 */
+                
+                /* 绘制简单的方块字符 */
+                for (int py = 2; py < 14; py++) {
+                    for (int px = 2; px < 14; px++) {
+                        int offset = (char_y + py) * 320 + char_x + px;
+                        if (offset >= 0 && offset < 64000) {
+                            sm->render.screen[offset] = color;
+                        }
+                    }
+                }
+            }
+        }
+        
+        printf("[OPENING] Menu rendered\n");
+    }
     
-    printf("[OPENING] Waiting for menu input...\n");
+    /* 刷新屏幕 */
+    fd2_render_present(&sm->render);
     fflush(stdout);
     
+    /* 等待用户输入 */
     while (!v27) {
-        /* sub_1FF79(..., n2_2, n2_1) - 渲染菜单 */
-        
-        /* int386(22, &n3, &n3) - 读取键盘 */
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -770,14 +551,9 @@ opening_menu:
             }
         }
         
+        /* 刷新屏幕 */
         fd2_render_present(&sm->render);
         fd2_delay(16);
-    }
-    
-    /* 闪烁效果 (4次) */
-    for (int n4 = 0; n4 < 4; ++n4) {
-        fd2_delay(80);
-        fd2_delay(80);
     }
     
     /* 淡入效果 */
@@ -787,4 +563,63 @@ opening_menu:
     
     printf("[OPENING] Menu result: %d\n", n2_2);
     return n2_2;
+}
+
+/* ========================================================================
+ * fd2_render_menu_item: 渲染单个菜单项 (基于IDA sub_16886)
+ * ======================================================================== */
+static void fd2_render_menu_item(u8* screen, int screen_offset, 
+                                  const u8* menu_data, u32 menu_size,
+                                  int menu_index, int selected_item, int current_item) {
+    if (!screen || !menu_data || menu_size < 10) return;
+    
+    int resource_offset_offset = 6 + 4 * menu_index;
+    if (resource_offset_offset + 4 > (int)menu_size) {
+        printf("[MENU] ERROR: Offset %d out of bounds (size=%u)\n", resource_offset_offset, menu_size);
+        return;
+    }
+    
+    /* 读取当前菜单项的偏移 */
+    u32 resource_offset = *(u32*)(menu_data + resource_offset_offset);
+    printf("[MENU] Menu index %d: offset=%u\n", menu_index, resource_offset);
+    
+    if (resource_offset >= menu_size) {
+        printf("[MENU] ERROR: Resource offset %u >= size %u\n", resource_offset, menu_size);
+        return;
+    }
+    
+    /* 读取下一个菜单项的偏移来计算当前项的大小 */
+    u32 next_offset = menu_size;
+    int next_offset_offset = 6 + 4 * (menu_index + 1);
+    if (next_offset_offset + 4 <= (int)menu_size) {
+        next_offset = *(u32*)(menu_data + next_offset_offset);
+    }
+    
+    u32 resource_size = next_offset - resource_offset;
+    printf("[MENU] Next offset=%u, resource size=%u\n", next_offset, resource_size);
+    
+    if (resource_size == 0 || resource_offset + resource_size > menu_size) {
+        printf("[MENU] ERROR: Invalid resource size %u\n", resource_size);
+        return;
+    }
+    
+    const u8* resource_ptr = menu_data + resource_offset;
+    
+    /* 打印资源数据前16字节用于调试 */
+    printf("[MENU] Resource data: ");
+    for (int i = 0; i < 16 && i < (int)resource_size; i++) {
+        printf("%02X ", resource_ptr[i]);
+    }
+    printf("\n");
+    
+    /* 尝试RLE解码 */
+    printf("[MENU] Rendering menu item %d at screen offset %d, resource size=%u\n", 
+           menu_index, screen_offset, resource_size);
+    
+    fd2_rle_decompress_to_buffer(resource_ptr, 
+                                 resource_size,
+                                 screen, 
+                                 screen_offset, 
+                                 320, 
+                                 -1);
 }
