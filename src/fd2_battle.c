@@ -2,6 +2,11 @@
  * FD2 BATTLE State
  *
  * In-game fight. Uses fd2_map_loader to load and render maps from DAT files.
+ * 
+ * Based on IDA sub_1CFF0 (battle main loop):
+ * - Press Enter/Space on character:
+ *   - Player (unmoved): show move range -> select move target -> move
+ *   - Player (moved) / Ally / Enemy: show status screen
  */
 
 #define _GNU_SOURCE
@@ -11,6 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Global state flag based on IDA dword_51A83 */
+static int g_char_state_flag = 1;
 
 void state_battle_enter(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)calloc(1, sizeof(state_battle_data_t));
@@ -23,7 +31,7 @@ void state_battle_enter(fd2_game_t* game) {
     data->move_counter_x = 0;
     data->move_counter_y = 0;
     data->cursor_blink = 0;
-    data->cursor_frame_id = 242;
+    data->cursor_char_frame_id = 242;
 
     data->debug_grid_enabled = false;
 
@@ -54,6 +62,14 @@ void state_battle_enter(fd2_game_t* game) {
     data->fdother_resource_3_size = 0;
     data->fdother_data = NULL;
     data->fdother_data_size = 0;
+
+    /* Initialize battle phase */
+    data->battle_phase = BATTLE_PHASE_SELECT_CHAR;
+    data->showing_move_range = false;
+    data->move_range_tile_x = 0;
+    data->move_range_tile_y = 0;
+    data->animating_move = false;
+    data->anim_move_progress = 0;
 
     /* Get paths for map loading */
     const char* fdfield_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDFIELD);
@@ -133,6 +149,8 @@ void state_battle_enter(fd2_game_t* game) {
                    每行8个角色，5行共40个，每位=1表示活跃 */
                 data->char_data[i].active_mask = 0x01; /* 角色i活跃 */
                 data->char_data[i].active_byte = 0x80; /* offset+5: bit7=1活跃 */
+                data->char_data[i].char_type = 0; /* 0=player, 1=ally, 2+=enemy */
+                data->char_data[i].moved = 0; /* 0=unmoved, 1=moved */
             }
         }
 
@@ -261,6 +279,122 @@ void state_battle_enter(fd2_game_t* game) {
     }
 }
 
+/**
+ * 根据IDA分析，按回车/空格后的完整逻辑：
+ * 
+ * 1. 获取角色数据 v10 = sub_4E866(active_list[n2_3])
+ * 2. dword_51A83 = v10[4] + 2  (阵营标志)
+ * 3. n16 = v10[3]  (角色类型)
+ * 4. 判断角色类型:
+ *    - 玩家未移动 (v10[4]==0 && v10[6]==0):
+ *      -> sub_14818 显示移动范围
+ *      -> sub_115B6 等待选择移动目标
+ *      -> 移动动画
+ *    - 友军/敌军/已移动玩家:
+ *      -> sub_11CAC 显示属性页
+ *      -> sub_2FF01 执行功能
+ */
+static void handle_character_select(fd2_game_t* game, state_battle_data_t* data, int char_idx) {
+    if (char_idx < 0 || char_idx >= data->total_char_count) {
+        return;
+    }
+
+    battle_char_data_t* ch = &data->char_data[char_idx];
+    
+    /* IDA: dword_51A83 = v10[4] + 2 */
+    /* v10[4] = char_type (0=player, 1=ally, 2+=enemy) */
+    g_char_state_flag = ch->char_type + 2;
+
+    printf("battle: selected char %d, char_type=%d, moved=%d, state_flag=%d\n",
+           char_idx, ch->char_type, ch->moved, g_char_state_flag);
+
+    if (ch->char_type == 0 && ch->moved == 0) {
+        /* 玩家未移动角色：显示移动范围 */
+        data->battle_phase = BATTLE_PHASE_SHOW_MOVE_RANGE;
+        data->selected_char_idx = char_idx;
+        data->showing_move_range = true;
+        
+        /* 设置移动范围的中心位置（角色当前位置） */
+        data->move_range_tile_x = ch->tile_x;
+        data->move_range_tile_y = ch->tile_y;
+        
+        /* IDA: sub_14818(...) - 计算并标记可移动瓦片 */
+        printf("battle: showing move range for char %d at (%d,%d)\n",
+               char_idx, ch->tile_x, ch->tile_y);
+    } else {
+        /* 友军/敌军/已移动玩家：显示属性页 */
+        data->battle_phase = BATTLE_PHASE_SHOW_STATUS;
+        data->selected_char_idx = char_idx;
+        
+        /* IDA: sub_11CAC(...) - 渲染属性页 */
+        printf("battle: showing status screen for char %d\n", char_idx);
+    }
+}
+
+/**
+ * 渲染移动范围
+ * Based on IDA sub_122DC - 根据dword_51A83绘制不同范围的瓦片
+ */
+static void render_move_range(state_battle_data_t* data, u8* screen, int screen_w, int screen_h) {
+    if (!data->showing_move_range) return;
+    
+    int center_x = data->move_range_tile_x;
+    int center_y = data->move_range_tile_y;
+    
+    /* 根据角色移动力显示范围 (简化实现：显示3格范围) */
+    int move_range = 3;
+    
+    /* 绘制可移动范围的边框 */
+    u8 range_color = 42; /* 淡黄色 */
+    
+    for (int dy = -move_range; dy <= move_range; dy++) {
+        for (int dx = -move_range; dx <= move_range; dx++) {
+            /* Manhattan距离检查 */
+            int dist = abs(dx) + abs(dy);
+            if (dist > move_range) continue;
+            
+            int tile_x = center_x + dx;
+            int tile_y = center_y + dy;
+            
+            /* 转换为屏幕坐标 */
+            int sx = tile_x * MAP_TILE_SIZE - data->camera_x;
+            int sy = tile_y * MAP_TILE_SIZE - data->camera_y;
+            
+            /* 检查是否在屏幕内 */
+            if (sx < -MAP_TILE_SIZE || sx >= screen_w || 
+                sy < -MAP_TILE_SIZE || sy >= screen_h) {
+                continue;
+            }
+            
+            /* 绘制瓦片边框 */
+            for (int x = 0; x < MAP_TILE_SIZE; x++) {
+                int px = sx + x;
+                if (px >= 0 && px < screen_w) {
+                    if (sy >= 0 && sy < screen_h) {
+                        screen[sy * screen_w + px] = range_color;
+                    }
+                    int bottom = sy + MAP_TILE_SIZE - 1;
+                    if (bottom >= 0 && bottom < screen_h) {
+                        screen[bottom * screen_w + px] = range_color;
+                    }
+                }
+            }
+            for (int y = 0; y < MAP_TILE_SIZE; y++) {
+                int py = sy + y;
+                if (py >= 0 && py < screen_h) {
+                    if (sx >= 0 && sx < screen_w) {
+                        screen[py * screen_w + sx] = range_color;
+                    }
+                    int right = sx + MAP_TILE_SIZE - 1;
+                    if (right >= 0 && right < screen_w) {
+                        screen[py * screen_w + right] = range_color;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fd2_state_t state_battle_update(fd2_game_t* game) {
     state_battle_data_t* data = (state_battle_data_t*)game->state_data;
     if (!data) {
@@ -268,7 +402,16 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
     }
 
     if (fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
-        return FD2_STATE_MENU;
+        /* 如果在显示移动范围或属性页状态，返回选择角色状态 */
+        if (data->battle_phase != BATTLE_PHASE_SELECT_CHAR) {
+            data->battle_phase = BATTLE_PHASE_SELECT_CHAR;
+            data->selected_char_idx = -1;
+            data->showing_move_range = false;
+            data->animating_move = false;
+            printf("battle: cancelled, back to select\n");
+        } else {
+            return FD2_STATE_MENU;
+        }
     }
 
 #ifdef FD2_DEBUG
@@ -296,53 +439,118 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
     int map_width = data->map.width;
     int map_height = data->map.height;
 
-    if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
-        cursor_move_up(data, map_height);
-        update_camera_from_cursor(data);
-    }
-    if (fd2_action_pressed(&game->input, FD2_ACTION_DOWN)) {
-        cursor_move_down(data, map_height);
-        update_camera_from_cursor(data);
-    }
-    if (fd2_action_pressed(&game->input, FD2_ACTION_LEFT)) {
-        cursor_move_left(data, map_width);
-        update_camera_from_cursor(data);
-    }
-    if (fd2_action_pressed(&game->input, FD2_ACTION_RIGHT)) {
-        cursor_move_right(data, map_width);
-        update_camera_from_cursor(data);
+    /* 根据当前阶段处理输入 */
+    switch (data->battle_phase) {
+        case BATTLE_PHASE_SELECT_CHAR: {
+            /* 选择角色阶段：移动光标 */
+            if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
+                cursor_move_up(data, map_height);
+                update_camera_from_cursor(data);
+            }
+            if (fd2_action_pressed(&game->input, FD2_ACTION_DOWN)) {
+                cursor_move_down(data, map_height);
+                update_camera_from_cursor(data);
+            }
+            if (fd2_action_pressed(&game->input, FD2_ACTION_LEFT)) {
+                cursor_move_left(data, map_width);
+                update_camera_from_cursor(data);
+            }
+            if (fd2_action_pressed(&game->input, FD2_ACTION_RIGHT)) {
+                cursor_move_right(data, map_width);
+                update_camera_from_cursor(data);
+            }
+
+            /* Handle START key - select character at cursor position */
+            /* IDA: sub_1D51D case 28/57 (Enter/Space) */
+            if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
+                int char_idx = battle_find_char_at_cursor(data);
+                if (char_idx != -1) {
+                    handle_character_select(game, data, char_idx);
+                } else {
+                    printf("battle: no valid char at cursor (%d,%d)\n",
+                           data->cursor_x, data->cursor_y);
+                }
+            }
+            break;
+        }
+        
+        case BATTLE_PHASE_SHOW_MOVE_RANGE: {
+            /* 显示移动范围阶段：选择移动目标 */
+            if (fd2_action_pressed(&game->input, FD2_ACTION_UP)) {
+                cursor_move_up(data, map_height);
+                update_camera_from_cursor(data);
+            }
+            if (fd2_action_pressed(&game->input, FD2_ACTION_DOWN)) {
+                cursor_move_down(data, map_height);
+                update_camera_from_cursor(data);
+            }
+            if (fd2_action_pressed(&game->input, FD2_ACTION_LEFT)) {
+                cursor_move_left(data, map_width);
+                update_camera_from_cursor(data);
+            }
+            if (fd2_action_pressed(&game->input, FD2_ACTION_RIGHT)) {
+                cursor_move_right(data, map_width);
+                update_camera_from_cursor(data);
+            }
+
+            /* 按START确认移动目标 */
+            /* IDA: sub_115B6 - 等待输入，按回车确认移动 */
+            if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
+                /* 开始移动动画 */
+                data->animating_move = true;
+                data->anim_move_progress = 0;
+                data->battle_phase = BATTLE_PHASE_ANIM_MOVE;
+                printf("battle: start move animation to (%d,%d)\n",
+                       data->cursor_x, data->cursor_y);
+            }
+            break;
+        }
+        
+        case BATTLE_PHASE_ANIM_MOVE: {
+            /* 移动动画阶段 */
+            data->anim_move_progress++;
+            
+            /* 简化动画：8帧后完成移动 */
+            if (data->anim_move_progress >= 8) {
+                /* 更新角色位置 */
+                battle_char_data_t* ch = &data->char_data[data->selected_char_idx];
+                
+                /* 更新sprite位置 */
+                if (data->selected_char_idx < data->sprite_count) {
+                    data->sprites[data->selected_char_idx].tile_x = data->cursor_x;
+                    data->sprites[data->selected_char_idx].tile_y = data->cursor_y;
+                }
+                
+                /* 更新char_data位置 */
+                ch->tile_x = data->cursor_x;
+                ch->tile_y = data->cursor_y;
+                
+                /* 标记为已移动 */
+                ch->moved = 1;
+                
+                /* 移动完成，显示属性页 */
+                data->animating_move = false;
+                data->showing_move_range = false;
+                data->battle_phase = BATTLE_PHASE_SHOW_STATUS;
+                printf("battle: move complete, showing status\n");
+            }
+            break;
+        }
+        
+        case BATTLE_PHASE_SHOW_STATUS: {
+            /* 显示属性页阶段：按X/B取消 */
+            if (fd2_action_pressed(&game->input, FD2_ACTION_B) ||
+                fd2_action_pressed(&game->input, FD2_ACTION_X)) {
+                /* 标记回合结束，返回选择角色 */
+                data->battle_phase = BATTLE_PHASE_SELECT_CHAR;
+                data->selected_char_idx = -1;
+                printf("battle: status closed, back to select\n");
+            }
+            break;
+        }
     }
 
     data->cursor_blink++;
-
-    /* 战场核心逻辑主循环 (基于 IDA sub_1CFF0)
-     * 原始IDA代码中sub_1CFF0是一个完整的回合处理函数，会阻塞等待用户输入
-     * 在我们的帧驱动架构中，需要将其拆分为状态机
-     * 当前实现：按START选择角色后，渲染信息面板并等待下一步操作
-     * 注意：不再每帧调用battle_main_loop，而是只渲染信息面板 */
-    if (data->selected_char_idx >= 0) {
-        /* 按X/S/ESC键取消选择角色 (对应IDA sub_1D51D中按ESC返回-1) */
-        if (fd2_action_pressed(&game->input, FD2_ACTION_B) ||
-            fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
-            data->selected_char_idx = -1;
-            printf("battle: deselected character\n");
-        }
-    }
-
-    /* Handle START key - select character at cursor position (based on IDA sub_12C0D) */
-    if (fd2_action_pressed(&game->input, FD2_ACTION_START)) {
-        int char_idx = battle_find_char_at_cursor(data);
-        if (char_idx != -1) {
-            data->selected_char_idx = char_idx;
-            map_sprite_t* sprite = &data->sprites[char_idx];
-            printf("battle: selected char %d at (%d,%d) icon=%d\n",
-                   char_idx, sprite->tile_x, sprite->tile_y, sprite->icon_id);
-        } else {
-            data->selected_char_idx = -1;
-            printf("battle: no valid char at cursor (%d,%d)\n",
-                   data->cursor_x, data->cursor_y);
-        }
-    }
 
     /* Render map */
     if (data->map.loaded && data->map.map_rendered) {
@@ -361,13 +569,25 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
                               data->camera_x, data->camera_y,
                               game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
 
-        /* Draw selected character highlight - white border */
+        /* Draw selected character highlight */
         if (data->selected_char_idx >= 0 && data->selected_char_idx < data->sprite_count) {
             map_sprite_t* sprite = &data->sprites[data->selected_char_idx];
             int sx = sprite->tile_x * MAP_TILE_SIZE - data->camera_x;
             int sy = sprite->tile_y * MAP_TILE_SIZE - data->camera_y;
 
-            u8 highlight_color = 63; /* White */
+            u8 highlight_color;
+            /* 根据阶段使用不同颜色 */
+            switch (data->battle_phase) {
+                case BATTLE_PHASE_SHOW_MOVE_RANGE:
+                    highlight_color = 60; /* 黄色 - 正在选择移动 */
+                    break;
+                case BATTLE_PHASE_SHOW_STATUS:
+                    highlight_color = 63; /* 白色 - 显示属性 */
+                    break;
+                default:
+                    highlight_color = 63; /* 白色 */
+                    break;
+            }
 
             /* Draw border */
             for (int x = 0; x < MAP_TILE_SIZE; x++) {
@@ -396,13 +616,18 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
             }
         }
 
+        /* 渲染移动范围 */
+        if (data->showing_move_range) {
+            render_move_range(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
+        }
+
         /* Draw cursor */
         battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
 
         /* Draw terrain info UI - based on IDA sub_126F7 */
         battle_render_terrain_info(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
 
-        /* 渲染角色信息面板 (基于 IDA sub_12D7B -> sub_11CAC -> sub_11EEE) */
+        /* 渲染角色信息面板 */
         if (data->selected_char_idx >= 0) {
             if (data->fdfield_layout && data->fdshap_data && data->backbuffer) {
                 battle_render_info_panel(

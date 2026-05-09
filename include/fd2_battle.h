@@ -9,6 +9,14 @@
 #define TERRAIN_INFO_WIDTH 456
 #define TERRAIN_INFO_HEIGHT 24
 
+/* Battle phases based on IDA analysis */
+typedef enum {
+    BATTLE_PHASE_SELECT_CHAR,      /* 选择角色阶段 */
+    BATTLE_PHASE_SHOW_MOVE_RANGE,  /* 显示移动范围阶段 */
+    BATTLE_PHASE_ANIM_MOVE,        /* 移动动画阶段 */
+    BATTLE_PHASE_SHOW_STATUS       /* 显示状态面板阶段 */
+} battle_phase_t;
+
 /* Character data structure based on IDA dword_53A45
  * Each character occupies 80 bytes
  * Key fields from IDA analysis:
@@ -32,10 +40,11 @@ typedef struct {
     uint8_t padding_2_3[2]; /* offset+2-3 */
     uint8_t portrait_id;    /* offset+4: portrait ID */
     uint8_t active_byte;    /* offset+5: bit0=death flag (0=alive/show, 1=dead/hidden), IDA sub_14818 */
-    uint8_t char_type;      /* offset+6: character type */
+    uint8_t char_type;      /* offset+6: character type (0=player, 1=ally, 2+=enemy; also used as faction) */
     uint8_t icon_id;        /* offset+7: icon/animation ID */
     uint8_t death_status;   /* offset+8: 0=alive, 28=dead */
-    uint8_t padding_9_25[17]; /* offset+9-25 */
+    uint8_t moved;          /* offset+9: 0=unmoved, 1=moved */
+    uint8_t padding_10_25[16]; /* offset+10-25 */
     uint8_t active_mask;    /* offset+26: active status bit mask */
     uint8_t padding_27_31[5]; /* offset+27-31 */
     uint8_t icon_id_alt;    /* offset+32: alternate icon ID */
@@ -147,6 +156,12 @@ typedef struct {
 
     /* Turn phase - 回合阶段 */
     int turn_phase;                /* 0=选择角色,1=显示移动范围,2=选择移动目标,3=显示菜单,4=执行功能 */
+    battle_phase_t battle_phase;   /* 当前战斗阶段 */
+    int showing_move_range;        /* 是否显示移动范围 */
+    int move_range_tile_x;         /* 移动范围中心X */
+    int move_range_tile_y;         /* 移动范围中心Y */
+    int animating_move;            /* 是否正在移动动画 */
+    int anim_move_progress;        /* 移动动画进度 (0-7) */
 
     /* FDFIELD.DAT raw data for info panel rendering */
     const u8* fdfield_layout;      /* dword_53A51: 字符布局表 */
