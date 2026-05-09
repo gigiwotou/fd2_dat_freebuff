@@ -150,13 +150,15 @@ void state_battle_enter(fd2_game_t* game) {
                 
                 data->char_data[i].tile_x = char_pos->x;
                 data->char_data[i].tile_y = char_pos->y;
-                data->char_data[i].faction = char_info ? char_info->faction : 0;  /* offset+4: 0=player */
+                data->char_data[i].faction = char_info ? char_info->faction : 0;  /* offset+4: 0=enemy, 1=NPC, 2=friendly */
                 data->char_data[i].icon_id = char_pos->portrait_id;
                 /* IDA sub_1C269: offset+26位掩码判断活跃角色
                    每行8个角色，5行共40个，每位=1表示活跃 */
                 data->char_data[i].active_mask = 0x01; /* 角色i活跃 */
                 data->char_data[i].active_byte = 0; /* offset+5: 0=存活 */
-                data->char_data[i].char_type = 0; /* offset+6: 0=玩家未移动 */
+                /* IDA sub_1CFF0: v10[3]==0 显示移动范围，否则显示属性页
+                   只有friendly(faction==2)的角色才是玩家可操作 */
+                data->char_data[i].char_type = (char_info && char_info->faction == 2) ? 0 : 1;
                 data->char_data[i].moved = 0; /* offset+9: 0=未移动 */
             }
         }
