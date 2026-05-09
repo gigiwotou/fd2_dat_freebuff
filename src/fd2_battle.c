@@ -141,16 +141,23 @@ void state_battle_enter(fd2_game_t* game) {
         } else {
             for (int i = 0; i < data->total_char_count; i++) {
                 fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
+                fd2_map_char_info_t* char_info = NULL;
+                
+                /* 尝试从char_info获取阵营信息 */
+                if (i < data->map.scene.char_info_count) {
+                    char_info = &data->map.scene.char_info[i];
+                }
+                
                 data->char_data[i].tile_x = char_pos->x;
                 data->char_data[i].tile_y = char_pos->y;
-                data->char_data[i].portrait_id = char_pos->portrait_id;
+                data->char_data[i].faction = char_info ? char_info->faction : 0;  /* offset+4: 0=player */
                 data->char_data[i].icon_id = char_pos->portrait_id;
                 /* IDA sub_1C269: offset+26位掩码判断活跃角色
                    每行8个角色，5行共40个，每位=1表示活跃 */
                 data->char_data[i].active_mask = 0x01; /* 角色i活跃 */
-                data->char_data[i].active_byte = 0x80; /* offset+5: bit7=1活跃 */
-                data->char_data[i].char_type = 0; /* 0=player, 1=ally, 2+=enemy */
-                data->char_data[i].moved = 0; /* 0=unmoved, 1=moved */
+                data->char_data[i].active_byte = 0; /* offset+5: 0=存活 */
+                data->char_data[i].char_type = 0; /* offset+6: 0=玩家未移动 */
+                data->char_data[i].moved = 0; /* offset+9: 0=未移动 */
             }
         }
 
@@ -302,12 +309,14 @@ static void handle_character_select(fd2_game_t* game, state_battle_data_t* data,
     battle_char_data_t* ch = &data->char_data[char_idx];
     
     /* IDA: dword_51A83 = v10[4] + 2 */
-    /* v10[4] = char_type (0=player, 1=ally, 2+=enemy) */
-    g_char_state_flag = ch->char_type + 2;
+    /* v10[4] = faction (0=player, 1=ally, 2+=enemy) */
+    g_char_state_flag = ch->faction + 2;
 
-    printf("battle: selected char %d, char_type=%d, moved=%d, state_flag=%d\n",
-           char_idx, ch->char_type, ch->moved, g_char_state_flag);
+    printf("battle: selected char %d, faction=%d, char_type=%d, moved=%d, state_flag=%d\n",
+           char_idx, ch->faction, ch->char_type, ch->moved, g_char_state_flag);
 
+    /* IDA: if (!v10[3] || (n11_1 == 23)) - offset+3=0表示玩家未移动
+       在我们的80字节结构中，char_type对应offset+6 */
     if (ch->char_type == 0 && ch->moved == 0) {
         /* 玩家未移动角色：显示移动范围 */
         data->battle_phase = BATTLE_PHASE_SHOW_MOVE_RANGE;

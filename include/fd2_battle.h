@@ -22,9 +22,10 @@ typedef enum {
  * Key fields from IDA analysis:
  *   offset+0:  tile_x
  *   offset+1:  tile_y
- *   offset+4:  portrait_id
- *   offset+5:  faction/flags (bit0 = moved flag)
- *   offset+6:  character type
+ *   offset+2-3: padding
+ *   offset+4:  faction/char_type (0=player, 1=ally, 2+=enemy)
+ *   offset+5:  active_byte/death flag
+ *   offset+6:  char_type/move_flag (0=未移动)
  *   offset+7:  icon_id
  *   offset+26: active status byte (bit mask for 8 characters per row)
  *   offset+32: icon_id (alternate)
@@ -37,10 +38,10 @@ typedef enum {
 typedef struct {
     uint8_t tile_x;         /* offset+0: tile X coordinate */
     uint8_t tile_y;         /* offset+1: tile Y coordinate */
-    uint8_t padding_2_3[2]; /* offset+2-3 */
-    uint8_t portrait_id;    /* offset+4: portrait ID */
-    uint8_t active_byte;    /* offset+5: bit0=death flag (0=alive/show, 1=dead/hidden), IDA sub_14818 */
-    uint8_t char_type;      /* offset+6: character type (0=player, 1=ally, 2+=enemy; also used as faction) */
+    uint8_t padding_2_3[2]; /* offset+2-3: padding */
+    uint8_t faction;        /* offset+4: faction/char_type (0=player, 1=ally, 2+=enemy) */
+    uint8_t active_byte;    /* offset+5: death flag (bit0=1表示死亡) */
+    uint8_t char_type;      /* offset+6: 0=未移动玩家, 其他=已移动/敌方/友军 */
     uint8_t icon_id;        /* offset+7: icon/animation ID */
     uint8_t death_status;   /* offset+8: 0=alive, 28=dead */
     uint8_t moved;          /* offset+9: 0=unmoved, 1=moved */

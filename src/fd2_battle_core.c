@@ -400,7 +400,7 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
     }
     
     /* dword_51A83 = v10[4] + 2 */
-    g_char_state_flag = char_data->portrait_id + 2;
+    g_char_state_flag = char_data->faction + 2;
     
     /* Battle logic branches based on character type and state */
     int attack_result = 0;
