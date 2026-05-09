@@ -315,24 +315,29 @@ fd2_state_t state_battle_update(fd2_game_t* game) {
 
     data->cursor_blink++;
 
-    /* 战场核心逻辑主循环 (基于 IDA sub_1CFF0) */
-    /* 当有角色被选中时，进入战斗主循环
-     * 注意：原游戏中信息面板会持续显示直到操作完成
-     * 这里修改为单帧渲染模式，保持 selected_char_idx 直到有输入操作 */
+    /* 战场核心逻辑主循环 (基于 IDA sub_1CFF0)
+     * 原始IDA代码中sub_1CFF0是一个完整的回合处理函数，会阻塞等待用户输入
+     * 在我们的帧驱动架构中，需要将其拆分为状态机
+     * 当前实现：按START选择角色后，渲染信息面板并等待下一步操作
+     * 注意：不再每帧调用battle_main_loop，而是只渲染信息面板 */
     if (data->selected_char_idx >= 0) {
-        int n19 = 1; /* 战斗动作ID */
-        int n17 = data->selected_char_idx;
-        int loop_result = battle_main_loop(game, n19, n17);
-        
-        if (loop_result == -1) {
-            printf("battle: main loop failed\n");
-            data->selected_char_idx = -1;
-        } else if (loop_result == 0) {
-            printf("battle: battle ended (fled/failed)\n");
-            return FD2_STATE_MENU;
+        /* 渲染角色信息面板 (基于 IDA sub_12D7B -> sub_11CAC -> sub_11EEE) */
+        if (data->fdfield_layout && data->fdshap_data && data->backbuffer) {
+            battle_render_info_panel(
+                data->selected_char_idx,
+                (const u8*)data->char_data,
+                data->fdfield_layout,
+                data->fdshap_flags,
+                data->fdother_palette_map,
+                data->fdshap_data,
+                data->backbuffer,
+                data->layout_width,
+                data->palette_anim_frame,
+                data->n3_1
+            );
         }
         
-        /* 按X/S/ESC键取消选择角色 (对应原游戏中取消操作) */
+        /* 按X/S/ESC键取消选择角色 (对应IDA sub_1D51D中按ESC返回-1) */
         if (fd2_action_pressed(&game->input, FD2_ACTION_B) ||
             fd2_action_pressed(&game->input, FD2_ACTION_ESCAPE)) {
             data->selected_char_idx = -1;
