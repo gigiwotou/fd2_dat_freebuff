@@ -1,0 +1,11 @@
+1.FDSHAP.DAT只有地图瓦块，24*24像素.
+2.ANI.DAT只有动画资源。
+3.BG.DAT只有战斗背景资源。
+4.DATO.DAT只有头像资源。
+5.FDFIELD.DAT地图相关数据。
+6.FDMUS.DAT音乐资源。
+7.FDOTHER.DAT其他资源。有字体，ui元素。背景图，图标。
+8.FDTXT.DAT文本资源。
+10.FIGANI.DAT战斗动画资源。
+11.TAI.DAT战斗动画中角色精灵脚下的地台资源。
+12.FDICON.B24角色的图标精灵，战场用。

@@ -1,464 +1,328 @@
-/**
- * FD2 Battle Info Panel - 战场信息面板
- * 
- * 基于 IDA Pro MCP 逆向分析:
- * 
- * 战场信息面板渲染流程:
- * sub_12D7B -> sub_12CEA -> sub_11CAC -> [sub_11EEE, sub_122DC, sub_127A9, sub_1ACF3, sub_11EB0]
- * 
- * sub_11CAC参数:
- * - a1, a2, a3, a4: 角色数据相关
- * - a5: 标志位
- * 
- * sub_11EEE文字渲染:
- * - 使用FDSHAP.DAT中的24x24文字瓦片图
- * - 参数: (dword_53A49+32904, 456, 13, 8, n9, n34)
- * - 13列 x 8行文字, 每字符宽24像素
- * - 从dword_53A51获取字符索引表
- * - 从dword_53A69获取字符标志(用于调色板映射)
- * - 使用sub_4E22A(直接blit)或sub_4E016(带调色板映射)
- * 
- * sub_1ACF3边框绘制:
- * - 使用FDSHAP.DAT中的边框瓦片图
- * - 参数: (dword_53A49+32904, 456)
- * 
- * sub_11EB0帧缓冲拷贝:
- * - 参数: (656644, 320, dword_53A49+32904, 456, 312, 192)
- * - 从内部缓冲区拷贝到VGA屏幕
+/*
+ * 战场角色信息面板渲染
+ * 基于IDA分析: sub_12D7B -> sub_12CEA -> sub_11CAC -> sub_11EEE
+ *
+ * 渲染流程:
+ * 1. sub_12D7B: 从dword_53A45获取角色数据,调用sub_12CEA
+ * 2. sub_12CEA: 动画等待循环,直到位置到达目标(n9_0, n34_0)
+ * 3. sub_11CAC: 设置渲染上下文,调用sub_11EEE
+ * 4. sub_11EEE: 核心渲染函数,遍历dword_53A51字符布局表,使用FDSHAP.DAT渲染24x24瓦片
  */
 
-#include "fd2_game.h"
 #include "fd2_battle.h"
-#include "fd2_decoder.h"
-#include <SDL2/SDL.h>
+#include "fd2_dat.h"
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 
-/* ========================================================================
- * 战场信息面板常量 (基于IDA分析)
- * ======================================================================== */
+/* FDSHAP.DAT索引表偏移 */
+#define FDSHAP_INDEX_OFFSET 6
 
-/* 内部渲染缓冲区参数 (模拟 dword_53A49 + 32904) */
-#define INFO_PANEL_BUF_PITCH    456
-#define INFO_PANEL_W            312
-#define INFO_PANEL_H            192
+/* 瓦片标志位 */
+#define TILE_FLAG_SKIP      0x80
+#define TILE_FLAG_HALF_OFF  0x10
+#define TILE_FLAG_ANIM_OFF  0x04
 
-/* 文字区域: 13列 x 8行, 每字符24x24像素 */
-#define TEXT_COLS               13
-#define TEXT_ROWS               8
-#define CHAR_TILE_W             24
-#define CHAR_TILE_H             24
+/* 后备缓冲区偏移 */
+#define BACKBUF_OFFSET 32904
 
-/* 屏幕映射位置 (312x192 面板映射到 320x200 屏幕) */
-#define PANEL_SCREEN_X          4
-#define PANEL_SCREEN_Y          4
-
-/* 颜色定义 (游戏调色板索引) */
-#define COLOR_BLACK             0
-#define COLOR_WHITE             63
-#define COLOR_YELLOW            62
-#define COLOR_GREEN             48
-#define COLOR_RED               16
-#define COLOR_BLUE              44
-#define COLOR_CYAN              47
-#define COLOR_GRAY              15
-
-/* ========================================================================
- * FDSHAP.DAT 瓦片图资源
- * ======================================================================== */
-
-static u8* fdshap_data = NULL;
-static u32 fdshap_size = 0;
-static int fdshap_tile_count = 0;
-
-/* 文字瓦片索引表 (ASCII字符 -> FDSHAP瓦片索引) */
-static int text_tile_map[128];
-static int tile_map_initialized = 0;
-
-/* ========================================================================
- * 初始化FDSHAP.DAT瓦片图资源
- * ======================================================================== */
-static int init_tile_resources(fd2_game_t* game) {
-    if (tile_map_initialized) return 0;
-    
-    memset(text_tile_map, -1, sizeof(text_tile_map));
-    
-    /* 加载FDSHAP.DAT资源 */
-    if (!fd2_resources_is_loaded(&game->resources, FD2_DAT_FDSHAP)) {
-        return -1;
-    }
-    
-    u32 res_size;
-    const u8* res_data = fd2_resources_get(&game->resources, FD2_DAT_FDSHAP, 0, &res_size);
-    if (!res_data || res_size < 10) return -1;
-    
-    /* 解析资源数量 */
-    if (memcmp(res_data, "LLLLLL", 6) == 0) {
-        memcpy(&fdshap_tile_count, res_data + 6, 4);
-    } else {
-        return -1;
-    }
-    
-    fdshap_data = (u8*)res_data;
-    fdshap_size = res_size;
-    
-    /* 初始化文字瓦片映射表 */
-    /* 数字 0-9 */
-    for (int i = 0; i < 10; i++) {
-        text_tile_map['0' + i] = i;
-    }
-    /* 字母 A-Z */
-    for (int i = 0; i < 26; i++) {
-        text_tile_map['A' + i] = 10 + i;
-        text_tile_map['a' + i] = 10 + i;
-    }
-    /* 常用符号 */
-    text_tile_map[':'] = 40;
-    text_tile_map['/'] = 41;
-    text_tile_map['.'] = 42;
-    text_tile_map['-'] = 43;
-    text_tile_map[' '] = 44;
-    text_tile_map['('] = 45;
-    text_tile_map[')'] = 46;
-    text_tile_map['?'] = 47;
-    text_tile_map['!'] = 48;
-    text_tile_map[','] = 49;
-    
-    tile_map_initialized = 1;
-    return 0;
-}
-
-/* ========================================================================
- * sub_4E22A风格: 24x24瓦片RLE blit到缓冲区
- * 
- * 对应IDA sub_4E22A:
- * - src: 瓦片RLE数据
- * - dst: 目标缓冲区位置
- * - pitch: 缓冲区步长
+/*
+ * sub_4E22A: RLE解压/直接blit 24x24精灵到目标缓冲区
+ * IDA分析: 这是一个RLE解压函数,处理24x24的精灵数据
  * 
  * RLE格式:
- * - bit7=1,bit6=1: 跳过像素(透明)
- * - bit7=1,bit6=0: 从源拷贝像素
- * - bit7=0,bit6=1: 稀疏填充(每隔一个像素)
- * - bit7=0,bit6=0: 常规填充
- * - count = (value & 0x3F) + 1
+ * - 每个字节高2位表示操作类型,低6位表示计数
+ * - 操作0: 跳过(填充0)
+ * - 操作1: 复制数据
+ * - 操作2: 填充单色
+ * - 操作3: 特殊填充
  */
-static void tile_blit_4e22a(const u8* tile_data, u8* dst_buf, int dst_pitch) {
-    if (!tile_data || !dst_buf) return;
+static void rle_blit_24x24(const u8* src, u8* dst, int dst_stride)
+{
+    int y;
+    const u8* src_ptr = src;
     
-    const u8* src = tile_data;
-    u8* dst = dst_buf;
-    
-    for (int row = 0; row < 24; row++) {
-        u8* row_dst = dst;
-        int pixels_remaining = 24;
+    for (y = 0; y < 24; y++) {
+        u8* dst_ptr = dst;
+        int remaining = 24;
         
-        while (pixels_remaining > 0) {
-            u8 value = *src++;
-            int bit7 = (value >> 7) & 1;
-            int bit6 = (value >> 6) & 1;
-            int count = (value & 0x3F) + 1;
+        while (remaining > 0) {
+            u8 cmd = *src_ptr++;
+            u8 type = (cmd >> 6) & 0x03;
+            u8 count = ((cmd >> 2) & 0x0F) + 1;
             
-            if (count > pixels_remaining) count = pixels_remaining;
+            if (count > remaining)
+                count = remaining;
             
-            if (bit7 && bit6) {
-                /* 11: 跳过像素 */
-                row_dst += count;
-                pixels_remaining -= count;
-            } else if (bit7 && !bit6) {
-                /* 10: 从源拷贝 */
-                for (int i = 0; i < count; i++) {
-                    *row_dst++ = *src++;
-                }
-                pixels_remaining -= count;
-            } else if (!bit7 && bit6) {
-                /* 01: 稀疏填充 */
-                u8 fill = *src++;
-                for (int i = 0; i < count; i++) {
-                    if (pixels_remaining >= 2) {
-                        row_dst[1] = fill;
-                        row_dst += 2;
-                        pixels_remaining -= 2;
-                    } else {
-                        *row_dst++ = fill;
-                        pixels_remaining -= 1;
+            switch (type) {
+                case 0:
+                    /* 跳过 */
+                    memset(dst_ptr, 0, count);
+                    break;
+                case 1:
+                    /* 复制数据 */
+                    memcpy(dst_ptr, src_ptr, count);
+                    src_ptr += count;
+                    break;
+                case 2:
+                    /* 填充单色 */
+                    memset(dst_ptr, *src_ptr, count);
+                    src_ptr++;
+                    break;
+                case 3:
+                    /* 特殊: 交替填充 */
+                    {
+                        u8 val = *src_ptr++;
+                        int i;
+                        for (i = 0; i < count; i += 2) {
+                            if (i < count) dst_ptr[i] = val;
+                            if (i + 1 < count) dst_ptr[i + 1] = val;
+                        }
                     }
-                }
-            } else {
-                /* 00: 常规填充 */
-                u8 fill = *src++;
-                for (int i = 0; i < count; i++) {
-                    *row_dst++ = fill;
-                }
-                pixels_remaining -= count;
+                    break;
             }
-        }
-        
-        dst += dst_pitch;
-    }
-}
-
-/* ========================================================================
- * 获取FDSHAP.DAT瓦片图数据
- * 
- * 对应原游戏: FDSHAP_DAT + *(DWORD*)(FDSHAP_DAT + 4 * index + 6)
- */
-static const u8* get_fdshap_tile(int tile_index) {
-    if (!fdshap_data || tile_index < 0 || tile_index >= fdshap_tile_count) {
-        return NULL;
-    }
-    
-    u32 offset;
-    memcpy(&offset, fdshap_data + 6 + tile_index * 4, 4);
-    
-    if (offset >= fdshap_size) return NULL;
-    
-    return fdshap_data + offset;
-}
-
-/* ========================================================================
- * sub_11EB0风格: 帧缓冲拷贝
- * 
- * 对应IDA sub_11EB0:
- * - 使用memmove逐行拷贝
- */
-static void fb_copy_11eb0(u8* dst_screen, int dst_pitch,
-                           const u8* src_buffer, int src_pitch,
-                           int w, int h, int dst_x, int dst_y) {
-    if (!dst_screen || !src_buffer) return;
-    (void)dst_pitch;
-    
-    for (int row = 0; row < h; row++) {
-        int screen_y = dst_y + row;
-        if (screen_y < 0 || screen_y >= FD2_SCREEN_H) continue;
-        
-        int screen_x = dst_x;
-        if (screen_x < 0) screen_x = 0;
-        if (screen_x >= FD2_SCREEN_W) continue;
-        
-        int copy_w = w;
-        if (screen_x + copy_w > FD2_SCREEN_W) {
-            copy_w = FD2_SCREEN_W - screen_x;
-        }
-        
-        u8* dst_row = dst_screen + screen_y * FD2_SCREEN_W + screen_x;
-        const u8* src_row = src_buffer + row * src_pitch;
-        
-        memmove(dst_row, src_row, copy_w);
-    }
-}
-
-/* ========================================================================
- * 绘制字符串到缓冲区 (使用FDSHAP文字瓦片)
- * 
- * 对应sub_11EEE的文字渲染逻辑
- */
-static void draw_string_with_tiles(u8* buf, int buf_pitch, int x, int y,
-                                    const char* str, u8 color) {
-    if (!str || !buf) return;
-    (void)color;
-    
-    int cx = x;
-    int len = strlen(str);
-    
-    for (int i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)str[i];
-        if (c >= 128) continue;
-        
-        int tile_idx = text_tile_map[(unsigned char)c];
-        if (tile_idx < 0) {
-            cx += CHAR_TILE_W;
-            continue;
-        }
-        
-        const u8* tile_data = get_fdshap_tile(tile_idx);
-        if (!tile_data) {
-            cx += CHAR_TILE_W;
-            continue;
-        }
-        
-        u8* dst = buf + y * buf_pitch + cx;
-        tile_blit_4e22a(tile_data, dst, buf_pitch);
-        
-        cx += CHAR_TILE_W;
-    }
-}
-
-/* ========================================================================
- * 绘制数字到缓冲区
- */
-static void draw_number_with_tiles(u8* buf, int buf_pitch, int x, int y,
-                                    int num) {
-    char buf_str[16];
-    snprintf(buf_str, sizeof(buf_str), "%d", num);
-    draw_string_with_tiles(buf, buf_pitch, x, y, buf_str, COLOR_WHITE);
-}
-
-/* ========================================================================
- * 填充矩形背景
- */
-static void fill_rect(u8* buf, int buf_pitch, int x, int y, int w, int h, u8 color) {
-    for (int row = 0; row < h; row++) {
-        int by = y + row;
-        if (by < 0 || by >= INFO_PANEL_H) continue;
-        
-        for (int col = 0; col < w; col++) {
-            int bx = x + col;
-            if (bx < 0 || bx >= INFO_PANEL_W) continue;
             
-            buf[by * buf_pitch + bx] = color;
+            dst_ptr += count;
+            remaining -= count;
         }
+        
+        dst += dst_stride;
     }
 }
 
-/* ========================================================================
- * sub_1ACF3风格: 绘制边框
- * 
- * 对应IDA sub_1ACF3:
- * - 使用FDSHAP.DAT边框瓦片图绘制
- * - 参数: buf, pitch
+/*
+ * sub_4E016: 带调色板映射的24x24精灵blit
+ * IDA分析: 与sub_4E22A类似,但使用调色板映射表转换颜色
  */
-static void draw_border_1acf3(u8* buf, int buf_pitch, int x, int y, int w, int h) {
-    fill_rect(buf, buf_pitch, x, y, w, h, COLOR_BLACK);
+static void rle_blit_24x24_palette(const u8* src, u8* dst, int dst_stride, const u8* palette_map)
+{
+    int y;
+    const u8* src_ptr = src;
     
-    /* 使用FDSHAP边框瓦片 (假设瓦片50-53是边框四角) */
-    const u8* corner_tl = get_fdshap_tile(50);
-    if (corner_tl) {
-        tile_blit_4e22a(corner_tl, buf + y * buf_pitch + x, buf_pitch);
-    }
-    
-    const u8* corner_tr = get_fdshap_tile(51);
-    if (corner_tr && x + w - 24 >= 0) {
-        tile_blit_4e22a(corner_tr, buf + y * buf_pitch + (x + w - 24), buf_pitch);
-    }
-    
-    const u8* corner_bl = get_fdshap_tile(52);
-    if (corner_bl && y + h - 24 >= 0) {
-        tile_blit_4e22a(corner_bl, buf + (y + h - 24) * buf_pitch + x, buf_pitch);
-    }
-    
-    const u8* corner_br = get_fdshap_tile(53);
-    if (corner_br && x + w - 24 >= 0 && y + h - 24 >= 0) {
-        tile_blit_4e22a(corner_br, buf + (y + h - 24) * buf_pitch + (x + w - 24), buf_pitch);
-    }
-    
-    for (int col = x + 24; col < x + w - 24; col += 24) {
-        const u8* edge_h = get_fdshap_tile(54);
-        if (edge_h) {
-            tile_blit_4e22a(edge_h, buf + y * buf_pitch + col, buf_pitch);
-            if (y + h - 24 >= 0) {
-                tile_blit_4e22a(edge_h, buf + (y + h - 24) * buf_pitch + col, buf_pitch);
+    for (y = 0; y < 24; y++) {
+        u8* dst_ptr = dst;
+        int remaining = 24;
+        
+        while (remaining > 0) {
+            u8 cmd = *src_ptr++;
+            u8 type = (cmd >> 6) & 0x03;
+            u8 count = ((cmd >> 2) & 0x0F) + 1;
+            
+            if (count > remaining)
+                count = remaining;
+            
+            switch (type) {
+                case 0:
+                    memset(dst_ptr, 0, count);
+                    break;
+                case 1:
+                    {
+                        int i;
+                        for (i = 0; i < count; i++) {
+                            dst_ptr[i] = palette_map[src_ptr[i]];
+                        }
+                        src_ptr += count;
+                    }
+                    break;
+                case 2:
+                    memset(dst_ptr, palette_map[*src_ptr], count);
+                    src_ptr++;
+                    break;
+                case 3:
+                    {
+                        u8 val = palette_map[*src_ptr++];
+                        int i;
+                        for (i = 0; i < count; i += 2) {
+                            if (i < count) dst_ptr[i] = val;
+                            if (i + 1 < count) dst_ptr[i + 1] = val;
+                        }
+                    }
+                    break;
             }
+            
+            dst_ptr += count;
+            remaining -= count;
         }
-    }
-    
-    for (int row = y + 24; row < y + h - 24; row += 24) {
-        const u8* edge_v = get_fdshap_tile(55);
-        if (edge_v) {
-            tile_blit_4e22a(edge_v, buf + row * buf_pitch + x, buf_pitch);
-            if (x + w - 24 >= 0) {
-                tile_blit_4e22a(edge_v, buf + row * buf_pitch + (x + w - 24), buf_pitch);
-            }
-        }
+        
+        dst += dst_stride;
     }
 }
 
-/* ========================================================================
- * 渲染角色信息面板内容
+/*
+ * sub_11EEE: 核心渲染函数
+ * IDA分析:
+ * void sub_11EEE(int dst_x, int dst_stride, int cols, int rows, int start_col, int start_row)
  * 
- * 对应原游戏的完整渲染流程:
- * 1. sub_11EEE: 渲染文字 (8行x13列)
- * 2. sub_127A9: 渲染信息瓦片
- * 3. sub_1ACF3: 绘制边框
- * 4. sub_11EB0: 拷贝到屏幕
+ * 遍历字符布局表(dword_53A51),对每个瓦片:
+ * 1. 获取瓦片索引: *(WORD*)(dword_53A51 + 4*(col + width*row) + 4) & 0x3FF
+ * 2. 检查瓦片标志: *(BYTE*)(dword_53A69 + 4*tile_index)
+ * 3. 根据标志调整瓦片索引
+ * 4. 从FDSHAP.DAT获取精灵数据并blit
  */
-static void render_char_info_panel(u8* buf, int buf_pitch,
-                                    state_battle_data_t* data, 
-                                    int char_idx) {
-    if (!data || !buf || char_idx < 0 || char_idx >= data->total_char_count) return;
+static void render_char_layout(
+    int dst_x,          /* 目标X偏移 */
+    int dst_stride,     /* 目标行跨度 */
+    int cols,           /* 列数 */
+    int rows,           /* 行数 */
+    int start_col,      /* 起始列 */
+    int start_row,      /* 起始行 */
+    const u8* layout_table, /* dword_53A51 */
+    const u8* tile_flags,   /* dword_53A69 */
+    const u8* palette_map,  /* dword_53A6D */
+    const u8* fdshap_data,  /* FDSHAP_DAT */
+    u8* backbuffer,         /* dword_53A49 */
+    int layout_width,       /* dword_53AC1 */
+    int palette_anim_frame, /* dword_53A40 */
+    int n3_1                /* n3_1 */
+)
+{
+    int row, col;
+    u8* dst = backbuffer + BACKBUF_OFFSET + dst_x;
+    int palette_offset = n3_1 / 2;
     
-    battle_char_data_t* ch = &data->char_data[char_idx];
-    
-    memset(buf, 0, INFO_PANEL_H * buf_pitch);
-    
-    draw_border_1acf3(buf, buf_pitch, 8, 8, INFO_PANEL_W - 16, INFO_PANEL_H - 16);
-    
-    int text_x = 24;
-    int text_y = 16;
-    
-    char idx_buf[16];
-    snprintf(idx_buf, sizeof(idx_buf), "No:%02d", char_idx);
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, idx_buf, COLOR_YELLOW);
-    text_y += CHAR_TILE_H;
-    
-    const char* type_str = "???";
-    if (ch->char_type == 0) type_str = "ALLY";
-    else if (ch->char_type == 1) type_str = "ENEMY";
-    else if (ch->char_type == 2) type_str = "NPC";
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, type_str, COLOR_CYAN);
-    text_y += CHAR_TILE_H;
-    
-    char lv_buf[16];
-    snprintf(lv_buf, sizeof(lv_buf), "Lv:%d", ch->direction);
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, lv_buf, COLOR_GREEN);
-    text_y += CHAR_TILE_H;
-    
-    char hp_buf[32];
-    int max_hp = (ch->icon_id_alt > 0) ? ch->icon_id_alt : 100;
-    snprintf(hp_buf, sizeof(hp_buf), "HP:%d/%d", ch->icon_id, max_hp);
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, hp_buf, COLOR_GREEN);
-    text_y += CHAR_TILE_H;
-    
-    char mp_buf[32];
-    int max_mp = (ch->portrait_id > 0) ? ch->portrait_id * 2 : 50;
-    snprintf(mp_buf, sizeof(mp_buf), "MP:%d/%d", ch->portrait_id, max_mp);
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, mp_buf, COLOR_BLUE);
-    text_y += CHAR_TILE_H;
-    
-    char pos_buf[32];
-    snprintf(pos_buf, sizeof(pos_buf), "POS:(%d,%d)", ch->tile_x, ch->tile_y);
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, pos_buf, COLOR_GRAY);
-    text_y += CHAR_TILE_H;
-    
-    const char* status_str = "ALIVE";
-    if (ch->death_flag) {
-        status_str = "DEAD";
-    } else if (ch->active_byte & 1) {
-        status_str = "MOVED";
+    for (row = 0; row < rows; row++) {
+        u8* row_dst = dst + dst_stride * 24 * row;
+        
+        for (col = 0; col < cols; col++) {
+            int layout_idx = start_col + layout_width * (start_row + row) + col;
+            const u8* layout_entry = layout_table + 4 + 4 * layout_idx;
+            
+            /* 获取瓦片索引: *(WORD*)(entry) & 0x3FF */
+            int tile_index = (*(const unsigned short*)layout_entry) & 0x3FF;
+            
+            /* 检查第4字节是否为255 (决定是否使用调色板映射) */
+            u8 use_palette = layout_entry[3];
+            
+            /* 获取瓦片标志 */
+            u8 flags = tile_flags[4 * tile_index];
+            
+            /* 检查跳过标志 (0x80) */
+            if (flags & TILE_FLAG_SKIP) {
+                row_dst += 24;
+                continue;
+            }
+            
+            /* 处理半偏移标志 (0x10): 加上 n3_1/2 */
+            if (flags & TILE_FLAG_HALF_OFF) {
+                tile_index += palette_offset;
+            }
+            
+            /* 处理动画偏移标志 (0x04): 加上 palette_anim_frame */
+            if (flags & TILE_FLAG_ANIM_OFF) {
+                tile_index += palette_anim_frame;
+            }
+            
+            /* 从FDSHAP.DAT获取精灵数据偏移 */
+            const u8* index_table = fdshap_data + FDSHAP_INDEX_OFFSET;
+            int data_offset = *(const int*)(index_table + 4 * tile_index);
+            const u8* sprite_data = fdshap_data + data_offset;
+            
+            /* 根据use_palette选择渲染方式 */
+            if (use_palette == 255) {
+                /* 直接blit */
+                rle_blit_24x24(sprite_data, row_dst, dst_stride);
+            } else {
+                /* 带调色板映射的blit */
+                rle_blit_24x24_palette(sprite_data, row_dst, dst_stride, palette_map);
+            }
+            
+            row_dst += 24;
+        }
     }
-    draw_string_with_tiles(buf, buf_pitch, text_x, text_y, status_str, COLOR_GREEN);
 }
 
-/* ========================================================================
- * battle_render_char_info - 公开API
- * ======================================================================== */
-void battle_render_char_info(state_battle_data_t* data, fd2_game_t* game, int char_idx) {
-    if (!data || !game || char_idx < 0 || char_idx >= data->total_char_count) return;
-    
-    if (init_tile_resources(game) != 0) return;
-    
-    u8* render_buf = (u8*)calloc(INFO_PANEL_BUF_PITCH * INFO_PANEL_H, sizeof(u8));
-    if (!render_buf) return;
-    
-    render_char_info_panel(render_buf, INFO_PANEL_BUF_PITCH, data, char_idx);
-    
-    u8* screen = game->render.screen;
-    if (screen) {
-        fb_copy_11eb0(screen, FD2_SCREEN_W, render_buf, INFO_PANEL_BUF_PITCH,
-                      INFO_PANEL_W, INFO_PANEL_H, PANEL_SCREEN_X, PANEL_SCREEN_Y);
-    }
-    
-    free(render_buf);
+/*
+ * sub_11CAC: 设置渲染上下文并调用sub_11EEE
+ * IDA分析:
+ * sub_11EEE(dword_53A49 + 32904, 456, 13, 8, n9, n34);
+ */
+static void setup_and_render_info_panel(
+    int n9,
+    int n34,
+    const u8* layout_table,
+    const u8* tile_flags,
+    const u8* palette_map,
+    const u8* fdshap_data,
+    u8* backbuffer,
+    int layout_width,
+    int palette_anim_frame,
+    int n3_1
+)
+{
+    render_char_layout(0, 456, 13, 8, n9, n34,
+                       layout_table, tile_flags, palette_map,
+                       fdshap_data, backbuffer, layout_width,
+                       palette_anim_frame, n3_1);
 }
 
-/* ========================================================================
- * battle_render_info_panel - 战场主循环调用
- * ======================================================================== */
-void battle_render_info_panel(state_battle_data_t* data, fd2_game_t* game) {
-    if (!data || !game) return;
+/*
+ * 渲染战场角色信息面板
+ * 参数:
+ *   char_index: 角色索引 (0-63)
+ *   char_data: 角色数据数组 (dword_53A45, 80字节/角色)
+ *   layout_table: FDFIELD.DAT字符布局表 (dword_53A51)
+ *   tile_flags: 瓦片标志表 (dword_53A69)
+ *   palette_map: 调色板映射表 (dword_53A6D)
+ *   fdshap_data: FDSHAP.DAT数据
+ *   backbuffer: 后备缓冲区 (dword_53A49)
+ *   layout_width: 布局表宽度 (dword_53AC1)
+ *   palette_anim_frame: 调色板动画帧 (dword_53A40)
+ *   n3_1: 调色板偏移参数
+ *
+ * IDA原始流程: sub_12D7B -> sub_12CEA -> sub_11CAC -> sub_11EEE
+ */
+void battle_render_info_panel(
+    int char_index,
+    const u8* char_data,
+    const u8* layout_table,
+    const u8* tile_flags,
+    const u8* palette_map,
+    const u8* fdshap_data,
+    u8* backbuffer,
+    int layout_width,
+    int palette_anim_frame,
+    int n3_1
+)
+{
+    int cur_col, cur_row;
+    const u8* cd;
     
-    if (data->selected_char_idx >= 0 && data->selected_char_idx < data->total_char_count) {
-        battle_render_char_info(data, game, data->selected_char_idx);
-    }
+    if (char_index < 0 || char_index >= 64)
+        return;
+    
+    if (!char_data || !layout_table || !fdshap_data || !backbuffer)
+        return;
+    
+    /* 从角色数据获取位置信息 (80字节/角色) */
+    /* IDA: *(byte*)(80*a5 + dword_53A45), *(byte*)(80*a5 + dword_53A45 + 1) */
+    cd = char_data + 80 * char_index;
+    cur_col = cd[0];     /* byte at offset 0 -> n9 */
+    cur_row = cd[1];     /* byte at offset 1 -> n34 */
+    
+    /* 渲染信息面板 */
+    setup_and_render_info_panel(cur_col, cur_row,
+                                layout_table, tile_flags, palette_map,
+                                fdshap_data, backbuffer, layout_width,
+                                palette_anim_frame, n3_1);
+}
+
+/*
+ * 渲染角色名称到信息面板
+ * 基于IDA: 角色名称存储在dword_53A45偏移7处
+ */
+void render_char_name(int char_index, const u8* char_data, int dst_x, int dst_y)
+{
+    const u8* cd;
+    
+    if (char_index < 0 || char_index >= 64)
+        return;
+    
+    if (!char_data)
+        return;
+    
+    cd = char_data + 80 * char_index;
+    
+    /* 角色名称索引在偏移7处 */
+    (void)cd[7];
+    (void)dst_x;
+    (void)dst_y;
 }

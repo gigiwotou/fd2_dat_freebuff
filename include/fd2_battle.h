@@ -147,6 +147,17 @@ typedef struct {
 
     /* Turn phase - 回合阶段 */
     int turn_phase;                /* 0=选择角色,1=显示移动范围,2=选择移动目标,3=显示菜单,4=执行功能 */
+
+    /* FDFIELD.DAT raw data for info panel rendering */
+    const u8* fdfield_layout;      /* dword_53A51: 字符布局表 */
+    const u8* fdshap_data;         /* FDSHAP_DAT: 瓦片精灵数据 */
+    const u8* fdshap_flags;        /* dword_53A69: 瓦片标志表 */
+    const u8* fdother_palette_map; /* dword_53A6D: 调色板映射表 */
+    int layout_width;              /* dword_53AC1: 布局表宽度 */
+    int layout_height;             /* dword_53AC5: 布局表高度 */
+    int palette_anim_frame;        /* dword_53A40: 调色板动画帧 */
+    int n3_1;                      /* n3_1: 调色板偏移参数 */
+    u8* backbuffer;                /* dword_53A49: 后备缓冲区 */
 } state_battle_data_t;
 
 /* Character query - based on IDA sub_12C0D */
@@ -190,9 +201,27 @@ int battle_get_active_char_ids(state_battle_data_t* data, int* out_ids, int max_
 /* Movement range and display list - based on IDA sub_14818 */
 int battle_build_display_list(state_battle_data_t* data, int n16, int n19, int n2, u8* out_list);
 
-/* Character info panel - based on IDA sub_12D7B, sub_12CEA */
-void battle_render_char_info(state_battle_data_t* data, fd2_game_t* game, int char_idx);
-void battle_render_info_panel(state_battle_data_t* data, fd2_game_t* game);
+/* 战场UI渲染 (fd2_battle_ui.c) */
+void battle_draw_cursor(void);
+void battle_draw_terrain_info(void);
+void battle_draw_character_info(int selected_char_index);
+void battle_clear_info_panel(void);
+
+/* 战场角色信息面板 (fd2_battle_info.c) - 基于IDA分析 */
+/* sub_12D7B -> sub_12CEA -> sub_11CAC -> sub_11EEE */
+void battle_render_info_panel(
+    int char_index,
+    const u8* char_data,
+    const u8* layout_table,
+    const u8* tile_flags,
+    const u8* palette_map,
+    const u8* fdshap_data,
+    u8* backbuffer,
+    int layout_width,
+    int palette_anim_frame,
+    int n3_1
+);
+void render_char_name(int char_index, const u8* char_data, int dst_x, int dst_y);
 
 /* Player turn logic - based on IDA analysis */
 void battle_turn_init(state_battle_data_t* data);

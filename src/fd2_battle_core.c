@@ -336,8 +336,24 @@ int battle_main_loop(fd2_game_t* game, int n19, int n17) {
         
         battle_render_cursor(data, game->render.screen, FD2_SCREEN_W, FD2_SCREEN_H);
         
-        /* 渲染角色信息面板 (基于 IDA sub_12D7B, sub_12CEA) */
-        battle_render_info_panel(data, game);
+        /* 渲染角色信息面板 (基于 IDA sub_12D7B, sub_12CEA, sub_11CAC, sub_11EEE) */
+        {
+            int sel_char_idx = data->current_char_idx;
+            if (sel_char_idx >= 0 && sel_char_idx < 64) {
+                battle_render_info_panel(
+                    sel_char_idx,
+                    (const u8*)data->char_data,
+                    data->fdfield_layout,
+                    data->fdshap_flags,
+                    data->fdother_palette_map,
+                    data->fdshap_data,
+                    data->backbuffer,
+                    data->layout_width,
+                    data->palette_anim_frame,
+                    data->n3_1
+                );
+            }
+        }
         
         fd2_render_present(&game->render);
     }
