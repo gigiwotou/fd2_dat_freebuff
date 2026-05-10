@@ -20,8 +20,6 @@ extern void fd2_delay(int ms);
 static void sub_1F882(fd2_render_t* render);
 static void sub_1F525(fd2_render_t* render);
 static void sub_11D40(fd2_render_t* render, int a2, int a3, int a4);
-static void fd2_render_menu_from_fdother(u8* screen, int screen_offset, 
-                                          int fdother_index, int selected_index, int item_index);
 
 /* ========================================================================
  * Local Helper Functions (原游戏相关逻辑的本地实现)
@@ -83,67 +81,94 @@ static void sub_11D40(fd2_render_t* render, int a2, int a3, int a4) {
 }
 
 /*
- * fd2_render_menu_from_fdother: 渲染菜单项 (基于IDA sub_16886)
- * 从FDOTHER.DAT主文件加载资源并RLE解码到屏幕
+ * sub_16886: 从FDOTHER.DAT加载资源并解码到屏幕 (原游戏 0x16886)
+ * 对应IDA反编译:
+ *   sub_3702F(a1, a2, a3, a4, 32);
+ *   sub_4E98D(*(_DWORD *)(a7 + 4 * a8 + 6) + a7, 0, 0, a5, a6, -1);
+ * 
+ * 参数:
+ *   dst_x = 目标X坐标
+ *   dst_y = 目标Y坐标
+ *   dat_ptr = 资源基址指针 (嵌套DAT文件指针,不是FDOTHER.DAT主文件!)
+ *   resource_index = 资源索引
  */
-static void fd2_render_menu_from_fdother(u8* screen, int screen_offset, 
-                                          int fdother_index, int selected_index, int item_index) {
-    if (!screen || fdother_index < 0) return;
-    
-    fd2_resources_t* res = fd2_get_resources();
-    u32 res_size = 0;
-    const u8* res_data = fd2_resources_get(res, FD2_DAT_FDOTHER, fdother_index, &res_size);
-    
-    if (!res_data || res_size < 4) {
-        printf("[MENU] ERROR: Failed to load FDOTHER index %d (size=%u)\n", fdother_index, res_size);
+static void sub_16886(u8* screen, int dst_x, int dst_y, const u8* dat_ptr, int resource_index) {
+    if (!screen || !dat_ptr) {
+        printf("[MENU] ERROR: Invalid params for sub_16886 (index=%d)\n", resource_index);
         return;
     }
     
-    printf("[MENU] Rendering item %d, selected=%d, using FDOTHER index %d, size=%u\n",
-           item_index, selected_index, fdother_index, res_size);
+    /* 根据IDA公式: 资源指针 = dat_ptr + *(uint32_t*)(dat_ptr + 4*resource_index + 6) */
+    u32 resource_offset = *(const uint32_t*)(dat_ptr + 4 * resource_index + 6);
+    const u8* res_data = dat_ptr + resource_offset;
+    
+    /* 读取图像尺寸 (小端序) */
+    int16_t w = *(int16_t*)(res_data + 0);
+    int16_t h = *(int16_t*)(res_data + 2);
+    
+    printf("[MENU] sub_16886: index=%d, offset=%u, dst=(%d,%d)\n", 
+           resource_index, resource_offset, dst_x, dst_y);
+    printf("[MENU] Resource %d: dims=%dx%d\n", resource_index, w, h);
+    
+    /* 验证尺寸 */
+    if (w <= 0 || w > 640 || h <= 0 || h > 480) {
+        printf("[MENU] ERROR: Invalid dimensions %dx%d\n", w, h);
+        return;
+    }
+    
+    /* 验证目标区域不越界 */
+    if (dst_x + w > 320 || dst_y + h > 200) {
+        printf("[MENU] ERROR: Destination out of bounds (%d+%d, %d+%d)\n", dst_x, w, dst_y, h);
+        return;
+    }
+    
+    /* 估算资源大小 (从偏移表下一个条目减去当前偏移,或使用固定大小) */
+    u32 resource_size = 100000; /* 临时估算 */
     
     /* RLE解码到屏幕 */
-    fd2_rle_decompress_to_buffer(res_data, res_size, screen, screen_offset, 320, -1);
+    int result = fd2_rle_decompress(res_data + 4, resource_size - 4, screen, dst_x, dst_y, 320, w, h, -1);
+    if (result != 0) {
+        printf("[MENU] WARNING: RLE decompression returned %d for index %d\n", result, resource_index);
+    }
 }
 
 /*
  * sub_1FF79: 渲染开始菜单 (原游戏 0x1FF79)
  * 对应IDA反编译:
- *   sub_3702F(a1, a2, a3, a4, 20);     // 背景索引20
+ *   sub_3702F(a1, a2, a3, a4, 20);     // 栈检查,20是栈大小参数
  *   n2_1 = (!n2_2) ? 2 : 1;            // 选中项0用索引1，否则用2
  *   sub_16886(707969, 320, _FDOTHER.DAT_, n2_1);
  *   if (n2 > 1) { n3 = (n2_2==1)?4:3; sub_16886(710849, 320, _FDOTHER.DAT_, n3); }
  *   if (n2 > 2) { n5 = (n2_2==2)?6:5; sub_16886(713729, 320, _FDOTHER.DAT_, n5); }
+ * 
+ * 注意: nested_dat_ptr是索引7的资源指针(嵌套DAT文件指针),不是FDOTHER.DAT主文件!
+ * 背景在调用此函数之前已经用嵌套DAT索引0渲染!
  * 
  * 屏幕偏移计算 (相对于屏幕缓冲区655360):
  *   707969 - 655360 = 52609 = 164*320 + 129 -> y=164, x=129
  *   710849 - 655360 = 55489 = 173*320 + 129 -> y=173, x=129  
  *   713729 - 655360 = 58369 = 182*320 + 129 -> y=182, x=129
  */
-static void sub_1FF79(u8* screen, int selected_item, int menu_count) {
+static void sub_1FF79(u8* screen, int selected_item, int menu_count, const u8* nested_dat_ptr) {
     int menu_x = 129;
     int menu_y[] = {164, 173, 182};
     
-    /* 渲染背景 (索引20) */
-    fd2_render_menu_from_fdother(screen, 0, 20, selected_item, -1);
+    /* 渲染菜单项1 (索引1=未选中, 索引2=选中) */
+    {
+        int res_index = (selected_item == 0) ? 1 : 2;
+        sub_16886(screen, menu_x, menu_y[0], nested_dat_ptr, res_index);
+    }
     
-    /* 渲染菜单项 */
-    for (int i = 0; i < menu_count && i < 3; i++) {
-        /* 根据选中状态选择索引 */
-        int res_index;
-        if (i == 0) {
-            /* 第一项: 索引1(选中) / 索引2(未选中) */
-            res_index = (selected_item == 0) ? 1 : 2;
-        } else if (i == 1) {
-            /* 第二项: 索引3(未选中) / 索引4(选中) */
-            res_index = (selected_item == 1) ? 4 : 3;
-        } else {
-            /* 第三项: 索引5(未选中) / 索引6(选中) */
-            res_index = (selected_item == 2) ? 6 : 5;
-        }
-        
-        int screen_offset = menu_y[i] * 320 + menu_x;
-        fd2_render_menu_from_fdother(screen, screen_offset, res_index, selected_item, i);
+    /* 渲染菜单项2 (索引3=未选中, 索引4=选中) */
+    if (menu_count > 1) {
+        int res_index = (selected_item == 1) ? 4 : 3;
+        sub_16886(screen, menu_x, menu_y[1], nested_dat_ptr, res_index);
+    }
+    
+    /* 渲染菜单项3 (索引5=未选中, 索引6=选中) */
+    if (menu_count > 2) {
+        int res_index = (selected_item == 2) ? 6 : 5;
+        sub_16886(screen, menu_x, menu_y[2], nested_dat_ptr, res_index);
     }
 }
 
@@ -168,15 +193,50 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     int n2_3 = 0;
     
     /* ====================================================================
-     * 加载调色板从索引76 (对应原游戏 sub_11D40)
+     * 获取FDOTHER.DAT完整数据指针 (用于访问偏移表)
+     * 对应原游戏的全局指针 dword_53F56
+     * ==================================================================== */
+    const fd2_dat_t* fdother_dat = fd2_resources_get_dat(res, FD2_DAT_FDOTHER);
+    if (!fdother_dat) {
+        printf("[OPENING] ERROR: FDOTHER.DAT not loaded\n");
+        return -1;
+    }
+    
+    printf("[OPENING] FDOTHER.DAT data=%p, file_size=%u, resource_count=%u\n", 
+           fdother_dat->data, fdother_dat->file_size, fdother_dat->resource_count);
+    
+    /* 打印偏移表前25项用于调试 */
+    printf("[OPENING] FDOTHER offset table (first 25 entries):\n");
+    for (int i = 0; i < 25 && i < (int)fdother_dat->resource_count; i++) {
+        const fd2_resource_t* ri = &fdother_dat->resources[i];
+        printf("  [%2d] offset=%u, size=%u", i, ri->start, ri->size);
+        if (ri->start < fdother_dat->file_size - 4) {
+            int16_t w = *(int16_t*)(fdother_dat->data + ri->start + 0);
+            int16_t h = *(int16_t*)(fdother_dat->data + ri->start + 2);
+            if (w > 0 && w < 640 && h > 0 && h < 480) {
+                printf(" -> %dx%d\n", w, h);
+            } else {
+                printf(" -> INVALID %dx%d\n", w, h);
+            }
+        } else {
+            printf("\n");
+        }
+    }
+    
+    /* ====================================================================
+     * 加载菜单调色板从索引8 (对应原游戏 sub_1F894 第120-127行)
+     * 原游戏: FDOTHER_DAT = sub_111BA(..., 8);
+     * 索引8是菜单调色板，大小768字节(256色×3)
      * ==================================================================== */
     {
-        u32 size = 0;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, 76, &size);
-        printf("[OPENING] Loaded FDOTHER index 76 for palette, size=%u\n", size);
+        const fd2_resource_t* pal_res = &fdother_dat->resources[8];
+        const u8* pal_data = fdother_dat->data + pal_res->start;
+        u32 pal_size = pal_res->size;
         
-        if (data && size >= 768) {
-            memcpy(g_palette_6bit, data, 768);
+        printf("[OPENING] Loading menu palette from index 8, offset=%u, size=%u\n", pal_res->start, pal_size);
+        
+        if (pal_size >= 768) {
+            memcpy(g_palette_6bit, pal_data, 768);
             g_palette_loaded = 1;
             g_current_palette_data = g_palette_6bit;
             
@@ -199,7 +259,7 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
                     ((u32)sm->render.palette[i * 3 + 1] << 8)  |
                     ((u32)sm->render.palette[i * 3 + 2]);
             }
-            printf("[OPENING] Palette loaded and converted successfully\n");
+            printf("[OPENING] Menu palette loaded and converted successfully\n");
         }
     }
     
@@ -229,18 +289,92 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
     printf("[OPENING] Displaying menu with %d options\n", n2_1);
     
     /* ====================================================================
-     * 渲染菜单 (对应原游戏 sub_1FF79)
+     * 加载索引7的嵌套DAT文件 (对应原游戏 0x1FCB6-0x1FCCB)
+     * 原游戏: push 7; call sub_111BA; mov var_24, eax
+     * 索引7是一个嵌套的DAT文件，包含菜单资源的偏移表
      * ==================================================================== */
-    sub_1FF79(sm->render.screen, n2_2, n2_1);
-    printf("[OPENING] Menu rendered\n");
+    if (7 >= fdother_dat->resource_count) {
+        printf("[OPENING] ERROR: Index 7 (nested DAT) not found in FDOTHER.DAT\n");
+        return -1;
+    }
+    
+    const fd2_resource_t* nested_res = &fdother_dat->resources[7];
+    const u8* nested_dat_data = fdother_dat->data + nested_res->start;
+    u32 nested_dat_size = nested_res->size;
+    
+    printf("[OPENING] Nested DAT (index 7): offset=%u, size=%u\n", nested_res->start, nested_dat_size);
+    
+    /* 验证嵌套DAT文件头 */
+    if (nested_dat_size < 10) {
+        printf("[OPENING] ERROR: Nested DAT too small (%u bytes)\n", nested_dat_size);
+        return -1;
+    }
+    
+    /* 解析嵌套DAT的资源数量 (偏移6开始的4字节) */
+    u32 nested_resource_count = 0;
+    for (u32 i = 0; ; i++) {
+        u32 offset;
+        memcpy(&offset, nested_dat_data + 6 + i * 4, 4);
+        if (offset >= nested_dat_size) {
+            nested_resource_count = i;
+            break;
+        }
+        if (i >= 100) {
+            nested_resource_count = i;
+            break;
+        }
+    }
+    
+    printf("[OPENING] Nested DAT resource count: %u\n", nested_resource_count);
+    
+    /* 打印嵌套DAT的偏移表用于调试 */
+    printf("[OPENING] Nested DAT offset table:\n");
+    for (u32 i = 0; i < nested_resource_count && i <= 25; i++) {
+        u32 offset;
+        memcpy(&offset, nested_dat_data + 6 + i * 4, 4);
+        printf("  [%2u] offset=%u", i, offset);
+        if (offset < nested_dat_size - 4) {
+            int16_t w = *(int16_t*)(nested_dat_data + offset + 0);
+            int16_t h = *(int16_t*)(nested_dat_data + offset + 2);
+            if (w > 0 && w < 640 && h > 0 && h < 480) {
+                printf(" -> %dx%d\n", w, h);
+            } else {
+                printf(" -> %dx%d\n", w, h);
+            }
+        } else {
+            printf("\n");
+        }
+    }
+    
+    /* 嵌套DAT的数据指针 (从偏移0开始，包含文件头和偏移表) */
+    const u8* nested_dat_ptr = nested_dat_data;
+    
+    /* ====================================================================
+     * 渲染菜单背景 (对应原游戏 sub_1F894 第133行)
+     * 原游戏: sub_16886(..., 655360, 320, nested_dat_ptr, 0);
+     * 使用嵌套DAT的索引0作为背景
+     * ==================================================================== */
+    fd2_render_fill_screen(&sm->render, 0);
+    sub_16886(sm->render.screen, 0, 0, nested_dat_ptr, 0);
+    printf("[OPENING] Menu background rendered from nested DAT index 0\n");
+    
+    /* ====================================================================
+     * 渲染菜单项 (对应原游戏 sub_1FF79)
+     * 注意: 使用嵌套DAT指针，不是FDOTHER.DAT主文件!
+     * ==================================================================== */
+    sub_1FF79(sm->render.screen, n2_2, n2_1, nested_dat_ptr);
+    printf("[OPENING] Menu items rendered\n");
     
     /* 刷新屏幕 */
+    SDL_PumpEvents();  /* 确保事件队列更新 */
     fd2_render_present(&sm->render);
     fflush(stdout);
     
     /* 等待用户输入 */
     while (!v27) {
         SDL_Event event;
+        int need_render = 0;
+        
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 v27 = 1;
@@ -264,6 +398,7 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
                     }
                     printf("[OPENING] Menu select: %d (up)\n", n2_2);
                     fflush(stdout);
+                    need_render = 1;
                 }
                 else if (hi_byte == 80 || lo_byte == 80) {
                     /* 下箭头 */
@@ -274,6 +409,7 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
                     }
                     printf("[OPENING] Menu select: %d (down)\n", n2_2);
                     fflush(stdout);
+                    need_render = 1;
                 }
                 else if (lo_byte == 13 || lo_byte == 32 || 
                          hi_byte == 224 || hi_byte == 82) {
@@ -285,10 +421,13 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
             }
         }
         
-        /* 重新渲染菜单并刷新屏幕 */
-        fd2_render_fill_screen(&sm->render, 0);
-        sub_1FF79(sm->render.screen, n2_2, n2_1);
-        fd2_render_present(&sm->render);
+        /* 只在需要时重新渲染 */
+        if (need_render) {
+            fd2_render_fill_screen(&sm->render, 0);
+            sub_16886(sm->render.screen, 0, 0, nested_dat_ptr, 0);  /* 重新渲染背景 */
+            sub_1FF79(sm->render.screen, n2_2, n2_1, nested_dat_ptr);
+            fd2_render_present(&sm->render);
+        }
         fd2_delay(16);
     }
     

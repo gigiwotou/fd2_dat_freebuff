@@ -2,60 +2,76 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <fdother.dat path>\n", argv[0]);
-        return 1;
-    }
-    
-    FILE* fp = fopen(argv[1], "rb");
+int main() {
+    FILE* fp = fopen("D:/workspace/fd2_dat_freebuff/bin/FDOTHER.DAT", "rb");
     if (!fp) {
-        perror("fopen");
+        printf("Cannot open FDOTHER.DAT\n");
         return 1;
     }
     
-    /* 读取文件大小 */
-    fseek(fp, 0, SEEK_END);
-    long file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    /* 读取前200字节 */
+    uint8_t header[200];
+    fread(header, 1, 200, fp);
+    fclose(fp);
     
-    printf("FDOTHER.DAT file size: %ld bytes\n", file_size);
+    printf("FDOTHER.DAT header (first 200 bytes):\n");
+    for (int i = 0; i < 200; i++) {
+        if (i % 16 == 0) printf("\n%04X: ", i);
+        printf("%02X ", header[i]);
+    }
+    printf("\n\n");
     
-    /* 读取头部 */
-    uint8_t header[6];
-    fread(header, 1, 6, fp);
-    printf("Magic: %.*s\n", 6, header);
+    /* 解析偏移表 */
+    printf("Offset table analysis:\n");
+    printf("Header bytes 0-5: ");
+    for (int i = 0; i < 6; i++) {
+        printf("%02X ", header[i]);
+    }
+    printf("\n");
     
-    /* 读取资源数量 */
-    uint32_t count;
-    fread(&count, 4, 1, fp);
-    printf("Resource count: %u\n", count);
+    uint16_t header_val = *(uint16_t*)(header + 0);
+    uint32_t offset_table_start = *(uint32_t*)(header + 2);
     
-    /* 读取索引69-73的偏移和大小 */
-    for (int i = 69; i <= 73; i++) {
-        fseek(fp, 6 + 4 + i * 4, SEEK_SET);
-        uint32_t offset;
-        fread(&offset, 4, 1, fp);
-        
-        uint32_t next_offset;
-        if (i + 1 < count) {
-            fread(&next_offset, 4, 1, fp);
-        } else {
-            next_offset = file_size;
-        }
-        
-        uint32_t size = next_offset - offset;
-        printf("Resource %d: offset=0x%08x (%u), size=%u bytes\n", i, offset, offset, size);
-        
-        /* 读取前4字节 (width/height header) */
-        fseek(fp, offset, SEEK_SET);
-        uint8_t img_header[4];
-        fread(img_header, 1, 4, fp);
-        uint16_t width = img_header[0] | (img_header[1] << 8);
-        uint16_t height = img_header[2] | (img_header[3] << 8);
-        printf("  -> Image: %dx%d, data_size=%u\n", width, height, size - 4);
+    printf("Header value (2 bytes): %u (0x%X)\n", header_val, header_val);
+    printf("Offset table start (4 bytes): %u (0x%X)\n", offset_table_start, offset_table_start);
+    
+    /* 尝试从不同位置读取偏移表 */
+    printf("\nOffsets from position 6:\n");
+    for (int i = 0; i <= 20; i++) {
+        uint32_t offset = *(uint32_t*)(header + 6 + 4*i);
+        printf("  [%2d] offset = %u (0x%X)\n", i, offset, offset);
     }
     
-    fclose(fp);
+    /* 验证索引1、20、3、5的资源数据 */
+    printf("\nResource data verification:\n");
+    
+    /* 索引1 */
+    uint32_t off1 = *(uint32_t*)(header + 6 + 4*1);
+    printf("\nIndex 1: offset=%u\n", off1);
+    if (off1 < 200) {
+        printf("  Data at offset: ");
+        for (int i = 0; i < 8; i++) {
+            printf("%02X ", header[off1 + i]);
+        }
+        printf("\n");
+        int w = header[off1 + 0] | (header[off1 + 1] << 8);
+        int h = header[off1 + 2] | (header[off1 + 3] << 8);
+        printf("  Dimensions: %dx%d\n", w, h);
+    }
+    
+    /* 索引20 */
+    uint32_t off20 = *(uint32_t*)(header + 6 + 4*20);
+    printf("\nIndex 20: offset=%u\n", off20);
+    if (off20 < 200) {
+        printf("  Data at offset: ");
+        for (int i = 0; i < 8; i++) {
+            printf("%02X ", header[off20 + i]);
+        }
+        printf("\n");
+        int w = header[off20 + 0] | (header[off20 + 1] << 8);
+        int h = header[off20 + 2] | (header[off20 + 3] << 8);
+        printf("  Dimensions: %dx%d\n", w, h);
+    }
+    
     return 0;
 }

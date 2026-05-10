@@ -1,48 +1,95 @@
 import struct
 
-with open('game/FDOTHER.DAT', 'rb') as f:
-    # Parse DAT header
+filepath = 'game/FDOTHER.DAT'
+
+with open(filepath, 'rb') as f:
+    file_size = f.seek(0, 2)
+    f.seek(0)
+    
+    print(f'=== FDOTHER.DAT 分析 ===')
+    print(f'文件大小: {file_size} 字节')
+    
+    # 读取文件头
     magic = f.read(6)
-    count = struct.unpack('<I', f.read(4))[0]
-    print(f'Magic: {magic}, Resource count: {count}')
+    print(f'文件头(0-5): {magic}')
     
-    # Read offset table
+    # 偏移6处开始的值
+    f.seek(6)
+    val_at_6 = struct.unpack('<I', f.read(4))[0]
+    print(f'偏移6处的值: {val_at_6} (0x{val_at_6:X})')
+    
+    f.seek(10)
+    val_at_10 = struct.unpack('<I', f.read(4))[0]
+    print(f'偏移10处的值: {val_at_10} (0x{val_at_10:X})')
+    
+    # 假设偏移6处是第一个偏移表项
+    # 读取前50个偏移表项
+    print(f'\n=== 偏移表分析 (从偏移6开始) ===')
     offsets = []
-    for i in range(count):
-        offsets.append(struct.unpack('<I', f.read(4))[0])
+    f.seek(6)
+    for i in range(50):
+        data = f.read(4)
+        if len(data) < 4:
+            break
+        offset = struct.unpack('<I', data)[0]
+        if offset >= file_size:
+            print(f'索引{i}: offset={offset} (超出文件大小，可能是资源数量或结束标记)')
+            break
+        offsets.append(offset)
     
-    print(f'\nFirst 10 resource offsets:')
-    for i in range(min(10, count)):
-        size = offsets[i+1] - offsets[i] if i+1 < count else 'unknown'
-        print(f'  Resource {i}: offset={offsets[i]} (0x{offsets[i]:04X}), size={size}')
+    print(f'\n前20个资源:')
+    for i in range(min(20, len(offsets))):
+        start = offsets[i]
+        if i + 1 < len(offsets):
+            end = offsets[i + 1]
+        else:
+            end = file_size
+        size = end - start
+        
+        f.seek(start)
+        header = f.read(8)
+        
+        # 检查是否是图像（前2字节是宽高）
+        w = struct.unpack('<H', header[:2])[0]
+        h = struct.unpack('<H', header[2:4])[0]
+        
+        is_image = (0 < w <= 640 and 0 < h <= 480)
+        is_palette = (size == 768)
+        is_lmi = (header[:3] == b'LMI')
+        is_nested_dat = (header[:4] == b'LLLL')
+        
+        if is_image:
+            print(f'  [{i:2d}] start={start:7d}, size={size:6d}, dims={w}x{h} [IMAGE]')
+        elif is_palette:
+            print(f'  [{i:2d}] start={start:7d}, size={size} [PALETTE]')
+        elif is_lmi:
+            print(f'  [{i:2d}] start={start:7d}, size={size:6d} [LMI AUDIO]')
+        elif is_nested_dat:
+            print(f'  [{i:2d}] start={start:7d}, size={size:6d} [NESTED DAT]')
+        else:
+            print(f'  [{i:2d}] start={start:7d}, size={size:6d}, header={header[:4].hex()} [BINARY]')
     
-    # Check what's at offset 526 within the ENTIRE file
-    f.seek(526)
-    bytes_at_526 = f.read(8)
-    val_at_526 = struct.unpack('<I', bytes_at_526[:4])[0]
-    print(f'\nRaw file offset 526 bytes: {" ".join(f"{b:02X}" for b in bytes_at_526)}')
-    print(f'Value at raw file offset 526 (uint32 LE): {val_at_526} (0x{val_at_526:04X})')
-    
-    # Check resource 0
-    res0_start = offsets[0]
-    res0_size = offsets[1] - res0_start if count > 1 else 'unknown'
-    print(f'\nResource 0: file_offset={res0_start} (0x{res0_start:04X}), size={res0_size}')
-    
-    # Check offset 526 within resource 0
-    res0_offset_526 = res0_start + 526
-    f.seek(res0_offset_526)
-    bytes_res0_526 = f.read(8)
-    val_res0_526 = struct.unpack('<I', bytes_res0_526[:4])[0]
-    print(f'Resource 0 + offset 526 = file offset {res0_offset_526} (0x{res0_offset_526:04X})')
-    print(f'Bytes: {" ".join(f"{b:02X}" for b in bytes_res0_526)}')
-    print(f'Value: {val_res0_526} (0x{val_res0_526:04X})')
-    
-    # Check what's at resource 0's offset 526 value
-    if isinstance(res0_size, int) and val_res0_526 < res0_size:
-        target = res0_start + val_res0_526
-        f.seek(target)
-        img_header = f.read(8)
-        w = struct.unpack('<H', img_header[:2])[0]
-        h = struct.unpack('<H', img_header[2:4])[0]
-        print(f'\nImage at resource 0 + {val_res0_526} (file offset {target}): {w}x{h}')
-        print(f'First 32 bytes: {" ".join(f"{b:02X}" for b in img_header + f.read(24))}')
+    # 重点检查1,2,3,4,5,6,20
+    print(f'\n=== 重点资源检查 ===')
+    for idx in [1, 2, 3, 4, 5, 6, 20]:
+        if idx < len(offsets):
+            start = offsets[idx]
+            if idx + 1 < len(offsets):
+                end = offsets[idx + 1]
+            else:
+                end = file_size
+            size = end - start
+            
+            f.seek(start)
+            header = f.read(16)
+            w, h = struct.unpack('<HH', header[:4])
+            
+            print(f'\n索引{idx}:')
+            print(f'  start={start}, end={end}, size={size}')
+            print(f'  w={w}, h={h}')
+            print(f'  header(16字节)={header.hex()}')
+            
+            if w > 0 and w <= 640 and h > 0 and h <= 480:
+                print(f'  -> 有效图像 {w}x{h}')
+            else:
+                print(f'  -> 不是标准图像格式')
