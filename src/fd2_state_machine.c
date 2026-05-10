@@ -559,9 +559,9 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         sm->globals.scene_active_flag = FD2_SCENE_INACTIVE;
         
         /* funcs_25E3A[n17]() - 场景0初始化 (sub_3231B) */
-        if (sm->scenes[0].exit_fn) {
+        if (sm->scenes[0].init_fn) {
             printf("[STATE_MACHINE] Calling funcs_25E3A[0] (scene 0 init)\n");
-            sm->scenes[0].exit_fn(sm);
+            sm->scenes[0].init_fn(sm);
         }
         
         /* sub_25977(byte_51E63[n17], 0) - 播放场景音乐 */
@@ -569,6 +569,10 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         
         g_byte_51AAC = FD2_SCENE_ACTIVE;
         sm->globals.scene_active_flag = FD2_SCENE_ACTIVE;
+        
+        /* 设置g_n2_0 = 2 (INTERACT) 进入场景交互 */
+        g_n2_0 = FD2_SCENE_STATE_INTERACT;
+        printf("[STATE_MACHINE] Set g_n2_0 = INTERACT (2)\n");
         
         /* sub_4E381() - 刷新屏幕 */
         fd2_render_present(&sm->render);

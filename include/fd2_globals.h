@@ -43,6 +43,9 @@ extern int g_qword_53AB1;
 /* 场景状态标志 (0x53C07) - 0=主循环, 1=初始化, 2=场景交互 */
 extern int g_n2_0;
 
+/* 开场场景结束标志 (0x53C06) */
+extern int g_n6_6;
+
 /* 菜单选择索引 (0x53F4A) - 范围 0-5 */
 extern int g_n5;
 

@@ -443,8 +443,22 @@ void fd2_scene_interact_render_update(fd2_state_machine_t* sm) {
                 }
             }
         } else {
-            /* 不是FDSHAP格式，直接拷贝（兼容旧逻辑）*/
-            memcpy(g_n655360_0, g_FDSHAP_DAT, 153216);
+            /* 不是FDSHAP格式：检查是否是开场剧情阶段 */
+            /* 如果g_n17 <= 32，说明还在开场剧情，保留g_n655360_0中的数据 */
+            if (g_n17 > 32) {
+                /* 普通场景：直接拷贝（兼容旧逻辑）*/
+                memcpy(g_n655360_0, g_FDSHAP_DAT, 153216);
+            } else {
+                /* 开场剧情阶段：保留g_n655360_0中的图像，不清除 */
+                if (render_call_count <= 3) {
+                    printf("[RENDER] Opening intro phase (scene=%d), keeping existing screen buffer\n", g_n17);
+                    printf("[RENDER]   First 16 pixels: ");
+                    for (int i = 0; i < 16; i++) {
+                        printf("%d ", ((u8*)g_n655360_0)[i]);
+                    }
+                    printf("\n");
+                }
+            }
         }
     }
 

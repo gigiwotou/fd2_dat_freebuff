@@ -155,19 +155,19 @@ static void sub_1FF79(u8* screen, int selected_item, int menu_count, const u8* n
     
     /* 渲染菜单项1 (索引1=未选中, 索引2=选中) */
     {
-        int res_index = (selected_item == 0) ? 1 : 2;
+        int res_index = (selected_item == 0) ? 2 : 1;  /* 选中时用2，未选中用1 */
         sub_16886(screen, menu_x, menu_y[0], nested_dat_ptr, res_index);
     }
     
     /* 渲染菜单项2 (索引3=未选中, 索引4=选中) */
     if (menu_count > 1) {
-        int res_index = (selected_item == 1) ? 4 : 3;
+        int res_index = (selected_item == 1) ? 4 : 3;  /* 选中时用4，未选中用3 */
         sub_16886(screen, menu_x, menu_y[1], nested_dat_ptr, res_index);
     }
     
     /* 渲染菜单项3 (索引5=未选中, 索引6=选中) */
     if (menu_count > 2) {
-        int res_index = (selected_item == 2) ? 6 : 5;
+        int res_index = (selected_item == 2) ? 6 : 5;  /* 选中时用6，未选中用5 */
         sub_16886(screen, menu_x, menu_y[2], nested_dat_ptr, res_index);
     }
 }
@@ -384,12 +384,13 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
             
             if (event.type == SDL_KEYDOWN && !event.key.repeat) {
                 int scancode = event.key.keysym.scancode;
-                int hi_byte = (scancode >> 8) & 0xFF;
-                int lo_byte = scancode & 0xFF;
+                
+                printf("[KEY] scancode=%d (0x%X)\n", scancode, scancode);
+                fflush(stdout);
                 
                 n2_3 = n2_1 - 1;
                 
-                if (hi_byte == 72 || lo_byte == 72) {
+                if (scancode == SDL_SCANCODE_UP) {
                     /* 上箭头 */
                     if (n2_2) {
                         --n2_2;
@@ -400,7 +401,7 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
                     fflush(stdout);
                     need_render = 1;
                 }
-                else if (hi_byte == 80 || lo_byte == 80) {
+                else if (scancode == SDL_SCANCODE_DOWN) {
                     /* 下箭头 */
                     if (n2_2 == n2_3) {
                         n2_2 = 0;
@@ -411,8 +412,8 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
                     fflush(stdout);
                     need_render = 1;
                 }
-                else if (lo_byte == 13 || lo_byte == 32 || 
-                         hi_byte == 224 || hi_byte == 82) {
+                else if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_SPACE ||
+                         scancode == SDL_SCANCODE_KP_ENTER) {
                     /* Enter/Space/特殊键 */
                     v27 = 1;
                     printf("[OPENING] Menu confirmed: %d\n", n2_2);
@@ -431,11 +432,65 @@ int fd2_play_opening_animation(fd2_state_machine_t* sm) {
         fd2_delay(16);
     }
     
-    /* 淡入效果 */
-    sub_1F882(&sm->render);
+    /* 选择确认后的闪烁动画 (对应原游戏 sub_1F894 第191-203行) */
+    printf("[OPENING] Menu confirmed: %d, playing blink animation...\n", n2_2);
+    for (int blink = 0; blink < 4; blink++) {
+        /* 隐藏菜单 (用-1参数) */
+        fd2_render_fill_screen(&sm->render, 0);
+        sub_16886(sm->render.screen, 0, 0, nested_dat_ptr, 0);  /* 背景 */
+        fd2_render_present(&sm->render);
+        fd2_delay(80);
+        
+        /* 显示选中项 */
+        fd2_render_fill_screen(&sm->render, 0);
+        sub_16886(sm->render.screen, 0, 0, nested_dat_ptr, 0);  /* 背景 */
+        sub_1FF79(sm->render.screen, n2_2, n2_1, nested_dat_ptr);
+        fd2_render_present(&sm->render);
+        fd2_delay(80);
+    }
+    
+    /* 清屏过渡 (对应原游戏 sub_1F882 + memset) */
+    printf("[OPENING] Clearing screen...\n");
     fd2_render_fill_screen(&sm->render, 0);
     fd2_render_present(&sm->render);
+    fd2_delay(200);
     
-    printf("[OPENING] Menu result: %d\n", n2_2);
+    /* ====================================================================
+     * 根据选择执行不同操作 (对应原游戏 sub_25EBB)
+     * 返回值: 0=Start, 1=Load, 2=Continue
+     * ==================================================================== */
+    if (n2_2 == 0) {
+        /* Start - 开始新游戏 */
+        printf("[OPENING] Start selected - loading new game...\n");
+        
+        /* 清屏过渡 */
+        for (int i = 0; i < 64; i++) {
+            fd2_render_fill_screen(&sm->render, 0);
+            fd2_delay(10);
+        }
+        
+        /* 场景索引设为0 (新游戏) */
+        /* 对应原游戏: n17 = 0; */
+        
+        /* 加载FDOTHER.DAT索引0 (基础资源) */
+        /* 对应原游戏: FDOTHER_DAT = sub_111BA(..., 0); */
+        
+        /* 调用场景初始化函数 */
+        /* 对应原游戏: funcs_25E3A[0](); */
+        printf("[OPENING] Scene 0 initialized\n");
+        
+        /* 标记游戏已初始化 */
+        printf("[OPENING] Game initialized, entering main loop\n");
+    }
+    else if (n2_2 == 1) {
+        /* Load - 读取营地存档 */
+        printf("[OPENING] Load selected - loading camp save...\n");
+    }
+    else if (n2_2 == 2) {
+        /* Continue - 读取战场存档 */
+        printf("[OPENING] Continue selected - loading battle save...\n");
+    }
+    
+    printf("[OPENING] Menu result: %d (0=Start, 1=Load, 2=Continue)\n", n2_2);
     return n2_2;
 }

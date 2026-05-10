@@ -9,6 +9,7 @@
  */
 
 #include "fd2_scenes.h"
+#include "fd2_opening_intro.h"
 #include "fd2_resources.h"
 #include "fd2_globals.h"
 #include <stdlib.h>
@@ -436,62 +437,25 @@ void fd2_copy_cursor_image(u8* dst, const u8* src, int row_width) {
  * 场景0: 主菜单/标题场景初始化 (对应原游戏 sub_3231B)
  * 地址: 0x3231B, 大小: 0x65A (1626字节)
  */
+static int g_scene0_initialized = 0;  /* 防止重复初始化 */
+
 void scene_0_init(struct fd2_state_machine* sm) {
     if (!sm) return;
     
-    /* 原游戏: sub_3702F(..., 44) */
-    /* 原游戏: n17 = 32 */
-    sm->globals.scene_id = 32;
-    
-    /* 原游戏: sub_205DA() - 初始化场景 */
-    g_n17 = 32;
-    g_n6_5 = 0;
-    g_n2_0 = 0;
-    
-    /* 原游戏: sub_135DD(3, 34) - 设置位置 */
-    g_qword_53AA9 = 3;
-    g_qword_53AB1 = 34;
-    
-    /* 原游戏: sub_1366A(..., 99) - 加载资源 */
-    fd2_scene_load_resources(99);
-    
-    /* 原游戏: for(n0xF=0; n0xF<15; ++n0xF) sub_13185(2); */
-    /* 动画循环1 - 15次 */
-    for (int i = 0; i < 15; i++) {
-        /* TODO: sub_13185(2) - 动画帧 */
+    /* 防止重复初始化 - 开场剧情只执行一次 */
+    if (g_scene0_initialized) {
+        printf("[SCENE0] Already initialized, skipping opening intro\n");
+        return;
     }
+    g_scene0_initialized = 1;
     
-    /* 原游戏: sub_15F84(..., FDTXT_DAT, 0, ...) - 渲染文本0 */
-    /* TODO: 渲染主菜单标题 */
+    /* 调用开场剧情函数 (根据IDA代码实现) */
+    fd2_play_opening_intro(sm);
     
-    /* 原游戏: n6_5 = 0; for(n0xD=0; n0xD<13; ++n0xD) sub_13185(2); */
-    g_n6_5 = 0;
-    for (int i = 0; i < 13; i++) {
-        /* TODO: sub_13185(2) - 动画帧 */
-    }
+    /* 设置状态为交互 */
+    g_n2_0 = FD2_SCENE_STATE_INTERACT;
     
-    /* 原游戏: sub_15F84(..., FDTXT_DAT, 1, ...) - 渲染文本1 */
-    /* TODO: 渲染菜单选项1 */
-    
-    /* 原游戏: sub_25977(..., -1, 0) - 停止音乐 */
-    g_n6_5 = 0;
-    /* TODO: sub_25977(..., -1, 0) */
-    
-    /* 原游戏: n64 = 1; sub_1366A(..., 100); n64 = 0 */
-    g_n64 = 1;
-    fd2_scene_load_resources(100);
-    g_n64 = 0;
-    
-    /* 原游戏: sub_135DD(0, 43); sub_25977(..., 11, 0) */
-    g_qword_53AA9 = 0;
-    g_qword_53AB1 = 43;
-    /* TODO: sub_25977(..., 11, 0) - 切换音乐 */
-    
-    /* 继续加载和渲染菜单项... */
-    /* 原游戏: sub_1F525() - 淡入效果 */
-    /* TODO: sub_1F525() */
-    
-    sm->globals.progress = 0;
+    printf("Scene 0 initialized - opening intro complete\n");
 }
 
 void scene_0_exit(struct fd2_state_machine* sm) {
