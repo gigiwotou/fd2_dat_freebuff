@@ -117,6 +117,14 @@ u16 g_bios_tick_current = 0;
 /* SDL退出标志 */
 int g_sdl_quit_requested = 0;
 
+/* ========================================================================
+ * 调色板全局变量 (原游戏数据段)
+ * ======================================================================== */
+
+u8 g_palette_6bit[768] = {0};  /* 6-bit调色板 (256色 * 3通道) */
+int g_palette_loaded = 0;      /* 调色板加载标志 */
+u8* g_current_palette_data = NULL;  /* 当前调色板数据指针 */
+
 void fd2_request_quit(void) {
     g_sdl_quit_requested = 1;
 }

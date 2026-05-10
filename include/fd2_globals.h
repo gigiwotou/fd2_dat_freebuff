@@ -178,6 +178,14 @@ extern u16 g_bios_tick_current;
 /* SDL退出标志 - 用于X按钮关闭 */
 extern int g_sdl_quit_requested;
 
+/* ========================================================================
+ * 调色板全局变量
+ * ======================================================================== */
+
+extern u8 g_palette_6bit[768];
+extern int g_palette_loaded;
+extern u8* g_current_palette_data;
+
 /* 请求退出 (设置全局标志) */
 void fd2_request_quit(void);
 
