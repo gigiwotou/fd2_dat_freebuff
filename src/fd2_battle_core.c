@@ -103,19 +103,42 @@ int battle_build_display_list(state_battle_data_t* data, int n16, int n19, int n
     for (int i = 0; i < data->total_char_count; i++) {
         battle_char_data_t* v19 = &data->char_data[i];
         
-        /* Check conditions:
-         * 1. (v19[5] & 1) == 0 - not dead
-         * 2. Layout tile not 255
-         * 3. Character type matches n2 filter
-         */
+        /* IDA sub_14818 line 66: (v19[5] & 1) == 0 - 检查角色是否存活
+           offset+5的bit0=1表示死亡，bit0=0表示存活 */
         int is_alive = ((v19->active_byte & 1) == 0);
+        
+        /* Filter characters based on IDA sub_14818 line 68:
+         * if (n2 == 0 && !v19[6] || n2 == 1 && v19[6] || n2 == 2 && v19[6] == 1 || n2 == 3 && v19[6] == 2)
+         * 
+         * v19[6] = char_type (offset+6):
+         * - 0: 玩家未移动角色
+         * - 1: 友军/NPC
+         * - 2: 敌军
+         * 
+         * n2参数过滤规则:
+         * - n2=0: 选择未移动玩家 (char_type==0)
+         * - n2=1: 选择所有非玩家角色 (char_type!=0)
+         * - n2=2: 选择友军/NPC (char_type==1)
+         * - n2=3: 选择敌人 (char_type==2)
+         */
         int type_match = 0;
         
-        if (n2 == 0 && v19->char_type == 0) type_match = 1;
-        else if (n2 == 1 && v19->char_type != 0) type_match = 1;
-        else if (n2 == 2 && v19->char_type == 1) type_match = 1;
-        else if (n2 == 3 && v19->char_type == 2) type_match = 1;
-        else if (n2 == 0) type_match = 1; /* No filter */
+        if (n2 == 0) {
+            /* 未移动的玩家角色 */
+            type_match = (v19->char_type == 0) ? 1 : 0;
+        } else if (n2 == 1) {
+            /* 所有非玩家角色（已移动/敌方/友军） */
+            type_match = (v19->char_type != 0) ? 1 : 0;
+        } else if (n2 == 2) {
+            /* 友军/NPC */
+            type_match = (v19->char_type == 1) ? 1 : 0;
+        } else if (n2 == 3) {
+            /* 敌人 */
+            type_match = (v19->char_type == 2) ? 1 : 0;
+        } else {
+            /* 默认：无过滤 */
+            type_match = 1;
+        }
         
         if (is_alive && type_match) {
             /* if (a7) *(_BYTE *)(v22 + a7) = n6 */

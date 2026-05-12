@@ -38,15 +38,16 @@ typedef enum {
 typedef struct {
     uint8_t tile_x;         /* offset+0: tile X coordinate */
     uint8_t tile_y;         /* offset+1: tile Y coordinate */
-    uint8_t padding_2_3[2]; /* offset+2-3: padding */
-    uint8_t faction;        /* offset+4: faction/char_type (0=player, 1=ally, 2+=enemy) */
-    uint8_t active_byte;    /* offset+5: death flag (bit0=1表示死亡) */
-    uint8_t char_type;      /* offset+6: 0=未移动玩家, 其他=已移动/敌方/友军 */
+    uint8_t padding_2;      /* offset+2: padding/unknown */
+    uint8_t active_mask;    /* offset+3: active status (0=player unmoved, non-zero=moved/enemy/ally) */
+    uint8_t faction;        /* offset+4: faction (0=enemy, 1=NPC, 2=friendly) */
+    uint8_t active_byte;    /* offset+5: death flag (bit0=1=dead) */
+    uint8_t char_type;      /* offset+6: char type for filtering (0=unmoved player, 1=ally/NPC, 2=enemy) */
     uint8_t icon_id;        /* offset+7: icon/animation ID */
     uint8_t death_status;   /* offset+8: 0=alive, 28=dead */
     uint8_t moved;          /* offset+9: 0=unmoved, 1=moved */
     uint8_t padding_10_25[16]; /* offset+10-25 */
-    uint8_t active_mask;    /* offset+26: active status bit mask */
+    uint8_t active_mask2;   /* offset+26: active status bit mask (secondary) */
     uint8_t padding_27_31[5]; /* offset+27-31 */
     uint8_t icon_id_alt;    /* offset+32: alternate icon ID */
     uint8_t direction;      /* offset+33: facing direction */

@@ -134,32 +134,88 @@ void state_battle_enter(fd2_game_t* game) {
             data->total_char_count = 0;
         }
         
+        printf("DEBUG: total_char_count=%d, char_info_count=%d\n", 
+               data->total_char_count, data->map.scene.char_info_count);
+        printf("DEBUG: from_save=%d, max_friendly=%d, total_units=%d\n",
+               game->from_save, data->map.scene.max_friendly, data->map.scene.total_units);
+        
+        /* 初始化所有角色数据为0 */
+        memset(data->char_data, 0, sizeof(data->char_data));
+        
         if (game->from_save) {
             for (int i = 0; i < data->total_char_count; i++) {
+                /* 从存档直接复制80字节 */
                 memcpy(&data->char_data[i], game->save_char_full_data[i], sizeof(battle_char_data_t));
+                
+                /* IDA分析存档数据结构：
+                   offset+6 (char_type) = 阵营标识：
+                   - 2: 我军（玩家可操作，未移动）
+                   - 1: NPC
+                   - 0: 敌军
+                   
+                   存档中所有角色offset+3都是0（都未移动），所以直接根据offset+6判断：
+                   - char_type == 2: 我军未移动 → offset+3=0 → 显示移动范围
+                   - char_type == 0/1: 敌军/NPC → 需要设置offset+3=1 → 显示属性页 */
+                if (data->char_data[i].char_type == 2) {
+                    /* 我军：active_mask保持0，显示移动范围 */
+                    data->char_data[i].faction = 2;
+                } else {
+                    /* 敌军/NPC：设置active_mask=1，显示属性页 */
+                    data->char_data[i].faction = data->char_data[i].char_type;
+                    data->char_data[i].active_mask = 1;
+                }
             }
         } else {
             for (int i = 0; i < data->total_char_count; i++) {
                 fd2_map_char_pos_t* char_pos = &data->map.scene.char_positions[i];
                 fd2_map_char_info_t* char_info = NULL;
                 
-                /* 尝试从char_info获取阵营信息 */
-                if (i < data->map.scene.char_info_count) {
-                    char_info = &data->map.scene.char_info[i];
-                }
+                /* FDFIELD.DAT结构分析：
+                   - char_info数组：只包含敌人和NPC的信息（前total_units个敌人+可能的NPC）
+                   - char_positions数组：包含所有角色的位置（敌人+友军）
+                   - portrait_id == 0 表示己方友军，非0表示敌人/NPC */
                 
                 data->char_data[i].tile_x = char_pos->x;
                 data->char_data[i].tile_y = char_pos->y;
-                data->char_data[i].faction = char_info ? char_info->faction : 0;  /* offset+4: 0=enemy, 1=NPC, 2=friendly */
                 data->char_data[i].icon_id = char_pos->portrait_id;
-                /* IDA sub_1C269: offset+26位掩码判断活跃角色
-                   每行8个角色，5行共40个，每位=1表示活跃 */
-                data->char_data[i].active_mask = 0x01; /* 角色i活跃 */
-                data->char_data[i].active_byte = 0; /* offset+5: 0=存活 */
-                /* IDA sub_1CFF0: v10[3]==0 显示移动范围，否则显示属性页
-                   只有friendly(faction==2)的角色才是玩家可操作 */
-                data->char_data[i].char_type = (char_info && char_info->faction == 2) ? 0 : 1;
-                data->char_data[i].moved = 0; /* offset+9: 0=未移动 */
+                
+                if (char_pos->portrait_id == 0) {
+                    /* 己方友军：faction=2, active_mask=0（玩家可操作） */
+                    data->char_data[i].faction = 2;
+                    data->char_data[i].active_mask = 0;
+                    printf("  char[%d]: friendly (portrait=0), faction=2, active_mask=0\n", i);
+                } else {
+                    /* 敌人/NPC：从char_info读取faction */
+                    /* char_info按顺序存储敌人信息，索引i对应第i个敌人 */
+                    if (i < data->map.scene.char_info_count) {
+                        char_info = &data->map.scene.char_info[i];
+                        data->char_data[i].faction = char_info->faction;
+                        
+                        if (char_info->faction == 1) {
+                            /* NPC */
+                            data->char_data[i].active_mask = 1;
+                            printf("  char[%d]: NPC, faction=1, active_mask=1\n", i);
+                        } else {
+                            /* 敌人 */
+                            data->char_data[i].active_mask = 1;
+                            printf("  char[%d]: enemy, faction=%d, active_mask=1\n", i, char_info->faction);
+                        }
+                    } else {
+                        /* 没有char_info，默认敌人 */
+                        data->char_data[i].faction = 0;
+                        data->char_data[i].active_mask = 1;
+                        printf("  char[%d]: no char_info, default enemy\n", i);
+                    }
+                }
+            
+            data->char_data[i].active_byte = 0;
+            data->char_data[i].char_type = 0;
+            data->char_data[i].moved = 0;
+            
+            printf("  char[%d]: tile=(%d,%d), icon=%d, faction=%d, active_mask=%d, char_type=%d, moved=%d\n",
+                   i, char_pos->x, char_pos->y, char_pos->portrait_id,
+                   data->char_data[i].faction, data->char_data[i].active_mask,
+                   data->char_data[i].char_type, data->char_data[i].moved);
             }
         }
 
@@ -310,35 +366,38 @@ static void handle_character_select(fd2_game_t* game, state_battle_data_t* data,
 
     battle_char_data_t* ch = &data->char_data[char_idx];
     
-    /* IDA: dword_51A83 = v10[4] + 2 */
-    /* v10[4] = faction (0=player, 1=ally, 2+=enemy) */
+    /* IDA sub_1CFF0: n6_5 = v10[4] + 2
+       v10[4] = faction (0=enemy, 1=NPC, 2=friendly)
+       设置全局状态标志 dword_51A83 */
     g_char_state_flag = ch->faction + 2;
 
     printf("battle: selected char %d, faction=%d, char_type=%d, moved=%d, state_flag=%d\n",
            char_idx, ch->faction, ch->char_type, ch->moved, g_char_state_flag);
 
-    /* IDA: if (!v10[3] || (n11_1 == 23)) - offset+3=0表示玩家未移动
-       在我们的80字节结构中，char_type对应offset+6 */
-    if (ch->char_type == 0 && ch->moved == 0) {
-        /* 玩家未移动角色：显示移动范围 */
+    /* IDA sub_1CFF0 分支判断:
+       if (!v10[3] || (n11_1 == 23)) 
+       v10[3] = offset+3 = active_mask
+       
+       - active_mask == 0: 玩家未移动角色 -> 显示移动范围
+       - active_mask != 0: 已移动/敌方/友军 -> 显示属性页 */
+    if (ch->active_mask == 0) {
+        /* 玩家未移动角色：显示移动范围 -> 选择移动目标 -> 移动 */
         data->battle_phase = BATTLE_PHASE_SHOW_MOVE_RANGE;
         data->selected_char_idx = char_idx;
         data->showing_move_range = true;
         
-        /* 设置移动范围的中心位置（角色当前位置） */
         data->move_range_tile_x = ch->tile_x;
         data->move_range_tile_y = ch->tile_y;
         
-        /* IDA: sub_14818(...) - 计算并标记可移动瓦片 */
-        printf("battle: showing move range for char %d at (%d,%d)\n",
+        printf("battle: showing move range for player char %d at (%d,%d)\n",
                char_idx, ch->tile_x, ch->tile_y);
     } else {
-        /* 友军/敌军/已移动玩家：显示属性页 */
+        /* 已移动玩家/友军/NPC/敌军：显示属性页 */
         data->battle_phase = BATTLE_PHASE_SHOW_STATUS;
         data->selected_char_idx = char_idx;
         
-        /* IDA: sub_11CAC(...) - 渲染属性页 */
-        printf("battle: showing status screen for char %d\n", char_idx);
+        printf("battle: showing status screen for char %d (char_type=%d, moved=%d)\n",
+               char_idx, ch->char_type, ch->moved);
     }
 }
 
