@@ -143,9 +143,24 @@ void state_battle_enter(fd2_game_t* game) {
         memset(data->char_data, 0, sizeof(data->char_data));
         
         if (game->from_save) {
+            printf("=== Loading from SAVE ===\n");
             for (int i = 0; i < data->total_char_count; i++) {
+                /* 打印存档原始数据前10字节 */
+                u8* raw = game->save_char_full_data[i];
+                printf("char[%d] raw: ", i);
+                for (int j = 0; j < 10; j++) {
+                    printf("off+%d=0x%02X ", j, raw[j]);
+                }
+                printf("\n");
+                
                 /* 从存档直接复制80字节 */
                 memcpy(&data->char_data[i], game->save_char_full_data[i], sizeof(battle_char_data_t));
+                
+                /* 打印复制后的结构体字段值 */
+                printf("  after copy: tile_x=%d, tile_y=%d, active_mask=0x%02X, faction=%d, char_type=%d, icon_id=%d\n",
+                       data->char_data[i].tile_x, data->char_data[i].tile_y,
+                       data->char_data[i].active_mask, data->char_data[i].faction,
+                       data->char_data[i].char_type, data->char_data[i].icon_id);
                 
                 /* IDA分析存档数据结构：
                    offset+6 (char_type) = 阵营标识：
@@ -371,8 +386,8 @@ static void handle_character_select(fd2_game_t* game, state_battle_data_t* data,
        设置全局状态标志 dword_51A83 */
     g_char_state_flag = ch->faction + 2;
 
-    printf("battle: selected char %d, faction=%d, char_type=%d, moved=%d, state_flag=%d\n",
-           char_idx, ch->faction, ch->char_type, ch->moved, g_char_state_flag);
+    printf("battle: selected char %d, faction=%d, char_type=%d, active_mask=0x%02X, moved=%d, state_flag=%d\n",
+           char_idx, ch->faction, ch->char_type, ch->active_mask, ch->moved, g_char_state_flag);
 
     /* IDA sub_1CFF0 分支判断:
        if (!v10[3] || (n11_1 == 23)) 
