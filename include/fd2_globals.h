@@ -158,6 +158,12 @@ extern void* g_dword_53A51;        /* FDFIELD.DAT 3*n17 */
 extern void* g_dword_53A59;        /* FDFIELD.DAT 3*n17+2 */
 extern void* g_dword_53A69;        /* FDSHAP.DAT 2*n6_0+1 */
 
+/* 场景资源指针 (对应sub_26152) */
+extern void* g_dword_53A45;        /* 场景资源指针 */
+extern void* g_dword_53A55;        /* 场景资源指针 */
+extern void* g_dword_53F5A;        /* FDOTHER.DAT索引10 */
+extern void* g_n7;                 /* FDSHAP_DAT缓冲区 (153216字节) */
+
 /* 音频句柄 */
 extern int g_dword_53ED8;
 extern int g_dword_53ED0;

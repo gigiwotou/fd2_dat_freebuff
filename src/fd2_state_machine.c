@@ -16,6 +16,7 @@
 #include "fd2_input_scan.h"
 #include "fd2_opening_animation.h"
 #include "fd2_save_load.h"
+#include "fd2_decoder.h"
 #include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
@@ -614,52 +615,90 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         fd2_sav_data_t sav;
         memset(&sav, 0, sizeof(sav));
         
-        if (fd2_sav_continue_load("FD2.SAV", &sav) == 0) {
+        /* 获取exe所在目录（sav文件与exe在同一目录） */
+        const char* exe_dir = SDL_GetBasePath();
+        char base_path[512] = "";
+        if (exe_dir) {
+            strncpy(base_path, exe_dir, sizeof(base_path) - 1);
+            SDL_free((void*)exe_dir);
+        }
+        
+        char sav_path[512];
+        snprintf(sav_path, sizeof(sav_path), "%sFD2.SAV", base_path);
+        
+        if (fd2_sav_continue_load(sav_path, &sav) == 0) {
             /* 应用存档数据到全局变量 */
             fd2_sav_apply(&sav);
             
-            /* 加载场景相关资源 (对应原游戏 sub_10010) */
-            /* FDOTHER_DAT = sub_111BA("FDOTHER.DAT", FDOTHER_DAT, 0) */
-            g_FDOTHER_DAT__2 = fd2_dat_load_resource("game/FDOTHER.DAT", g_FDOTHER_DAT__2, 0);
+            /* 对应原游戏 sub_26152 - 场景初始化 */
             
-            /* FDFIELD.DAT 索引 3*n17 */
-            g_dword_53A51 = fd2_dat_load_resource("game/FDFIELD.DAT", g_dword_53A51, 3 * sav.n17);
+            /* 阶段1: 释放旧场景资源 */
+            if (g_dword_53A45) { free(g_dword_53A45); g_dword_53A45 = NULL; }
+            if (g_dword_53A55) { free(g_dword_53A55); g_dword_53A55 = NULL; }
+            if (g_n7) { free(g_n7); g_n7 = NULL; }
+            if (g_dword_53A51) { free(g_dword_53A51); g_dword_53A51 = NULL; }
+            if (g_dword_53A61) { free(g_dword_53A61); g_dword_53A61 = NULL; }
             
-            /* FDTXT.DAT 索引 n17+1 */
-            g_FDTXT_DAT__0 = fd2_dat_load_resource("game/FDTXT.DAT", g_FDTXT_DAT__0, sav.n17 + 1);
+            /* 阶段2: 构建exe目录路径 */
+            char res_path[512];
             
-            /* FDFIELD.DAT 索引 3*n17+2 */
-            g_dword_53A59 = fd2_dat_load_resource("game/FDFIELD.DAT", g_dword_53A59, 3 * sav.n17 + 2);
-            
-            /* FDSHAP.DAT 索引 2*n6_0 */
-            int v5 = 2 * (int)sav.n6_0;
-            g_FDSHAP_DAT = fd2_dat_load_resource("game/FDSHAP.DAT", g_FDSHAP_DAT, v5);
-            
-            /* FDSHAP.DAT 索引 2*n6_0+1 */
-            g_dword_53A69 = fd2_dat_load_resource("game/FDSHAP.DAT", g_dword_53A69, v5 + 1);
-            
-            /* sub_4DF4C(dword_53A51) - 处理 FDFIELD.DAT 瓦片数据 */
-            if (g_dword_53A51) {
-                fd2_field_data_process((u8*)g_dword_53A51);
+            /* 阶段3: 分配FDSHAP_DAT缓冲区 (153216字节) */
+            g_n7 = malloc(153216);
+            if (!g_n7) {
+                fprintf(stderr, "[STATE_MACHINE] Failed to allocate FDSHAP buffer\n");
+                v15 = 1;
+            } else {
+                memset(g_n7, 0, 153216);
+                
+                /* 阶段4: 加载FDOTHER.DAT索引n17 (RLE图形数据) 并解压到 n7+32904 */
+                snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
+                void* fdother_data = fd2_dat_load_resource(res_path, NULL, sav.n17);
+                if (fdother_data) {
+                    /* sub_4E98D - RLE解压到 n7+32904, 行宽456, palette_offset=-1 */
+                    u32 res_size = fd2_last_loaded_size;
+                    fd2_rle_decompress_to_buffer((u8*)fdother_data, res_size,
+                                                 (u8*)g_n7 + 32904, 0, 456, -1);
+                    free(fdother_data);
+                }
+                
+                /* 阶段5: 加载FDOTHER.DAT索引10 */
+                snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
+                g_dword_53F5A = fd2_dat_load_resource(res_path, NULL, 10);
+                
+                /* 阶段6: 加载FDFIELD.DAT索引3*n17 (布局数据) */
+                snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
+                g_dword_53A51 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17);
+                if (g_dword_53A51) {
+                    fd2_field_data_process((u8*)g_dword_53A51);
+                }
+                
+                /* 阶段7: 加载FDTXT.DAT索引n17+1 */
+                snprintf(res_path, sizeof(res_path), "%sFDTXT.DAT", base_path);
+                g_FDTXT_DAT__0 = fd2_dat_load_resource(res_path, NULL, sav.n17 + 1);
+                
+                /* 阶段8: 加载FDFIELD.DAT索引3*n17+2 */
+                snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
+                g_dword_53A59 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17 + 2);
+                
+                /* 阶段9: 加载FDSHAP.DAT */
+                snprintf(res_path, sizeof(res_path), "%sFDSHAP.DAT", base_path);
+                g_FDSHAP_DAT = fd2_dat_load_resource(res_path, NULL, 2 * (int)sav.n6_0);
+                g_dword_53A69 = fd2_dat_load_resource(res_path, NULL, 2 * (int)sav.n6_0 + 1);
+                
+                /* 阶段10: 播放场景音乐 */
+                int music_id = (unsigned char)g_byte_51E63[sav.n17];
+                fd2_music_play(music_id);
+                
+                /* 设置场景状态 */
+                g_n2_0 = FD2_SCENE_STATE_INTERACT;
+                g_n17 = sav.n17;
+                g_n16_1 = sav.n16_1;
+                g_n5 = 0;  /* 菜单索引归零 */
+                
+                printf("[STATE_MACHINE] Continue loaded: scene=%d, music=%d\n", sav.n17, music_id);
+                
+                v15 = 0;  /* 返回0进入main的游戏循环 */
             }
-            
-            /* 复制场景数据到缓冲区 */
-            if (g_n8_3) {
-                memcpy(g_n8_3, sav.sceneData, 2560);
-            }
-            
-            /* sub_25977(byte_51E63[n17], 0) - 播放场景音乐 */
-            int music_id = (unsigned char)g_byte_51E63[sav.n17];
-            fd2_music_play(music_id);
-            
-            /* 设置场景状态为 INTERACT，进入场景交互 */
-            g_n2_0 = FD2_SCENE_STATE_INTERACT;
-            g_n17 = sav.n17;
-            g_n16_1 = sav.n16_1;
-            
-            printf("[STATE_MACHINE] Continue loaded: scene=%d, music=%d\n", sav.n17, music_id);
-            
-            v15 = 0;  /* 返回0进入main的游戏循环 */
         } else {
             fprintf(stderr, "[STATE_MACHINE] Failed to load continue save\n");
             v15 = 1;  /* 加载失败，退出 */
