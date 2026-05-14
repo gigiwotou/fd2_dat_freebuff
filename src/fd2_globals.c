@@ -79,7 +79,6 @@ void* g_dword_53F5A = NULL;
 void* g_dword_53F66 = NULL;
 int g_dword_53BFB = 0;
 int g_dword_53BF7 = 0;
-int g_dword_53A51 = 0;
 int g_dword_53EEC = 0;
 int g_dword_53EC8 = 0;
 int g_n3_3 = 0;
@@ -107,6 +106,14 @@ int g_dword_53EE8 = 0;
 int g_byte_53EF1 = 0;
 
 u32 g_dword_53BFF = 0;
+
+/* ========================================================================
+ * 场景数据指针 (对应sub_10010)
+ * ======================================================================== */
+
+void* g_dword_53A51 = NULL;        /* FDFIELD.DAT 3*n17 */
+void* g_dword_53A59 = NULL;        /* FDFIELD.DAT 3*n17+2 */
+void* g_dword_53A69 = NULL;        /* FDSHAP.DAT 2*n6_0+1 */
 
 /* ========================================================================
  * BIOS定时器

@@ -153,6 +153,11 @@ extern int g_byte_51E62;         /* 0x51E62 */
 /* 资源加载大小 (0x53BFF) - sub_111BA返回值 */
 extern u32 g_dword_53BFF;
 
+/* 场景数据指针 (对应sub_10010) */
+extern void* g_dword_53A51;        /* FDFIELD.DAT 3*n17 */
+extern void* g_dword_53A59;        /* FDFIELD.DAT 3*n17+2 */
+extern void* g_dword_53A69;        /* FDSHAP.DAT 2*n6_0+1 */
+
 /* 音频句柄 */
 extern int g_dword_53ED8;
 extern int g_dword_53ED0;

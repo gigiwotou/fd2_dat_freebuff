@@ -97,4 +97,25 @@ u32 fd2_sav_verify(const u8* data, int size);
  */
 int fd2_sav_apply(const fd2_sav_data_t* sav);
 
+/*
+ * fd2_sav_continue_load: Continue选项加载存档 (对应 sub_25EBB:0x25f42)
+ *
+ * IDA原始代码 (sub_25EBB:0x25f42):
+ *   if ( v6 != 1 )  // Continue选项
+ *   {
+ *     sub_25977(v6, -1, 0);              // 停止音乐
+ *     sub_10010();                        // 加载存档
+ *     sub_25977(byte_51E63[n17], 0);     // 播放场景音乐
+ *     return 0;
+ *   }
+ *
+ * 参数:
+ *   filename: 存档文件路径
+ *   sav:      输出存档数据结构
+ *
+ * 返回值:
+ *   0=成功, -1=失败
+ */
+int fd2_sav_continue_load(const char* filename, fd2_sav_data_t* sav);
+
 #endif /* FD2_SAVE_LOAD_H */

@@ -15,6 +15,7 @@
 #include "fd2_scene_interact.h"
 #include "fd2_input_scan.h"
 #include "fd2_opening_animation.h"
+#include "fd2_save_load.h"
 #include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
@@ -601,16 +602,68 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         
     } else {
         /* ---------------------------------------------------------------
-         * 其他选项 - 退出
+         * 其他选项 - 退出/Continue
          * 对应原游戏 sub_25EBB() 的 v8 != 0 && v8 != 1 分支
          * --------------------------------------------------------------- */
-        printf("[STATE_MACHINE] Other option: %d - exit\n", opening_result);
+        printf("[STATE_MACHINE] Other option: %d - continue/exit\n", opening_result);
         
         /* sub_25977(opening_result, ..., -1, 0) */
-        /* sub_10010() */
-        /* sub_25977(byte_51E63[n17], ...) */
+        fd2_music_stop();
         
-        v15 = 0;
+        /* sub_10010() - 加载存档 */
+        fd2_sav_data_t sav;
+        memset(&sav, 0, sizeof(sav));
+        
+        if (fd2_sav_continue_load("FD2.SAV", &sav) == 0) {
+            /* 应用存档数据到全局变量 */
+            fd2_sav_apply(&sav);
+            
+            /* 加载场景相关资源 (对应原游戏 sub_10010) */
+            /* FDOTHER_DAT = sub_111BA("FDOTHER.DAT", FDOTHER_DAT, 0) */
+            g_FDOTHER_DAT__2 = fd2_dat_load_resource("game/FDOTHER.DAT", g_FDOTHER_DAT__2, 0);
+            
+            /* FDFIELD.DAT 索引 3*n17 */
+            g_dword_53A51 = fd2_dat_load_resource("game/FDFIELD.DAT", g_dword_53A51, 3 * sav.n17);
+            
+            /* FDTXT.DAT 索引 n17+1 */
+            g_FDTXT_DAT__0 = fd2_dat_load_resource("game/FDTXT.DAT", g_FDTXT_DAT__0, sav.n17 + 1);
+            
+            /* FDFIELD.DAT 索引 3*n17+2 */
+            g_dword_53A59 = fd2_dat_load_resource("game/FDFIELD.DAT", g_dword_53A59, 3 * sav.n17 + 2);
+            
+            /* FDSHAP.DAT 索引 2*n6_0 */
+            int v5 = 2 * (int)sav.n6_0;
+            g_FDSHAP_DAT = fd2_dat_load_resource("game/FDSHAP.DAT", g_FDSHAP_DAT, v5);
+            
+            /* FDSHAP.DAT 索引 2*n6_0+1 */
+            g_dword_53A69 = fd2_dat_load_resource("game/FDSHAP.DAT", g_dword_53A69, v5 + 1);
+            
+            /* sub_4DF4C(dword_53A51) - 处理 FDFIELD.DAT 瓦片数据 */
+            if (g_dword_53A51) {
+                fd2_field_data_process((u8*)g_dword_53A51);
+            }
+            
+            /* 复制场景数据到缓冲区 */
+            if (g_n8_3) {
+                memcpy(g_n8_3, sav.sceneData, 2560);
+            }
+            
+            /* sub_25977(byte_51E63[n17], 0) - 播放场景音乐 */
+            int music_id = (unsigned char)g_byte_51E63[sav.n17];
+            fd2_music_play(music_id);
+            
+            /* 设置场景状态为 INTERACT，进入场景交互 */
+            g_n2_0 = FD2_SCENE_STATE_INTERACT;
+            g_n17 = sav.n17;
+            g_n16_1 = sav.n16_1;
+            
+            printf("[STATE_MACHINE] Continue loaded: scene=%d, music=%d\n", sav.n17, music_id);
+            
+            v15 = 0;  /* 返回0进入main的游戏循环 */
+        } else {
+            fprintf(stderr, "[STATE_MACHINE] Failed to load continue save\n");
+            v15 = 1;  /* 加载失败，退出 */
+        }
     }
     
     /* ====================================================================

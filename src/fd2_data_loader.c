@@ -358,3 +358,41 @@ void fd2_data_shutdown(void) {
     if (g_FDFIELD_DAT__1) { free(g_FDFIELD_DAT__1); g_FDFIELD_DAT__1 = NULL; }
     if (g_FDICON_DAT) { free(g_FDICON_DAT); g_FDICON_DAT = NULL; }
 }
+
+/* ========================================================================
+ * sub_4DF4C: FDFIELD.DAT瓦片数据处理器 (原游戏 0x4DF4C)
+ *
+ * 原游戏代码 (1:1 复制):
+ *   v1 = (u16)(a1[2] * a1[0]);
+ *   v2 = a1 + 4;
+ *   result = -1;
+ *   do {
+ *     v2[3] = -1;
+ *     v2[2] &= 0x1Fu;
+ *     v2[1] &= 3u;
+ *     v2 += 4;
+ *     --v1;
+ *   } while (v1);
+ *   return result;
+ * ======================================================================== */
+char fd2_field_data_process(u8* a1) {
+    u16 tile_count;
+    u8* v2;
+
+    /* 计算瓦片总数 = 宽度 * 高度 */
+    tile_count = (u16)(a1[2] * a1[0]);
+
+    /* 跳过8字节头部，从瓦片数据开始 */
+    v2 = a1 + 4;
+
+    /* 处理每个瓦片 */
+    do {
+        v2[3] = 0xFF;      /* byte3 设为 0xFF */
+        v2[2] &= 0x1F;     /* byte2 保留低5位 */
+        v2[1] &= 0x03;     /* byte1 保留低2位 */
+        v2 += 4;
+        tile_count--;
+    } while (tile_count != 0);
+
+    return -1;
+}

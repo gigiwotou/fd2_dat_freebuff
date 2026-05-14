@@ -119,4 +119,25 @@ fd2_resources_t* fd2_get_resources(void);
 int fd2_data_init(void);
 void fd2_data_shutdown(void);
 
+/*
+ * sub_4DF4C: FDFIELD.DAT瓦片数据处理器 (原游戏 0x4DF4C)
+ *
+ * 原游戏行为 (1:1 复制):
+ *   1. v1 = (u16)(a1[2] * a1[0]);  // 瓦片总数 = 宽度 * 高度
+ *   2. v2 = a1 + 4;                 // 跳过8字节头部
+ *   3. 对每个瓦片(4字节):
+ *      - v2[3] = 0xFF;              // byte3 设为 0xFF
+ *      - v2[2] &= 0x1F;             // byte2 保留低5位
+ *      - v2[1] &= 0x03;             // byte1 保留低2位
+ *      - v2 += 4;
+ *   4. return -1;
+ *
+ * 参数:
+ *   a1: FDFIELD.DAT布局数据指针
+ *
+ * 返回值:
+ *   固定返回 -1 (0xFF)
+ */
+char fd2_field_data_process(u8* a1);
+
 #endif /* FD2_DATA_LOADER_H */

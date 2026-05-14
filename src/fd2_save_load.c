@@ -211,3 +211,42 @@ int fd2_sav_apply(const fd2_sav_data_t* sav) {
     
     return 0;
 }
+
+/*
+ * fd2_sav_continue_load: Continue选项加载存档 (对应原游戏 sub_25EBB:0x25f42)
+ *
+ * IDA原始代码 (sub_25EBB:0x25f42):
+ *   if ( v6 != 1 )  // v6 != 1 表示选择了 Continue
+ *   {
+ *     sub_25977(v6, a2, n99, a3, -1, 0);  // 停止当前音乐
+ *     sub_10010(v18, a2, a3, n99, a5);    // 调用 sub_10010 加载存档
+ *     sub_25977((unsigned __int8)byte_51E63[n17], a2, n99, a3, 
+ *         (unsigned __int8)byte_51E63[n17], 0);  // 播放场景音乐
+ *     return 0;
+ *   }
+ *
+ * 参数:
+ *   filename: 存档文件路径
+ *   sav:      输出存档数据结构
+ *
+ * 返回值:
+ *   0=成功, -1=失败
+ */
+int fd2_sav_continue_load(const char* filename, fd2_sav_data_t* sav) {
+    int ret;
+    
+    /* 对应原游戏 sub_25EBB:0x26130: sub_10010() */
+    ret = fd2_sav_load(filename, sav);
+    if (ret != 0) {
+        fprintf(stderr, "fd2_sav_continue_load: failed to load save file\n");
+        return -1;
+    }
+    
+    /* 对应原游戏 sub_25EBB:0x26144: sub_25977(byte_51E63[n17], 0) */
+    /* 播放场景音乐 (byte_51E63[n17]) */
+    /* 注意: 实际音乐播放需要实现 sub_25977 函数 */
+    printf("fd2_sav_continue_load: playing scene music (scene=%d)\n", sav->n17);
+    
+    /* 对应原游戏 sub_25EBB:0x26144: return 0 */
+    return 0;
+}
