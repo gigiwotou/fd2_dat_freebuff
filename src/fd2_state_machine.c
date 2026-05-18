@@ -589,17 +589,116 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
          * --------------------------------------------------------------- */
         printf("[STATE_MACHINE] User selected Load - loading save\n");
         
-        /* TODO: 实现存档加载逻辑 */
-        /* FDOTHER_DAT__11 = sub_111BA(..., 13) */
-        /* v8 = sub_1F882() */
-        /* FDOTHER_DAT = sub_111BA(..., 0) */
-        /* memset(655360, 0, 64000) */
-        /* sub_11D40(0, 255, 0) */
-        /* 加载FD2.SAV... */
-        /* 解析场景数据... */
+        /* 获取exe所在目录 */
+        const char* exe_dir = SDL_GetBasePath();
+        char base_path[512] = "";
+        if (exe_dir) {
+            strncpy(base_path, exe_dir, sizeof(base_path) - 1);
+            SDL_free((void*)exe_dir);
+        }
         
-        /* 如果加载成功，进入场景交互 */
-        v15 = 1;  /* TODO: 实际应该根据加载结果设置 */
+        /* 变量声明 */
+        char res_path[512];
+        char sav_path[512];
+        int v11;  /* FDSHAP.DAT索引计算 */
+        int music_id;  /* 场景音乐ID */
+        
+        /* 读取并解密存档 */
+        snprintf(sav_path, sizeof(sav_path), "%sFD2.SAV", base_path);
+        
+        fd2_sav_data_t sav;
+        memset(&sav, 0, sizeof(sav));
+        
+        if (fd2_sav_load(sav_path, &sav) == 0) {
+            printf("[STATE_MACHINE] Save loaded successfully (scene=%d, chars=%d)\n", 
+                   sav.n17, sav.n6_0);
+            
+            /* 应用存档数据到全局变量 */
+            fd2_sav_apply(&sav);
+            
+            /* 释放旧场景资源 */
+            if (g_dword_53A45) { free(g_dword_53A45); g_dword_53A45 = NULL; }
+            if (g_dword_53A55) { free(g_dword_53A55); g_dword_53A55 = NULL; }
+            if (g_n7) { free(g_n7); g_n7 = NULL; }
+            if (g_dword_53A51) { free(g_dword_53A51); g_dword_53A51 = NULL; }
+            if (g_dword_53A61) { free(g_dword_53A61); g_dword_53A61 = NULL; }
+            if (g_n655360_0) { free(g_n655360_0); g_n655360_0 = NULL; }
+            
+            /* 分配FDSHAP_DAT缓冲区 (153216字节) */
+            g_n7 = malloc(153216);
+            if (!g_n7) {
+                fprintf(stderr, "[STATE_MACHINE] Failed to allocate FDSHAP buffer\n");
+                v15 = 1;
+            } else {
+                memset(g_n7, 0, 153216);
+                
+                /* 加载FDOTHER.DAT索引n17 (RLE图形数据) 并解压到 n7+32904 */
+                snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
+                void* fdother_data = fd2_dat_load_resource(res_path, NULL, sav.n17);
+                if (fdother_data) {
+                    u32 res_size = fd2_last_loaded_size;
+                    fd2_rle_decompress_to_buffer((u8*)fdother_data, res_size,
+                                                 (u8*)g_n7 + 32904, 0, 456, -1);
+                    free(fdother_data);
+                }
+                
+                /* 加载FDOTHER.DAT索引0和10 */
+                snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
+                g_dword_53A55 = fd2_dat_load_resource(res_path, NULL, 0);
+                g_dword_53F5A = fd2_dat_load_resource(res_path, NULL, 10);
+                
+                /* 加载FDFIELD.DAT索引3*n17 (布局数据) */
+                snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
+                g_dword_53A51 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17);
+                if (g_dword_53A51) {
+                    fd2_field_data_process((u8*)g_dword_53A51);
+                }
+                
+                /* 加载FDTXT.DAT索引n17+1 */
+                snprintf(res_path, sizeof(res_path), "%sFDTXT.DAT", base_path);
+                g_FDTXT_DAT__0 = fd2_dat_load_resource(res_path, NULL, sav.n17 + 1);
+                
+                /* 加载FDFIELD.DAT索引3*n17+2 */
+                snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
+                g_dword_53A59 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17 + 2);
+                
+                /* 加载FDSHAP.DAT */
+                v11 = 2 * (int)sav.fieldData[0];
+                snprintf(res_path, sizeof(res_path), "%sFDSHAP.DAT", base_path);
+                g_FDSHAP_DAT = fd2_dat_load_resource(res_path, NULL, v11);
+                g_dword_53A69 = fd2_dat_load_resource(res_path, NULL, v11 + 1);
+                
+                /* 分配显存缓冲区 64000字节 */
+                g_n655360_0 = malloc(655360);
+                if (g_n655360_0) {
+                    memset(g_n655360_0, 0, 64000);
+                }
+                
+                /* 加载角色图标 */
+                g_n6_0 = sav.n6_0;
+                for (i = 0; i < g_n6_0; i++) {
+                    snprintf(res_path, sizeof(res_path), "%sFDICON.B24", base_path);
+                    /* TODO: 实现角色图标加载 */
+                }
+                
+                /* 播放场景音乐 */
+                music_id = (unsigned char)g_byte_51E63[sav.n17];
+                fd2_music_play(music_id);
+                
+                /* 设置场景状态 */
+                g_n2_0 = FD2_SCENE_STATE_INTERACT;
+                g_n17 = sav.n17;
+                g_n16_1 = sav.n16_1;
+                g_n5 = 0;
+                
+                printf("[STATE_MACHINE] Load completed: scene=%d, music=%d\n", sav.n17, music_id);
+                
+                v15 = 0;
+            }
+        } else {
+            printf("[STATE_MACHINE] Failed to load save file\n");
+            v15 = 1;
+        }
         
     } else {
         /* ---------------------------------------------------------------
@@ -641,6 +740,8 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             
             /* 阶段2: 构建exe目录路径 */
             char res_path[512];
+            int v11;  /* FDSHAP.DAT索引计算 */
+            int music_id;  /* 场景音乐ID */
             
             /* 阶段3: 分配FDSHAP_DAT缓冲区 (153216字节) */
             g_n7 = malloc(153216);
@@ -680,13 +781,16 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                 snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
                 g_dword_53A59 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17 + 2);
                 
-                /* 阶段9: 加载FDSHAP.DAT */
+                /* 阶段9: 加载FDSHAP.DAT (对应原游戏 sub_10010) */
+                /* v11 = 2 * *(u8*)FDFIELD_DAT__1; FDSHAP.DAT索引=v11, FDSHAP.DAT索引=v11+1 */
+                /* FDFIELD_DAT__1来自存档前2211字节 */
+                v11 = 2 * (int)sav.fieldData[0];
                 snprintf(res_path, sizeof(res_path), "%sFDSHAP.DAT", base_path);
-                g_FDSHAP_DAT = fd2_dat_load_resource(res_path, NULL, 2 * (int)sav.n6_0);
-                g_dword_53A69 = fd2_dat_load_resource(res_path, NULL, 2 * (int)sav.n6_0 + 1);
+                g_FDSHAP_DAT = fd2_dat_load_resource(res_path, NULL, v11);
+                g_dword_53A69 = fd2_dat_load_resource(res_path, NULL, v11 + 1);
                 
                 /* 阶段10: 播放场景音乐 */
-                int music_id = (unsigned char)g_byte_51E63[sav.n17];
+                music_id = (unsigned char)g_byte_51E63[sav.n17];
                 fd2_music_play(music_id);
                 
                 /* 设置场景状态 */
