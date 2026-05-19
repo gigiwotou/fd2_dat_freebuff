@@ -51,6 +51,7 @@
 /* 文件路径 */
 #define FONT_DAT_PATH "game/FDOTHER.DAT"
 #define FDTXT_DAT_PATH "game/FDTXT.DAT"
+#define DATO_DAT_PATH "game/DATO.DAT"
 
 /* 全局变量 */
 static uint8_t* font_data = NULL;      /* FDOTHER.DAT索引3的字体数据 */
@@ -59,14 +60,118 @@ static size_t fdtxt_file_size = 0;     /* FDTXT.DAT文件大小 */
 static int fdtxt_count = 0;            /* FDTXT.DAT资源集数量 */
 static uint32_t fdtxt_offsets[146];    /* FDTXT.DAT资源集偏移表 */
 
+/* DATO.DAT头像相关 */
+static uint8_t* dato_data = NULL;      /* DATO.DAT整个文件数据 */
+static size_t dato_file_size = 0;      /* DATO.DAT文件大小 */
+static uint32_t dato_palette[256];     /* 调色板（从FDOTHER.DAT索引75加载） */
+static uint8_t* current_portrait = NULL;  /* 当前渲染的头像像素数据 */
+static int portrait_width = 0;
+static int portrait_height = 0;
+
+/* 颜色定义 */
+#define COLOR_TEXT 0xFFFFFFFF  /* 白色文本 */
+
+/* 头像渲染尺寸（缩小以适应屏幕） */
+#define PORTRAIT_DISPLAY_SCALE 2  /* 1 = 80x80, 2 = 40x40 */
+#define PORTRAIT_DISPLAY_W (80 / PORTRAIT_DISPLAY_SCALE)
+#define PORTRAIT_DISPLAY_H (80 / PORTRAIT_DISPLAY_SCALE)
+
 /* SDL相关 */
 static SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
 static SDL_Texture* texture = NULL;
 static uint32_t* screen_buffer = NULL;
 
-/* 颜色定义 */
-#define COLOR_TEXT 0xFFFFFFFF  /* 白色文本 */
+/* ============================================================
+ * 加载6位调色板并转换为32位RGB
+ * ============================================================ */
+static void load_palette_6bit(uint8_t* palette_6bit, int size)
+{
+    int count = size / 3;
+    for (int i = 0; i < count && i < 256; i++) {
+        uint8_t r = palette_6bit[i * 3] & 0x3F;
+        uint8_t g = palette_6bit[i * 3 + 1] & 0x3F;
+        uint8_t b = palette_6bit[i * 3 + 2] & 0x3F;
+        /* 6位转8位: (v << 2) | (v >> 4) */
+        uint8_t r8 = (r << 2) | (r >> 4);
+        uint8_t g8 = (g << 2) | (g >> 4);
+        uint8_t b8 = (b << 2) | (b >> 4);
+        dato_palette[i] = 0xFF000000 | (r8 << 16) | (g8 << 8) | b8;
+    }
+}
+
+/* ============================================================
+ * 从DATO.DAT加载头像资源
+ * 
+ * 头像格式:
+ *   [未知: 16字节]
+ *   [宽度: 2字节] [高度: 2字节]  (字节16-19, 通常是80x80)
+ *   [像素数据: 宽度*高度字节的8位索引]
+ * ============================================================ */
+static int load_portrait(int index)
+{
+    if (!dato_data || index < 0) return -1;
+    
+    uint32_t count;
+    memcpy(&count, dato_data + 6, 4);
+    if ((uint32_t)index >= count - 1) return -1;
+    
+    uint32_t off_start, off_end;
+    memcpy(&off_start, dato_data + 10 + index * 4, 4);
+    memcpy(&off_end, dato_data + 10 + (index + 1) * 4, 4);
+    if (off_start >= dato_file_size || off_end > dato_file_size) return -1;
+    
+    uint32_t res_size = off_end - off_start;
+    uint8_t* res_data = dato_data + off_start;
+    
+    if (res_size < 20) return -1;
+    
+    /* 读取宽高（字节16-19） */
+    int16_t w, h;
+    memcpy(&w, res_data + 16, 2);
+    memcpy(&h, res_data + 18, 2);
+    
+    if (w <= 0 || h <= 0 || (int64_t)w * h > (int64_t)res_size - 20) return -1;
+    
+    /* 释放旧头像 */
+    free(current_portrait);
+    
+    /* 复制像素数据（从字节20开始） */
+    current_portrait = (uint8_t*)malloc(w * h);
+    if (!current_portrait) return -1;
+    
+    memcpy(current_portrait, res_data + 20, w * h);
+    portrait_width = w;
+    portrait_height = h;
+    
+    return 0;
+}
+
+/* ============================================================
+ * 渲染头像到屏幕缓冲区（带缩放）
+ * 
+ * dx, dy: 目标坐标
+ * ============================================================ */
+static void render_portrait(int dx, int dy)
+{
+    if (!current_portrait || portrait_width == 0 || portrait_height == 0) return;
+    
+    for (int y = 0; y < PORTRAIT_DISPLAY_H; y++) {
+        for (int x = 0; x < PORTRAIT_DISPLAY_W; x++) {
+            int px = dx + x, py = dy + y;
+            if (px < 0 || px >= SCREEN_WIDTH || py < 0 || py >= SCREEN_HEIGHT) continue;
+            
+            /* 缩放采样 */
+            int src_x = x * PORTRAIT_DISPLAY_SCALE;
+            int src_y = y * PORTRAIT_DISPLAY_SCALE;
+            
+            if (src_x < portrait_width && src_y < portrait_height) {
+                uint8_t idx = current_portrait[src_y * portrait_width + src_x];
+                screen_buffer[py * SCREEN_WIDTH + px] = dato_palette[idx];
+            }
+        }
+    }
+}
 
 /* ============================================================
  * 加载整个文件到内存
@@ -169,7 +274,16 @@ static int render_text_item(int16_t* text_ptr, int start_x, int start_y)
                 case TEXT_PORTRAIT_S:
                 case TEXT_CHAR_F:
                 case TEXT_CHAR_S:
-                    ptr++;  /* 跳过头像/角色ID */
+                    {
+                        int16_t portrait_id = *ptr++;  /* 读取头像/角色ID */
+                        if (load_portrait(portrait_id) == 0) {
+                            /* 头像渲染在屏幕左上角 (10, 10) */
+                            render_portrait(10, 10);
+                            /* 文本从头像右侧开始 */
+                            x = 10 + PORTRAIT_DISPLAY_W + 10;
+                            y = 10;
+                        }
+                    }
                     break;
                 case TEXT_SHOW_NUM:
                     /* 简化: 显示数字0 */
@@ -287,14 +401,33 @@ int main(int argc, char* argv[])
     uint8_t* other_data = load_file(FONT_DAT_PATH, &other_size);
     if (!other_data) return 1;
 
-    int font_size;
+    int font_size = 0;
     font_data = load_dat_resource(other_data, other_size, 3, &font_size);
+    
+    /* 加载调色板（索引75） */
+    int pal_size;
+    uint8_t* pal_data = load_dat_resource(other_data, other_size, 75, &pal_size);
+    if (pal_data && pal_size == 768) {
+        load_palette_6bit(pal_data, pal_size);
+        printf("   调色板: 已加载\n");
+    }
+    free(pal_data);
     free(other_data);
     if (!font_data) { fprintf(stderr, "字体加载失败\n"); return 1; }
     printf("   字体: %d 字节 (%d 字符)\n\n", font_size, font_size / 32);
 
-    /* 2. 加载FDTXT.DAT整个文件 */
-    printf("2. 加载FDTXT.DAT...\n");
+    /* 2. 加载DATO.DAT */
+    printf("2. 加载DATO.DAT...\n");
+    dato_data = load_file(DATO_DAT_PATH, &dato_file_size);
+    if (!dato_data) { fprintf(stderr, "DATO.DAT加载失败\n"); free(font_data); return 1; }
+    {
+        uint32_t dato_count;
+        memcpy(&dato_count, dato_data + 6, 4);
+        printf("   头像资源数量: %d\n\n", dato_count);
+    }
+
+    /* 3. 加载FDTXT.DAT整个文件 */
+    printf("3. 加载FDTXT.DAT...\n");
     fdtxt_data = load_file(FDTXT_DAT_PATH, &fdtxt_file_size);
     if (!fdtxt_data) { free(font_data); return 1; }
 
@@ -305,10 +438,10 @@ int main(int argc, char* argv[])
 
     printf("   资源集数量: %d\n\n", fdtxt_count);
 
-    /* 3. SDL初始化 */
+    /* 4. SDL初始化 */
     if (sdl_init() < 0) { free(font_data); free(fdtxt_data); return 1; }
 
-    /* 4. 主循环 */
+    /* 5. 主循环 */
     int current_resource = 0;
     int current_sub = 0;
     bool need_render = true;
@@ -367,6 +500,8 @@ int main(int argc, char* argv[])
     }
 
     cleanup();
+    free(current_portrait);
+    free(dato_data);
     free(font_data);
     free(fdtxt_data);
     printf("\n\n完成\n");
