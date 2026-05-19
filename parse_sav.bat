@@ -1,0 +1,1 @@
+py .\tools\parse_fd2_save.py ..\game\FD2.sav ..\game\FDFIELD.DAT ..\game\FDTXT.DAT --export ..\output\save_analysis.txt

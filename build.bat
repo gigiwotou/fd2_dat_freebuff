@@ -36,6 +36,7 @@ set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
 set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game_core.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_states.o %OBJ_DIR%\fd2_states_intro.o %OBJ_DIR%\fd2_menu.o %OBJ_DIR%\fd2_battle.o %OBJ_DIR%\fd2_battle_sprite.o %OBJ_DIR%\fd2_battle_cursor.o %OBJ_DIR%\fd2_battle_menu.o %OBJ_DIR%\fd2_battle_terrain_info.o %OBJ_DIR%\fd2_battle_core.o %OBJ_DIR%\fd2_battle_info.o %OBJ_DIR%\fd2_battle_turn.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_continue.o %OBJ_DIR%\fd2_cutscene.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set SUB_111BA_TEST_OBJ=%OBJ_DIR%\fd2_sub_111ba_test.o
+set FDTXT_TEST_OBJ=%OBJ_DIR%\fd2_fdtxt_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Object files (release)
@@ -47,6 +48,7 @@ set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
 set TARGET_TEST=%BIN_DIR%\fd2_decoder_test%EXE_EXT%
 set TARGET_SUB_111BA_TEST=%BIN_DIR%\fd2_sub_111ba_test%EXE_EXT%
+set TARGET_FDTXT_TEST=%BIN_DIR%\fd2_fdtxt_test%EXE_EXT%
 set TARGET_INTRO=%BIN_DIR%\fd2_intro%EXE_EXT%
 
 :: Parse arguments (order-independent)
@@ -58,6 +60,7 @@ if "%~1"=="" goto :arg_done
 if /I "%~1"=="all" set TARGET=all
 if /I "%~1"=="game" set TARGET=game
 if /I "%~1"=="test" set TARGET=test
+if /I "%~1"=="fdtxttest" set TARGET=fdtxttest
 if /I "%~1"=="intro" set TARGET=intro
 if /I "%~1"=="clean" set TARGET=clean
 if /I "%~1"=="release" set RELEASE=1
@@ -146,6 +149,8 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
     if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_fdtxt_test.c %FDTXT_TEST_OBJ%
+    if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
     if errorlevel 1 goto :error
 
@@ -159,6 +164,11 @@ if "%TARGET%"=="all" (
     if errorlevel 1 goto :error
     echo [OK] %TARGET_TEST%
 
+    echo Linking %TARGET_FDTXT_TEST% ...
+    %GCC% %CFLAGS% -o %TARGET_FDTXT_TEST% %FDTXT_TEST_OBJ% %LDFLAGS% %SDL_LDFLAGS%
+    if errorlevel 1 goto :error
+    echo [OK] %TARGET_FDTXT_TEST%
+
     echo Linking %TARGET_INTRO% ...
     %GCC% %CFLAGS% -o %TARGET_INTRO% %INTRO_OBJ% %DECODER_OBJ% %LDFLAGS% %SDL_LDFLAGS%
     if errorlevel 1 goto :error
@@ -171,6 +181,7 @@ if "%TARGET%"=="all" (
 :: Individual targets
 if "%TARGET%"=="game" goto :build_game
 if "%TARGET%"=="test" goto :build_test
+if "%TARGET%"=="fdtxttest" goto :build_fdtxt_test
 if "%TARGET%"=="intro" goto :build_intro
 if "%TARGET%"=="release" goto :build_release
 
@@ -331,6 +342,15 @@ echo Linking %TARGET_TEST% ...
 %GCC% %CFLAGS% -o %TARGET_TEST% %DECODER_OBJ% %TEST_OBJ% -lm
 if errorlevel 1 goto :error
 echo [OK] %TARGET_TEST%
+goto :end
+
+:build_fdtxt_test
+call :compile %SRC_DIR%\fd2_fdtxt_test.c %FDTXT_TEST_OBJ%
+if errorlevel 1 goto :error
+echo Linking %TARGET_FDTXT_TEST% ...
+%GCC% %CFLAGS% -o %TARGET_FDTXT_TEST% %FDTXT_TEST_OBJ% %LDFLAGS% %SDL_LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_FDTXT_TEST%
 goto :end
 
 :build_intro
