@@ -64,17 +64,25 @@ static uint32_t fdtxt_offsets[146];    /* FDTXT.DAT资源集偏移表 */
 static uint8_t* dato_data = NULL;      /* DATO.DAT整个文件数据 */
 static size_t dato_file_size = 0;      /* DATO.DAT文件大小 */
 static uint32_t dato_palette[256];     /* 调色板（从FDOTHER.DAT索引75加载） */
-static uint8_t* current_portrait = NULL;  /* 当前渲染的头像像素数据 */
+
+/* 头像帧数据 */
+#define PORTRAIT_MAX_FRAMES 4
+static uint8_t* portrait_frames[PORTRAIT_MAX_FRAMES];  /* 4帧像素数据 */
 static int portrait_width = 0;
 static int portrait_height = 0;
-
-/* 颜色定义 */
-#define COLOR_TEXT 0xFFFFFFFF  /* 白色文本 */
+static int current_frame = 0;
+static uint32_t frame_timer = 0;
+static bool portrait_loaded = false;
 
 /* 头像渲染尺寸（缩小以适应屏幕） */
 #define PORTRAIT_DISPLAY_SCALE 2  /* 1 = 80x80, 2 = 40x40 */
 #define PORTRAIT_DISPLAY_W (80 / PORTRAIT_DISPLAY_SCALE)
 #define PORTRAIT_DISPLAY_H (80 / PORTRAIT_DISPLAY_SCALE)
+#define PORTRAIT_X 10
+#define PORTRAIT_Y 10
+#define TEXT_START_X (PORTRAIT_X + PORTRAIT_DISPLAY_W + 10)
+#define TEXT_START_Y PORTRAIT_Y
+#define TEXT_WRAP_X (SCREEN_WIDTH - CHAR_WIDTH)  /* 文字换行的右边界 */
 
 /* SDL相关 */
 static SDL_Window* window = NULL;
@@ -96,17 +104,51 @@ static void load_palette_6bit(uint8_t* palette_6bit, int size)
         uint8_t r8 = (r << 2) | (r >> 4);
         uint8_t g8 = (g << 2) | (g >> 4);
         uint8_t b8 = (b << 2) | (b >> 4);
-        dato_palette[i] = 0xFF000000 | (r8 << 16) | (g8 << 8) | b8;
+        dato_palette[i] = 0xFF000000 | (b8 << 16) | (g8 << 8) | r8;
     }
 }
 
+/* 颜色定义 */
+#define COLOR_TEXT 0xFFFFFFFF  /* 白色文本 */
+
 /* ============================================================
- * 从DATO.DAT加载头像资源
+ * RLE解压缩 (还原游戏逻辑)
  * 
- * 头像格式:
- *   [未知: 16字节]
- *   [宽度: 2字节] [高度: 2字节]  (字节16-19, 通常是80x80)
- *   [像素数据: 宽度*高度字节的8位索引]
+ * 格式: 
+ *   byte < 0xC0: 直接像素值
+ *   byte >= 0xC0: 下一字节是像素值, count = byte & 0x3F (0=64)
+ * ============================================================ */
+static int rle_decompress(const uint8_t* src, int src_size, uint8_t* dst, int max_pixels)
+{
+    int i = 0, j = 0;
+    while (i < src_size && j < max_pixels) {
+        uint8_t byte = src[i++];
+        if (byte >= 0xC0) {
+            if (i < src_size) {
+                int count = byte & 0x3F;
+                if (count == 0) count = 64;
+                uint8_t val = src[i++];
+                for (int k = 0; k < count && j < max_pixels; k++)
+                    dst[j++] = val;
+            }
+        } else {
+            dst[j++] = byte;
+        }
+    }
+    return j;
+}
+
+/* ============================================================
+ * 从DATO.DAT加载头像资源 (4帧动画)
+ * 
+ * 格式:
+ *   [header_size:4] = 16
+ *   [frame1_offset:4] [frame2_offset:4] [frame3_offset:4]
+ *   [width:2] [height:2]  (字节16-19, 通常80x80)
+ *   [frame0 RLE数据: 字节20 到 frame1_offset]
+ *   [frame1 4字节头 + RLE数据: frame1_offset+4 到 frame2_offset]
+ *   [frame2 4字节头 + RLE数据: frame2_offset+4 到 frame3_offset]
+ *   [frame3 4字节头 + RLE数据: frame3_offset+4 到 资源末尾]
  * ============================================================ */
 static int load_portrait(int index)
 {
@@ -126,47 +168,94 @@ static int load_portrait(int index)
     
     if (res_size < 20) return -1;
     
-    /* 读取宽高（字节16-19） */
+    /* 读取宽高 */
     int16_t w, h;
     memcpy(&w, res_data + 16, 2);
     memcpy(&h, res_data + 18, 2);
+    if (w <= 0 || h <= 0 || w > 512 || h > 512) return -1;
     
-    if (w <= 0 || h <= 0 || (int64_t)w * h > (int64_t)res_size - 20) return -1;
+    int pixel_count = w * h;
     
-    /* 释放旧头像 */
-    free(current_portrait);
+    /* 释放旧帧 */
+    for (int i = 0; i < PORTRAIT_MAX_FRAMES; i++) {
+        free(portrait_frames[i]);
+        portrait_frames[i] = NULL;
+    }
     
-    /* 复制像素数据（从字节20开始） */
-    current_portrait = (uint8_t*)malloc(w * h);
-    if (!current_portrait) return -1;
+    /* 4帧偏移 */
+    uint32_t frame_offs[3];
+    memcpy(&frame_offs[0], res_data + 4, 4);
+    memcpy(&frame_offs[1], res_data + 8, 4);
+    memcpy(&frame_offs[2], res_data + 12, 4);
     
-    memcpy(current_portrait, res_data + 20, w * h);
+    /* 验证偏移有效性 */
+    for (int i = 0; i < 3; i++) {
+        if (frame_offs[i] >= res_size || frame_offs[i] < 20) return -1;
+    }
+    
+    /* 解压缩每帧 */
+    struct { int start, end, skip_header; } regions[4];
+    regions[0].start = 20; regions[0].end = frame_offs[0]; regions[0].skip_header = 0;
+    regions[1].start = frame_offs[0] + 4; regions[1].end = frame_offs[1]; regions[1].skip_header = 0;
+    regions[2].start = frame_offs[1] + 4; regions[2].end = frame_offs[2]; regions[2].skip_header = 0;
+    regions[3].start = frame_offs[2] + 4; regions[3].end = res_size; regions[3].skip_header = 0;
+    
+    for (int i = 0; i < 4; i++) {
+        int comp_size = regions[i].end - regions[i].start;
+        if (comp_size <= 0) return -1;
+        
+        portrait_frames[i] = (uint8_t*)malloc(pixel_count);
+        if (!portrait_frames[i]) return -1;
+        
+        int decoded = rle_decompress(res_data + regions[i].start, comp_size, portrait_frames[i], pixel_count);
+        if (decoded != pixel_count) {
+            /* 部分失败, 释放并返回错误 */
+            for (int j = 0; j <= i; j++) { free(portrait_frames[j]); portrait_frames[j] = NULL; }
+            return -1;
+        }
+    }
+    
     portrait_width = w;
     portrait_height = h;
+    current_frame = 0;
+    frame_timer = 0;
+    portrait_loaded = true;
     
     return 0;
 }
 
 /* ============================================================
- * 渲染头像到屏幕缓冲区（带缩放）
- * 
- * dx, dy: 目标坐标
+ * 更新头像帧动画 (在主循环中每N毫秒切换一帧)
  * ============================================================ */
-static void render_portrait(int dx, int dy)
+static void update_portrait_frame(uint32_t delta_ms)
 {
-    if (!current_portrait || portrait_width == 0 || portrait_height == 0) return;
+    if (!portrait_loaded) return;
+    frame_timer += delta_ms;
+    if (frame_timer >= 150) {  /* 每150ms切换一帧 */
+        frame_timer = 0;
+        current_frame = (current_frame + 1) % PORTRAIT_MAX_FRAMES;
+    }
+}
+
+/* ============================================================
+ * 渲染当前头像帧到屏幕缓冲区（带缩放）
+ * ============================================================ */
+static void render_portrait(void)
+{
+    if (!portrait_loaded || !portrait_frames[current_frame]) return;
+    
+    uint8_t* frame = portrait_frames[current_frame];
     
     for (int y = 0; y < PORTRAIT_DISPLAY_H; y++) {
         for (int x = 0; x < PORTRAIT_DISPLAY_W; x++) {
-            int px = dx + x, py = dy + y;
+            int px = PORTRAIT_X + x, py = PORTRAIT_Y + y;
             if (px < 0 || px >= SCREEN_WIDTH || py < 0 || py >= SCREEN_HEIGHT) continue;
             
-            /* 缩放采样 */
             int src_x = x * PORTRAIT_DISPLAY_SCALE;
             int src_y = y * PORTRAIT_DISPLAY_SCALE;
             
             if (src_x < portrait_width && src_y < portrait_height) {
-                uint8_t idx = current_portrait[src_y * portrait_width + src_x];
+                uint8_t idx = frame[src_y * portrait_width + src_x];
                 screen_buffer[py * SCREEN_WIDTH + px] = dato_palette[idx];
             }
         }
@@ -277,11 +366,11 @@ static int render_text_item(int16_t* text_ptr, int start_x, int start_y)
                     {
                         int16_t portrait_id = *ptr++;  /* 读取头像/角色ID */
                         if (load_portrait(portrait_id) == 0) {
-                            /* 头像渲染在屏幕左上角 (10, 10) */
-                            render_portrait(10, 10);
+                            /* 立即渲染头像到缓冲区 */
+                            render_portrait();
                             /* 文本从头像右侧开始 */
-                            x = 10 + PORTRAIT_DISPLAY_W + 10;
-                            y = 10;
+                            x = TEXT_START_X;
+                            y = TEXT_START_Y;
                         }
                     }
                     break;
@@ -296,12 +385,13 @@ static int render_text_item(int16_t* text_ptr, int start_x, int start_y)
 
         /* 正值 = 字符索引 */
         if (word < FONT_MAX_CHARS) {
-            render_char(word, x, y, COLOR_TEXT);
-            x += CHAR_WIDTH;
-            if (x + CHAR_WIDTH > SCREEN_WIDTH) {
-                x = start_x;
+            /* 先检查是否需要换行 */
+            if (x > TEXT_WRAP_X) {
+                x = TEXT_START_X;
                 y += CHAR_HEIGHT;
             }
+            render_char(word, x, y, COLOR_TEXT);
+            x += CHAR_WIDTH;
         }
     }
     return y;
@@ -445,6 +535,7 @@ int main(int argc, char* argv[])
     int current_resource = 0;
     int current_sub = 0;
     bool need_render = true;
+    uint32_t last_time = 0;
 
     printf("控制:\n");
     printf("  上/下: 切换资源集 (0-%d)\n", fdtxt_count - 1);
@@ -453,6 +544,16 @@ int main(int argc, char* argv[])
 
     bool running = true;
     while (running) {
+        uint32_t now = SDL_GetTicks();
+        uint32_t delta = last_time ? (now - last_time) : 16;
+        last_time = now;
+
+        /* 更新头像动画 */
+        update_portrait_frame(delta);
+        if (portrait_loaded && delta > 0) {
+            need_render = true;  /* 头像动画需要重绘 */
+        }
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) { running = false; break; }
@@ -484,10 +585,11 @@ int main(int argc, char* argv[])
 
         if (need_render) {
             clear_screen();
+            render_portrait();  /* 先渲染头像 */
             int16_t* text = get_sub_text(current_resource, current_sub);
             int sub_count = get_sub_count(current_resource);
             if (text) {
-                render_text_item(text, 10, 10);
+                render_text_item(text, TEXT_START_X, TEXT_START_Y);
             }
             render_frame();
             printf("\r资源集: %d/%d  子项: %d/%d  ",
@@ -500,7 +602,7 @@ int main(int argc, char* argv[])
     }
 
     cleanup();
-    free(current_portrait);
+    for (int i = 0; i < PORTRAIT_MAX_FRAMES; i++) free(portrait_frames[i]);
     free(dato_data);
     free(font_data);
     free(fdtxt_data);
