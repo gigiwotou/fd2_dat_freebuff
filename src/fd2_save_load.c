@@ -22,6 +22,7 @@
 #define FD2_SAV_STATE_DATA_OFFSET 12451
 #define FD2_SAV_STATE_DATA_SIZE 32
 #define FD2_SAV_STATE_VARS_OFFSET 12483
+#define FD2_SAV_BATTLE_SLOTS_OFFSET 12501
 #define FD2_SAV_CHECKSUM_OFFSET 22983
 
 /* 16位循环左移 */
@@ -142,6 +143,9 @@ int fd2_sav_load(const char* filename, fd2_sav_data_t* sav) {
     memcpy(sav->charData, buffer + FD2_SAV_CHAR_DATA_OFFSET, FD2_SAV_CHAR_DATA_SIZE);
     memcpy(sav->stateData, buffer + FD2_SAV_STATE_DATA_OFFSET, FD2_SAV_STATE_DATA_SIZE);
     
+    /* 复制战场存档Slots (对应原游戏 sub_29BCB 遍历的数据) */
+    memcpy(sav->battleSlots, buffer + FD2_SAV_BATTLE_SLOTS_OFFSET, sizeof(sav->battleSlots));
+    
     /* 读取状态变量 (对应原游戏 0x103df-0x10446) */
     sav->n999 = buffer[FD2_SAV_STATE_VARS_OFFSET + 0];      /* +12483 */
     sav->n6_0 = buffer[FD2_SAV_STATE_VARS_OFFSET + 1];      /* +12484 */
@@ -165,6 +169,16 @@ int fd2_sav_load(const char* filename, fd2_sav_data_t* sav) {
     
     printf("fd2_sav_load: loaded successfully (scene=%d, chars=%d)\n",
            sav->n17, sav->n6_0);
+    
+    /* 打印battleSlots信息 */
+    printf("fd2_sav_load: battleSlots:\n");
+    for (int slot = 0; slot < 4; slot++) {
+        printf("  slot %d: n17=%d, n16_1=%d, n999_0=%u\n",
+               slot,
+               sav->battleSlots[slot].n17,
+               sav->battleSlots[slot].n16_1,
+               sav->battleSlots[slot].n999_0);
+    }
     
     return 0;
 }

@@ -18,6 +18,102 @@
 #include "fd2_save_load.h"
 #include "fd2_decoder.h"
 #include <SDL2/SDL.h>
+#include <stdio.h>
+#include <string.h>
+
+/* ========================================================================
+ * 存档选择UI辅助函数 (从sub_29AB2/sub_29BCB提取)
+ * ======================================================================== */
+
+/* sub_4EBFF: 将像素数据块传输到屏幕缓冲区 */
+static void fd2_blit_pixels(u8* src, int src_pitch, u8* dst, int dst_pitch, int w, int h) {
+    for (int y = 0; y < h; y++) {
+        memcpy(dst + y * dst_pitch, src + y * src_pitch, w);
+    }
+}
+
+/* sub_4ED7A: 字符渲染 */
+static void fd2_render_char(u8* font, int char_idx, u8* screen, int pitch, u8 color) {
+    if (!font || char_idx < 0 || char_idx > 9) return;
+    
+    u8* char_data = font + 32 * char_idx;
+    for (int row = 0; row < 16; row++) {
+        u8 byte1 = char_data[row * 2];
+        u8 byte2 = char_data[row * 2 + 1];
+        
+        for (int bit = 0; bit < 8; bit++) {
+            if (byte1 & (0x80 >> bit)) {
+                screen[row * pitch + bit] = color;
+            }
+            if (byte2 & (0x80 >> bit)) {
+                screen[row * pitch + 8 + bit] = color;
+            }
+        }
+    }
+}
+
+/* 渲染字符串到屏幕缓冲区 */
+static void fd2_render_string(u8* font, const char* str, u8* screen, int pitch, int x, int y, u8 color) {
+    u8* ptr = screen + y * pitch + x;
+    while (*str) {
+        if (*str >= '0' && *str <= '9') {
+            fd2_render_char(font, *str - '0', ptr, pitch, color);
+        }
+        ptr += 16;
+        str++;
+    }
+}
+
+/* 存档槽位UI资源结构 */
+typedef struct {
+    u16 width;
+    u16 height;
+    u8 pixels[480];  /* 24x20 */
+} fd2_ui_resource_t;
+
+/* 渲染存档槽位UI: 对应原游戏 sub_29AB2 */
+static void fd2_render_slot_ui(u8* screen, int pitch, int slot_idx, int is_selected, 
+                               u8* slot_data, fd2_ui_resource_t** ui_res, u8* font_data) {
+    int y_pos = 40 + slot_idx * 38;
+    int res_idx = is_selected ? 0 : 1;
+    
+    if (ui_res[res_idx]) {
+        fd2_ui_resource_t* res = ui_res[res_idx];
+        int w = res->width;
+        int h = res->height;
+        int draw_x = 30;
+        int draw_y = y_pos;
+        u8* dest = screen + draw_y * pitch + draw_x;
+        
+        for (int row = 0; row < h && (draw_y + row) < 200; row++) {
+            memcpy(dest + row * pitch, res->pixels, w);
+        }
+    }
+    
+    if (slot_data && slot_data[2560] != 255 && ui_res[2 + slot_idx]) {
+        fd2_ui_resource_t* thumb = ui_res[2 + slot_idx];
+        int thumb_x = 40;
+        int thumb_y = y_pos + 5;
+        u8* dest = screen + thumb_y * pitch + thumb_x;
+        
+        for (int row = 0; row < thumb->height && (thumb_y + row) < 200; row++) {
+            memcpy(dest + row * pitch, thumb->pixels, thumb->width);
+        }
+    }
+    
+    char slot_num[2];
+    slot_num[0] = '1' + slot_idx;
+    slot_num[1] = '\0';
+    fd2_render_string(font_data, slot_num, screen + y_pos * pitch + 270, pitch, 0, 20, 15);
+    
+    if (slot_data && slot_data[2560] != 255) {
+        int scene_id = slot_data[0];
+        char scene_str[8];
+        snprintf(scene_str, sizeof(scene_str), "%d", scene_id);
+        fd2_render_string(font_data, scene_str, screen + (y_pos + 20) * pitch + 40, pitch, 0, 20, 15);
+    }
+}
+#include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -584,10 +680,10 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         
     } else if (opening_result == 1) {
         /* ---------------------------------------------------------------
-         * 选择Load - 加载存档
+         * 选择Load - 加载存档（显示存档列表让用户选择slot）
          * 对应原游戏 sub_25EBB() 的 v8 == 1 分支
          * --------------------------------------------------------------- */
-        printf("[STATE_MACHINE] User selected Load - loading save\n");
+        printf("[STATE_MACHINE] User selected Load - showing save slot selection\n");
         
         /* 获取exe所在目录 */
         const char* exe_dir = SDL_GetBasePath();
@@ -597,108 +693,249 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             SDL_free((void*)exe_dir);
         }
         
-        /* 变量声明 */
+        /* 阶段1: 加载UI资源 */
         char res_path[512];
-        char sav_path[512];
-        int v11;  /* FDSHAP.DAT索引计算 */
-        int music_id;  /* 场景音乐ID */
+        snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
+        void* fdother_13 = fd2_dat_load_resource(res_path, NULL, 13);
         
-        /* 读取并解密存档 */
+        /* 阶段2: 加载FDOTHER.DAT索引0 */
+        void* fdother_0 = fd2_dat_load_resource(res_path, NULL, 0);
+        
+        /* 阶段3: 读取并解密存档 */
+        char sav_path[512];
         snprintf(sav_path, sizeof(sav_path), "%sFD2.SAV", base_path);
         
         fd2_sav_data_t sav;
         memset(&sav, 0, sizeof(sav));
         
         if (fd2_sav_load(sav_path, &sav) == 0) {
-            printf("[STATE_MACHINE] Save loaded successfully (scene=%d, chars=%d)\n", 
-                   sav.n17, sav.n6_0);
+            printf("[STATE_MACHINE] Save loaded successfully\n");
             
-            /* 应用存档数据到全局变量 */
-            fd2_sav_apply(&sav);
+            /* 阶段4: 显示存档slot选择界面（对应原游戏 sub_29BCB） */
+            /* 加载FDOTHER.DAT索引1获取UI资源 */
+            void* fdother_1 = fd2_dat_load_resource(res_path, NULL, 1);
+            if (!fdother_1) {
+                fprintf(stderr, "[STATE_MACHINE] Failed to load FDOTHER.DAT index 1\n");
+                v15 = 1;
+                goto load_done;
+            }
             
-            /* 释放旧场景资源 */
-            if (g_dword_53A45) { free(g_dword_53A45); g_dword_53A45 = NULL; }
-            if (g_dword_53A55) { free(g_dword_53A55); g_dword_53A55 = NULL; }
-            if (g_n7) { free(g_n7); g_n7 = NULL; }
-            if (g_dword_53A51) { free(g_dword_53A51); g_dword_53A51 = NULL; }
-            if (g_dword_53A61) { free(g_dword_53A61); g_dword_53A61 = NULL; }
-            if (g_n655360_0) { free(g_n655360_0); g_n655360_0 = NULL; }
+            /* 解析FDOTHER.DAT索引1的4字节偏移表获取UI图像 */
+            u8* idx1_data = (u8*)fdother_1;
+            u32 idx1_size = fd2_last_loaded_size;
             
-            /* 分配FDSHAP_DAT缓冲区 (153216字节) */
-            g_n7 = malloc(153216);
-            if (!g_n7) {
-                fprintf(stderr, "[STATE_MACHINE] Failed to allocate FDSHAP buffer\n");
+            /* 提取18个UI图像资源(每个484字节: 4字节头+480字节像素) */
+            fd2_ui_resource_t* ui_res[18];
+            int slot_i;
+            
+            for (slot_i = 1; slot_i <= 18; slot_i++) {
+                u32 res_off = slot_i * 4;
+                if (res_off + 8 <= idx1_size) {
+                    u32 res_start = *(u32*)(idx1_data + res_off);
+                    u32 res_next = *(u32*)(idx1_data + res_off + 4);
+                    u32 res_size = res_next - res_start;
+                    
+                    if (res_start < idx1_size && res_size == 484) {
+                        ui_res[slot_i-1] = (fd2_ui_resource_t*)(idx1_data + res_start);
+                    } else {
+                        ui_res[slot_i-1] = NULL;
+                    }
+                } else {
+                    ui_res[slot_i-1] = NULL;
+                }
+            }
+            
+            /* 加载FDOTHER.DAT索引6字体资源 */
+            void* fdother_6 = fd2_dat_load_resource(res_path, NULL, 6);
+            u8* font_data = (u8*)fdother_6;
+            
+            /* 分配屏幕缓冲区 (320x200) */
+            u8* screen_buf = (u8*)malloc(64000);
+            if (!screen_buf) {
+                fprintf(stderr, "[STATE_MACHINE] Failed to allocate screen buffer\n");
+                free(fdother_1);
+                if (fdother_6) free(fdother_6);
+                v15 = 1;
+                goto load_done;
+            }
+            
+            /* 阶段4a: 初始渲染 */
+            int selected_slot = 0;
+            int load_result = -1;
+            
+            while (1) {
+                /* 清屏 */
+                memset(screen_buf, 0, 64000);
+                
+                /* 绘制标题 "LOAD" */
+                fd2_render_string(font_data, "LOAD GAME", screen_buf, 320, 110, 10, 15);
+                
+                /* 渲染4个存档槽 */
+                for (slot_i = 0; slot_i < 4; slot_i++) {
+                    u8* slot_data = sav.battleSlots[slot_i].sceneData;
+                    fd2_render_slot_ui(screen_buf, 320, slot_i, slot_i == selected_slot,
+                                  slot_data, (fd2_ui_resource_t**)ui_res, font_data);
+                }
+                
+                /* 绘制底部提示 "PRESS ENTER TO LOAD" */
+                fd2_render_string(font_data, "PRESS ENTER", screen_buf, 320, 80, 180, 14);
+                
+                /* 将屏幕缓冲区拷贝到渲染器 */
+                memcpy(sm->render.screen, screen_buf, 64000);
+                fd2_render_present(&sm->render);
+                
+                /* 等待输入: 对应原游戏 sub_16C57 */
+                SDL_Event event;
+                int need_refresh = 0;
+                
+                while (SDL_WaitEvent(&event)) {
+                    if (event.type == SDL_QUIT) {
+                        load_result = -1;
+                        goto load_exit;
+                    }
+                    if (event.type == SDL_KEYDOWN) {
+                        switch (event.key.keysym.scancode) {
+                            case SDL_SCANCODE_UP:
+                                if (selected_slot > 0) {
+                                    selected_slot--;
+                                    need_refresh = 1;
+                                }
+                                break;
+                            case SDL_SCANCODE_DOWN:
+                                if (selected_slot < 3) {
+                                    selected_slot++;
+                                    need_refresh = 1;
+                                }
+                                break;
+                            case SDL_SCANCODE_RETURN:
+                            case SDL_SCANCODE_SPACE:
+                                load_result = selected_slot;
+                                goto load_exit;
+                            case SDL_SCANCODE_ESCAPE:
+                                load_result = -1;
+                                goto load_exit;
+                            default:
+                                break;
+                        }
+                        if (need_refresh) break;
+                    }
+                }
+            }
+            
+        load_exit:
+            /* 清理资源 */
+            if (screen_buf) free(screen_buf);
+            if (fdother_1) free(fdother_1);
+            if (fdother_6) free(fdother_6);
+            
+            selected_slot = load_result;
+            printf("[STATE_MACHINE] User selected slot %d\n", selected_slot);
+            
+            /* 检查slot是否有效 */
+            if (sav.battleSlots[selected_slot].n17 == 255) {
+                printf("[STATE_MACHINE] Slot %d is empty\n", selected_slot);
                 v15 = 1;
             } else {
-                memset(g_n7, 0, 153216);
+                /* 阶段5: 从选择的slot加载战场数据 */
+                /* 对应原游戏 sub_29BCB返回后的处理 */
+                printf("[STATE_MACHINE] Loading from slot %d (scene=%d)\n", 
+                       selected_slot, sav.battleSlots[selected_slot].n17);
                 
-                /* 加载FDOTHER.DAT索引n17 (RLE图形数据) 并解压到 n7+32904 */
-                snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
-                void* fdother_data = fd2_dat_load_resource(res_path, NULL, sav.n17);
-                if (fdother_data) {
-                    u32 res_size = fd2_last_loaded_size;
-                    fd2_rle_decompress_to_buffer((u8*)fdother_data, res_size,
-                                                 (u8*)g_n7 + 32904, 0, 456, -1);
-                    free(fdother_data);
+                /* 复制slot的场景数据到sav.sceneData */
+                memcpy(sav.sceneData, sav.battleSlots[selected_slot].sceneData, 2560);
+                
+                /* 更新存档状态变量 */
+                sav.n17 = sav.battleSlots[selected_slot].n17;
+                sav.n16_1 = sav.battleSlots[selected_slot].n16_1;
+                sav.n999_0 = sav.battleSlots[selected_slot].n999_0;
+                sav.byte_51AAB = sav.battleSlots[selected_slot].byte_51AAB;
+                sav.byte_53AF9 = sav.battleSlots[selected_slot].byte_53AF9;
+                sav.n127 = sav.battleSlots[selected_slot].n127;
+                sav.byte_51E62 = sav.battleSlots[selected_slot].byte_51E62;
+                
+                /* 应用存档数据到全局变量 */
+                fd2_sav_apply(&sav);
+                
+                /* 阶段6: 释放旧场景资源 */
+                if (g_dword_53A45) { free(g_dword_53A45); g_dword_53A45 = NULL; }
+                if (g_dword_53A55) { free(g_dword_53A55); g_dword_53A55 = NULL; }
+                if (g_n7) { free(g_n7); g_n7 = NULL; }
+                if (g_dword_53A51) { free(g_dword_53A51); g_dword_53A51 = NULL; }
+                if (g_dword_53A61) { free(g_dword_53A61); g_dword_53A61 = NULL; }
+                if (g_n655360_0) { free(g_n655360_0); g_n655360_0 = NULL; }
+                
+                /* 阶段7: 分配场景资源 */
+                char res_path2[512];
+                int v11;
+                int music_id;
+                
+                /* 分配FDSHAP_DAT缓冲区 */
+                g_n7 = malloc(153216);
+                if (!g_n7) {
+                    fprintf(stderr, "[STATE_MACHINE] Failed to allocate FDSHAP buffer\n");
+                    v15 = 1;
+                } else {
+                    memset(g_n7, 0, 153216);
+                    
+                    /* 加载FDOTHER.DAT索引n17 (RLE图形) */
+                    snprintf(res_path2, sizeof(res_path2), "%sFDOTHER.DAT", base_path);
+                    void* fdother_data = fd2_dat_load_resource(res_path2, NULL, sav.n17);
+                    if (fdother_data) {
+                        u32 res_size = fd2_last_loaded_size;
+                        fd2_rle_decompress_to_buffer((u8*)fdother_data, res_size,
+                                                     (u8*)g_n7 + 32904, 0, 456, -1);
+                        free(fdother_data);
+                    }
+                    
+                    /* 加载其他资源 */
+                    snprintf(res_path2, sizeof(res_path2), "%sFDOTHER.DAT", base_path);
+                    g_dword_53A55 = fd2_dat_load_resource(res_path2, NULL, 0);
+                    g_dword_53F5A = fd2_dat_load_resource(res_path2, NULL, 10);
+                    
+                    snprintf(res_path2, sizeof(res_path2), "%sFDFIELD.DAT", base_path);
+                    g_dword_53A51 = fd2_dat_load_resource(res_path2, NULL, 3 * sav.n17);
+                    if (g_dword_53A51) {
+                        fd2_field_data_process((u8*)g_dword_53A51);
+                    }
+                    g_dword_53A59 = fd2_dat_load_resource(res_path2, NULL, 3 * sav.n17 + 2);
+                    
+                    snprintf(res_path2, sizeof(res_path2), "%sFDTXT.DAT", base_path);
+                    g_FDTXT_DAT__0 = fd2_dat_load_resource(res_path2, NULL, sav.n17 + 1);
+                    
+                    v11 = 2 * (int)sav.fieldData[0];
+                    snprintf(res_path2, sizeof(res_path2), "%sFDSHAP.DAT", base_path);
+                    g_FDSHAP_DAT = fd2_dat_load_resource(res_path2, NULL, v11);
+                    g_dword_53A69 = fd2_dat_load_resource(res_path2, NULL, v11 + 1);
+                    
+                    /* 分配显存缓冲区 */
+                    g_n655360_0 = malloc(655360);
+                    if (g_n655360_0) {
+                        memset(g_n655360_0, 0, 64000);
+                    }
+                    
+                    /* 播放场景音乐 */
+                    music_id = (unsigned char)g_byte_51E63[sav.n17];
+                    fd2_music_play(music_id);
+                    
+                    /* 设置场景状态 */
+                    g_n2_0 = FD2_SCENE_STATE_INTERACT;
+                    g_n17 = sav.n17;
+                    g_n16_1 = sav.n16_1;
+                    g_n5 = 0;
+                    
+                    printf("[STATE_MACHINE] Load completed: slot=%d, scene=%d, music=%d\n", 
+                           selected_slot, sav.n17, music_id);
+                    
+                    v15 = 0;
                 }
-                
-                /* 加载FDOTHER.DAT索引0和10 */
-                snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
-                g_dword_53A55 = fd2_dat_load_resource(res_path, NULL, 0);
-                g_dword_53F5A = fd2_dat_load_resource(res_path, NULL, 10);
-                
-                /* 加载FDFIELD.DAT索引3*n17 (布局数据) */
-                snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
-                g_dword_53A51 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17);
-                if (g_dword_53A51) {
-                    fd2_field_data_process((u8*)g_dword_53A51);
-                }
-                
-                /* 加载FDTXT.DAT索引n17+1 */
-                snprintf(res_path, sizeof(res_path), "%sFDTXT.DAT", base_path);
-                g_FDTXT_DAT__0 = fd2_dat_load_resource(res_path, NULL, sav.n17 + 1);
-                
-                /* 加载FDFIELD.DAT索引3*n17+2 */
-                snprintf(res_path, sizeof(res_path), "%sFDFIELD.DAT", base_path);
-                g_dword_53A59 = fd2_dat_load_resource(res_path, NULL, 3 * sav.n17 + 2);
-                
-                /* 加载FDSHAP.DAT */
-                v11 = 2 * (int)sav.fieldData[0];
-                snprintf(res_path, sizeof(res_path), "%sFDSHAP.DAT", base_path);
-                g_FDSHAP_DAT = fd2_dat_load_resource(res_path, NULL, v11);
-                g_dword_53A69 = fd2_dat_load_resource(res_path, NULL, v11 + 1);
-                
-                /* 分配显存缓冲区 64000字节 */
-                g_n655360_0 = malloc(655360);
-                if (g_n655360_0) {
-                    memset(g_n655360_0, 0, 64000);
-                }
-                
-                /* 加载角色图标 */
-                g_n6_0 = sav.n6_0;
-                for (i = 0; i < g_n6_0; i++) {
-                    snprintf(res_path, sizeof(res_path), "%sFDICON.B24", base_path);
-                    /* TODO: 实现角色图标加载 */
-                }
-                
-                /* 播放场景音乐 */
-                music_id = (unsigned char)g_byte_51E63[sav.n17];
-                fd2_music_play(music_id);
-                
-                /* 设置场景状态 */
-                g_n2_0 = FD2_SCENE_STATE_INTERACT;
-                g_n17 = sav.n17;
-                g_n16_1 = sav.n16_1;
-                g_n5 = 0;
-                
-                printf("[STATE_MACHINE] Load completed: scene=%d, music=%d\n", sav.n17, music_id);
-                
-                v15 = 0;
             }
         } else {
             printf("[STATE_MACHINE] Failed to load save file\n");
             v15 = 1;
         }
+        
+    load_done:
+        ;
         
     } else {
         /* ---------------------------------------------------------------
