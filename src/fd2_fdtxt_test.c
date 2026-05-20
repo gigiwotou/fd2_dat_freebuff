@@ -94,6 +94,33 @@ static int current_frame = 0;
 static uint32_t frame_timer = 0;
 static bool portrait_loaded = false;
 
+/* 角色ID到DATO索引的映射表 (根据游戏数据提取) */
+static const struct {
+    int char_id;
+    int dato_index;
+} char_to_dato[] = {
+    {1, 0},   {2, 1},   {3, 2},   {4, 3},   {5, 4},   {6, 5},
+    {7, 6},   {8, 7},   {9, 8},   {10, 9},  {11, 10}, {12, 11},
+    {13, 12}, {14, 13}, {15, 14}, {16, 15}, {17, 16}, {18, 17},
+    {19, 18}, {20, 19}, {21, 20}, {22, 21}, {23, 22}, {24, 23},
+    {25, 24}, {26, 25}, {27, 26}, {28, 27}, {29, 28}, {30, 29},
+    {31, 30}, {32, 31}, {33, 32}, {34, 33}, {35, 34}, {36, 35},
+    {37, 36}, {38, 37}, {39, 38}, {40, 39}, {41, 40}, {42, 41},
+    {43, 42}, {44, 43}, {45, 44}, {46, 45}, {47, 46}, {48, 47},
+    {49, 48}, {50, 49}, {51, 50}, {52, 51}, {53, 52}, {54, 53},
+    {55, 54}, {56, 55}, {57, 56}, {58, 57}, {59, 58}, {60, 59},
+};
+#define CHAR_TO_DATO_COUNT (sizeof(char_to_dato) / sizeof(char_to_dato[0]))
+
+static int char_id_to_dato_index(int char_id) {
+    for (int i = 0; i < CHAR_TO_DATO_COUNT; i++) {
+        if (char_to_dato[i].char_id == char_id) {
+            return char_to_dato[i].dato_index;
+        }
+    }
+    return char_id;
+}
+
 static SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
 static SDL_Texture* texture = NULL;
@@ -475,7 +502,8 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         if (word == TEXT_PORTRAIT_F) {
             state->ptr++;
             int16_t pid = *state->ptr++;
-            if (load_portrait(pid) == 0) {
+            int dato_idx = char_id_to_dato_index(pid);
+            if (load_portrait(dato_idx) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
@@ -487,7 +515,8 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         if (word == TEXT_PORTRAIT_S) {
             state->ptr++;
             int16_t pid = *state->ptr++;
-            if (load_portrait(pid) == 0) {
+            int dato_idx = char_id_to_dato_index(pid);
+            if (load_portrait(dato_idx) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
@@ -498,8 +527,9 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         
         if (word == TEXT_CHAR_F) {
             state->ptr++;
-            int16_t pid = *state->ptr++;
-            if (load_portrait(pid) == 0) {
+            int16_t cid = *state->ptr++;
+            int dato_idx = char_id_to_dato_index(cid);
+            if (load_portrait(dato_idx) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
@@ -510,8 +540,9 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         
         if (word == TEXT_CHAR_S) {
             state->ptr++;
-            int16_t pid = *state->ptr++;
-            if (load_portrait(pid) == 0) {
+            int16_t cid = *state->ptr++;
+            int dato_idx = char_id_to_dato_index(cid);
+            if (load_portrait(dato_idx) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
@@ -555,11 +586,16 @@ static int16_t* get_sub_text(int res_idx, int sub_idx, int16_t** out_end)
     memcpy(&sc, rd, 2);
     if (sub_idx < 0 || sub_idx >= sc) return NULL;
     
+    int16_t* offs = (int16_t*)(rd + 2);
+    
     if (out_end) {
-        *out_end = (int16_t*)(rd + re);
+        if (sub_idx + 1 < sc) {
+            *out_end = (int16_t*)(rd + offs[sub_idx + 1]);
+        } else {
+            *out_end = (int16_t*)(rd + rsz);
+        }
     }
     
-    int16_t* offs = (int16_t*)(rd + 2);
     return (int16_t*)(rd + offs[sub_idx]);
 }
 
