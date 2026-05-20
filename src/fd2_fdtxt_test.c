@@ -367,23 +367,27 @@ static void render_char(int16_t word, int x, int y, uint32_t fg, uint32_t bg, bo
  * 
  * 注意：sub_16C57(1)在函数内部阻塞等待按键，不return到主循环
  * ============================================================ */
-static void render_text_item(text_state_t_struct* state, int start_x, int start_y, bool wait_for_key)
+static void render_text_item(text_state_t_struct* state, int start_x, int start_y, bool wait_for_key, int16_t* text_end)
 {
-    if (!state->ptr) return;
+    if (!state->ptr || !text_end) return;
     
-    (void)start_y;  /* 未使用，保留参数签名 */
+    (void)start_y;
     
-    /* 1:1还原sub_15F84主循环 - 连续的while循环 */
+    int invalid_count = 0;
+    
+    /* 1:1还原sub_15F84主循环 */
     while (1) {
-        int16_t word = *state->ptr++;
+        if (state->ptr >= text_end) {
+            state->state = TEXT_DONE;
+            return;
+        }
         
-        /* L70: if (v18 == -1) - TEXT_END */
+        int16_t word = *state->ptr;
+        
         if (word == TEXT_END) {
-            /* L72-L78: if (v35) { sub_16559(0); sub_16C57(0); sub_16B43(v35, n2); n1832 = 0; } */
-            /* L79: JUMPOUT(0x15309) - 跳出循环 */
-            /* 游戏原版：sub_16C57(0)等待按键，然后退出 */
+            state->ptr++;
+            state->state = TEXT_DONE;
             if (wait_for_key) {
-                /* 阻塞等待按键 */
                 SDL_Event ev;
                 bool waiting = true;
                 while (waiting) {
@@ -396,48 +400,43 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
                     SDL_Delay(16);
                 }
             }
-            state->state = TEXT_DONE;
-            return;  /* 退出文本渲染 */
+            return;
         }
         
-        /* L81: if (v18 == -2) - TEXT_NEWLINE */
+        if (word != TEXT_NEWLINE && word != TEXT_NEWLINE2 && 
+            word != TEXT_RECURSE1 && word != TEXT_RECURSE2 && 
+            word != TEXT_SHOW_NUM && word != TEXT_PORTRAIT_F && 
+            word != TEXT_PORTRAIT_S && word != TEXT_CHAR_F && 
+            word != TEXT_CHAR_S) {
+            invalid_count++;
+            if (invalid_count > 50) {
+                state->state = TEXT_DONE;
+                return;
+            }
+        } else {
+            invalid_count = 0;
+        }
+        
+        /* TEXT_NEWLINE */
         if (word == TEXT_NEWLINE) {
-            /* L83-L84: if ((n1832 == 1832 || n1832 == 36887) && n3 == 3) { sub_16E24(); --n3; } */
-            /* 简化: 不处理n1832检查 */
-            
-            /* L88: n658255_1 = ++n3 * arg1C * argC + n658255 */
-            /* 在我们的实现中，n3对应line_count */
+            state->ptr++;
             state->x = start_x;
             state->y += CHAR_HEIGHT;
             state->line_count++;
-            
-            /* L89: goto LABEL_50 */
-            /* LABEL_50: ++v15; - 继续循环 */
             continue;
         }
         
-        /* L91: if (v18 != -3) - TEXT_NEWLINE2 */
+        /* TEXT_NEWLINE2 */
         if (word != TEXT_NEWLINE2) {
-            /* 跳转到下一个检查 */
             goto CHECK_RECURSE1;
         }
         
-        /* TEXT_NEWLINE2处理 */
-        /* L93-L94: if ((n1832 == 1832 || n1832 == 36887) && n3 == 3) { sub_16E24(); --n3; } */
-        /* L98: n658255_1 = ++n3 * arg1C * argC + n658255 */
+        state->ptr++;
         state->x = start_x;
         state->y += CHAR_HEIGHT;
         state->line_count++;
         
-        /* L99: ++v15 */
-        /* 已经在上面*state->ptr++中完成了 */
-        
-        /* L100-L101: if (n1832 == 1832 || n1832 == 36887) sub_16559(0); */
-        /* L102: sub_16C57(1); */
-        /* L103: arg20 = 1; */
-        /* 游戏原版：sub_16C57(1)在函数内部阻塞等待按键 */
         if (wait_for_key) {
-            /* 阻塞等待按键，不return到主循环 */
             SDL_Event ev;
             bool waiting = true;
             while (waiting) {
@@ -450,158 +449,98 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
                 SDL_Delay(16);
             }
         }
-        /* 按键后继续渲染后面的文字 */
-        goto LABEL_50;
+        continue;
         
     CHECK_RECURSE1:
-        /* L105-L106: v16 = (int)(v15 + 1); v32 = v15 + 1; */
-        /* L107: if (v18 == -4) - TEXT_RECURSE1 */
         if (word == TEXT_RECURSE1) {
-            /* L109: sub_15F84(a1, dword_53A7D, dword_53AD9, n658255_1, argC, 205, 76, 74, 19, 1); */
-            /* L110: goto LABEL_13; */
-            /* 递归调用 - 暂时跳过 */
-            goto LABEL_50;
+            state->ptr++;
+            continue;
         }
         
-        /* L112: if (v18 != -5) - TEXT_RECURSE2 */
         if (word == TEXT_RECURSE2) {
-            /* L114: sub_15F84(a1, dword_53A7D, dword_53ADD, n658255_1, argC, 205, 76, 74, 19, 1); */
-            /* L115: LABEL_13: n658255_1 = n658255_2; v15 = v32; */
-            /* 递归调用 - 暂时跳过 */
-            goto LABEL_50;
+            state->ptr++;
+            continue;
         }
         
-        /* L119: if (v18 != -6) - TEXT_SHOW_NUM */
         if (word != TEXT_SHOW_NUM) {
-            /* 跳转到下一个检查 */
             goto CHECK_PORTRAIT_F;
         }
         
-        /* TEXT_SHOW_NUM处理 */
-        /* L121-L122: sprintf(v31, "%d", dword_53AE1); v37 = strlen(v31); */
-        /* L123-L131: for (i = 0; v37 > i; ++i) { sub_4ED7A(...); if(sub_10620()) arg20=0; if(arg20) sub_164E8(); n658255_1+=16; } */
-        /* L132: LABEL_50: ++v15; */
-        /* 暂时显示占位符 */
+        state->ptr++;
         render_char(0, state->x, state->y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
         state->x += CHAR_WIDTH;
-        goto LABEL_50;
+        continue;
         
     CHECK_PORTRAIT_F:
-        /* L135: if (v18 == -17) - TEXT_PORTRAIT_F */
         if (word == TEXT_PORTRAIT_F) {
-            /* L137-L142: if (v35) { sub_16559(0); sub_16C57(0); v18 = sub_16B43(v35, n2); } */
-            /* L143: n1832 = 1832; */
-            /* L144: n39 = (unsigned __int16)v15[1]; */
+            state->ptr++;
             int16_t pid = *state->ptr++;
-            
-            /* L145-L149: v20 = sub_12C60(...); if (v20 == -1) n2 = 0; else n2 = 2; */
-            /* L150-L154: if (n39 != 39) { ... } */
-            /* L155: DATO_DAT = sub_111BA(...); */
-            /* L156: v21 = sub_165AC(...); */
             if (load_portrait(pid) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
             }
-            
-            /* L160: sub_4EBFF(n1832 + 655360, a1, 320); */
-            /* L161: arg20 = 1; */
-            /* L162: n3 = 0; */
-            /* L163-L164: n658255 = 658255; n658255_1 = 658255; */
-            /* L165: goto LABEL_42; */
-            /* L193: LABEL_42: v15 += 2; - 继续循环 */
             state->state = TEXT_CONTINUE;
-            goto LABEL_50;
+            continue;
         }
         
-        /* L167: if (v18 != -18) - TEXT_PORTRAIT_S */
         if (word == TEXT_PORTRAIT_S) {
-            /* L169-L174: if (v35) { sub_16559(0); sub_16C57(0); v18 = sub_16B43(v35, n2); } */
-            /* L175: n1832 = 36887; */
+            state->ptr++;
             int16_t pid = *state->ptr++;
-            
-            /* L176-L180: v22 = sub_12C60(...); if (v22 == -1) n2 = 0; else n2 = 112; */
-            /* L182-L183: DATO_DAT = sub_111BA(...); v24 = sub_165AC(...); */
             if (load_portrait(pid) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
             }
-            
-            /* L187: sub_4EC31(n1832 + 655360, a1, 320); */
-            /* L188: arg20 = 1; */
-            /* L189: n3 = 0; */
-            /* L190-L191: n658255 = 693535; n658255_1 = 693535; */
-            /* L192: LABEL_42: */
-            /* L193: v15 += 2; - 继续循环 */
             state->state = TEXT_CONTINUE;
-            goto LABEL_50;
+            continue;
         }
         
-        /* L195: if (v18 == -19) - TEXT_CHAR_F */
         if (word == TEXT_CHAR_F) {
-            /* L197-L201: if (v35) { sub_16559(0); sub_16C57(0); sub_16B43(v35, n2); } */
-            /* L203: n1832 = 1832; */
-            /* L204: v25 = 80 * (unsigned __int16)v15[1]; */
+            state->ptr++;
             int16_t pid = *state->ptr++;
-            
-            /* L205-L208: v26 = (unsigned __int8 *)(v25 + dword_53A45); v27 = *(unsigned __int8 *)(v25 + dword_53A45 + 7); n2 = 2; */
-            /* L209-L210: DATO_DAT = sub_111BA(...); v21 = sub_165AC(...); */
-            /* L211: goto LABEL_33; */
             if (load_portrait(pid) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
             }
             state->state = TEXT_CONTINUE;
-            goto LABEL_50;
+            continue;
         }
         
-        /* L212: if (v18 == -20) - TEXT_CHAR_S */
         if (word == TEXT_CHAR_S) {
-            /* L214-L219: if (v35) { sub_16559(0); sub_16C57(0); sub_16B43(v35, n2); } */
-            /* L220: n1832 = 36887; */
-            /* L221: v28 = 80 * (unsigned __int16)v15[1]; */
+            state->ptr++;
             int16_t pid = *state->ptr++;
-            
-            /* L222-L227: v29 = (unsigned __int8 *)(v28 + dword_53A45); v30 = *(unsigned __int8 *)(v28 + dword_53A45 + 7); n2 = 112; */
-            /* L225-L226: DATO_DAT = sub_111BA(...); v24 = sub_165AC(...); */
-            /* L228: goto LABEL_41; */
             if (load_portrait(pid) == 0) {
                 state->x = TEXT_START_X;
                 state->y = TEXT_START_Y;
                 state->line_count = 0;
             }
             state->state = TEXT_CONTINUE;
-            goto LABEL_50;
+            continue;
         }
         
-        /* L229: sub_4ED7A(dword_53A75, v18, n658255_1, argC, arg10, arg14, arg18); */
-        /* L230: n658255_1 += 16; */
-        /* L231: v15 = v32; */
         if (word >= 0 && word < FONT_MAX_CHARS) {
-            /* 检查换行 */
             if (state->x > TEXT_WRAP_X) {
                 state->x = start_x;
                 state->y += CHAR_HEIGHT;
                 state->line_count++;
             }
             
-            render_char(word, state->x, state->y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
+            if (state->y >= DIALOG_Y && state->y < DIALOG_Y + DIALOG_H) {
+                render_char(word, state->x, state->y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
+            }
             state->x += CHAR_WIDTH;
         }
         
-    LABEL_50:
-        /* L133: ++v15; */
-        /* 已经在上面*state->ptr++中完成了 */
-        /* 继续循环处理下一个词 */
+        state->ptr++;
     }
 }
 
 /* ============================================================
  * 获取文本项
  * ============================================================ */
-static int16_t* get_sub_text(int res_idx, int sub_idx)
+static int16_t* get_sub_text(int res_idx, int sub_idx, int16_t** out_end)
 {
     uint32_t rs = fdtxt_offsets[res_idx];
     uint32_t re = (res_idx + 1 < fdtxt_count && fdtxt_offsets[res_idx + 1] < fdtxt_file_size)
@@ -615,6 +554,10 @@ static int16_t* get_sub_text(int res_idx, int sub_idx)
     int16_t sc;
     memcpy(&sc, rd, 2);
     if (sub_idx < 0 || sub_idx >= sc) return NULL;
+    
+    if (out_end) {
+        *out_end = (int16_t*)(rd + re);
+    }
     
     int16_t* offs = (int16_t*)(rd + 2);
     return (int16_t*)(rd + offs[sub_idx]);
@@ -821,16 +764,19 @@ int main(int argc, char* argv[])
                 text_state.line_count = 0;
                 text_state.state = TEXT_CONTINUE;
                 
-                int16_t* txt = get_sub_text(cur_res, cur_sub);
+                int16_t* txt_end = NULL;
+                int16_t* txt = get_sub_text(cur_res, cur_sub, &txt_end);
                 if (txt) {
                     text_state.ptr = txt;
                 }
                 text_initialized = true;
             }
             
-            /* 渲染文本 - wait_for_key=true让函数内部阻塞等待按键 */
+            /* 渲染文本 */
             if (text_state.ptr && text_state.state != TEXT_DONE) {
-                render_text_item(&text_state, TEXT_START_X, TEXT_START_Y, true);
+                int16_t* txt_end = NULL;
+                get_sub_text(cur_res, cur_sub, &txt_end);
+                render_text_item(&text_state, TEXT_START_X, TEXT_START_Y, true, txt_end);
             }
             
             render_frame();
