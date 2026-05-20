@@ -85,18 +85,22 @@ static SDL_Texture* texture = NULL;
 static uint32_t* screen_buffer = NULL;
 
 /* ============================================================
- * 调色板转换 (6位RGB -> 32位RGBA)
+ * 调色板转换 (6位VGA RGB -> 32位RGBA)
+ * 1:1还原VGA DAC格式: 存储顺序为RGB (6位/分量)
+ * SDL ARGB8888格式: A(8) R(8) G(8) B(8)
  * ============================================================ */
 static void load_palette_6bit(uint8_t* pal, int size)
 {
     int count = size / 3;
     for (int i = 0; i < count && i < 256; i++) {
-        uint8_t r = pal[i * 3] & 0x3F;
-        uint8_t g = pal[i * 3 + 1] & 0x3F;
-        uint8_t b = pal[i * 3 + 2] & 0x3F;
-        uint8_t r8 = (r << 2) | (r >> 4);
-        uint8_t g8 = (g << 2) | (g >> 4);
-        uint8_t b8 = (b << 2) | (b >> 4);
+        uint8_t r6 = pal[i * 3] & 0x3F;
+        uint8_t g6 = pal[i * 3 + 1] & 0x3F;
+        uint8_t b6 = pal[i * 3 + 2] & 0x3F;
+        /* 6位转8位: (v << 2) | (v >> 4) */
+        uint8_t r8 = (r6 << 2) | (r6 >> 4);
+        uint8_t g8 = (g6 << 2) | (g6 >> 4);
+        uint8_t b8 = (b6 << 2) | (b6 >> 4);
+        /* SDL ARGB8888: (0xFF << 24) | (R << 16) | (G << 8) | B */
         dato_palette[i] = (0xFFu << 24) | (r8 << 16) | (g8 << 8) | b8;
     }
 }
@@ -481,10 +485,12 @@ int main(int argc, char* argv[])
     int fsz;
     font_data = load_dat_resource(od, osz, 3, &fsz);
     
+    /* 使用索引98的调色板 (暖色调, 53个肤色色调, 适合对话场景) */
     int psz;
-    uint8_t* pd = load_dat_resource(od, osz, 75, &psz);
+    uint8_t* pd = load_dat_resource(od, osz, 98, &psz);
     if (pd && psz == 768) {
         load_palette_6bit(pd, psz);
+        printf("   调色板: 索引98 (暖色调)\n");
     }
     free(pd); free(od);
     if (!font_data) { fprintf(stderr, "字体加载失败\n"); return 1; }
