@@ -12,6 +12,7 @@
 #include "fd2_state_machine.h"
 #include "fd2_globals.h"
 #include "fd2_data_loader.h"
+#include "fd2_dat.h"
 #include "fd2_scene_interact.h"
 #include "fd2_input_scan.h"
 #include "fd2_opening_animation.h"
@@ -695,11 +696,12 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         
         /* 阶段1: 加载UI资源 */
         char res_path[512];
+        dword res13_size = 0, res0_size = 0;
         snprintf(res_path, sizeof(res_path), "%sFDOTHER.DAT", base_path);
-        void* fdother_13 = fd2_dat_load_resource(res_path, NULL, 13);
+        void* fdother_13 = fd2_load_dat_resource(res_path, NULL, 13, &res13_size);
         
         /* 阶段2: 加载FDOTHER.DAT索引0 */
-        void* fdother_0 = fd2_dat_load_resource(res_path, NULL, 0);
+        void* fdother_0 = fd2_load_dat_resource(res_path, NULL, 0, &res0_size);
         
         /* 阶段3: 读取并解密存档 */
         char sav_path[512];
@@ -713,7 +715,8 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             
             /* 阶段4: 显示存档slot选择界面（对应原游戏 sub_29BCB） */
             /* 加载FDOTHER.DAT索引1获取UI资源 */
-            void* fdother_1 = fd2_dat_load_resource(res_path, NULL, 1);
+            dword res1_size = 0;
+            void* fdother_1 = fd2_load_dat_resource(res_path, NULL, 1, &res1_size);
             if (!fdother_1) {
                 fprintf(stderr, "[STATE_MACHINE] Failed to load FDOTHER.DAT index 1\n");
                 v15 = 1;
@@ -759,7 +762,8 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             }
             
             /* 加载FDOTHER.DAT索引6字体资源 (字符16x16) */
-            void* fdother_6 = fd2_dat_load_resource(res_path, NULL, 6);
+            dword res6_size = 0;
+            void* fdother_6 = fd2_load_dat_resource(res_path, NULL, 6, &res6_size);
             u8* font_data = (u8*)fdother_6;
             
             /* 分配屏幕缓冲区 (320x200) */
@@ -1041,6 +1045,8 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
         }
         
     load_done:
+        if (fdother_13) free(fdother_13);
+        if (fdother_0) free(fdother_0);
         ;
         
     } else {
