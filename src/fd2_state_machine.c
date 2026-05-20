@@ -22,6 +22,81 @@
 #include <stdio.h>
 #include <string.h>
 
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 200
+#define CHAR_W 16
+#define CHAR_H 16
+#define FONT_MAX_CHARS 1824
+#define TEXT_END -1
+#define TEXT_NEWLINE -2
+#define TEXT_NEWLINE2 -3
+
+/* ========================================================================
+ * 字体字符渲染 (1:1还原sub_4ED7A - fd2_fdtxt_test.c模式)
+ * word: 字符码 (0~1823), x/y: 屏幕坐标, color: 调色板索引
+ * ======================================================================== */
+static void render_char_8bit(u8* font_data, u8* screen, int word, int x, int y, u8 color) {
+    if (!font_data || word < 0 || word >= FONT_MAX_CHARS) return;
+    if (x < -CHAR_W || x >= SCREEN_WIDTH || y < -CHAR_H || y >= SCREEN_HEIGHT) return;
+    
+    u8* cdata = font_data + word * 32;
+    for (int row = 0; row < CHAR_H; row++) {
+        u16 bits = *(u16*)(cdata + row * 2);
+        bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
+        for (int col = 0; col < CHAR_W; col++) {
+            if (!(bits & (0x8000 >> col))) continue;
+            int px = x + col, py = y + row;
+            if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
+                screen[py * SCREEN_WIDTH + px] = color;
+        }
+    }
+}
+
+/* 渲染FDTXT文本字符串 (int16词数组, 以TEXT_END结束) */
+static void render_fdtxt_text(u8* font, u8* screen, const int16_t* text, int x, int y, u8 fg) {
+    if (!font || !screen || !text) return;
+    int cx = x, cy = y;
+    const int16_t* p = text;
+    while (1) {
+        int16_t w = *p++;
+        if (w == TEXT_END || w == TEXT_NEWLINE2) break;
+        if (w == TEXT_NEWLINE) { cx = x; cy += CHAR_H; continue; }
+        if (w < 0) continue; /* 跳过控制码 */
+        if (w >= FONT_MAX_CHARS) continue;
+        render_char_8bit(font, screen, w, cx, cy, fg);
+        cx += CHAR_H;
+    }
+}
+
+/* 加载FDTXT.DAT子文本 */
+static int16_t* fdtxt_get_sub(u8* fdtxt, size_t fdtxt_size, int res_idx, int sub_idx, int16_t** out_end) {
+    if (res_idx < 0) return NULL;
+    u32 count;
+    memcpy(&count, fdtxt + 6, 4);
+    u32 rs, re;
+    memcpy(&rs, fdtxt + 10 + res_idx * 4, 4);
+    if (res_idx + 1 < (int)count)
+        memcpy(&re, fdtxt + 10 + (res_idx + 1) * 4, 4);
+    else
+        re = (u32)fdtxt_size;
+    if (rs >= fdtxt_size) return NULL;
+    
+    u8* rd = fdtxt + rs;
+    size_t rsz = re - rs;
+    if (rsz < 2) return NULL;
+    
+    int16_t sc;
+    memcpy(&sc, rd, 2);
+    if (sub_idx < 0 || sub_idx >= sc) return NULL;
+    
+    int16_t* offs = (int16_t*)(rd + 2);
+    if (out_end) {
+        if (sub_idx + 1 < sc) *out_end = (int16_t*)(rd + offs[sub_idx + 1]);
+        else *out_end = (int16_t*)(rd + rsz);
+    }
+    return (int16_t*)(rd + offs[sub_idx]);
+}
+
 /* ========================================================================
  * 存档选择UI辅助函数 (从sub_29AB2/sub_29BCB提取)
  * ======================================================================== */
@@ -714,19 +789,40 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             printf("[STATE_MACHINE] Save loaded successfully\n");
             
             /* 阶段4: 显示存档slot选择界面（对应原游戏 sub_29BCB） */
-            /* 201/205/76在原游戏中是sub_4ED7A的颜色参数,不是资源索引
-             * 资源1的嵌套结构不用于渲染存档界面 */
+            /* 201/205/76在原游戏中是sub_4ED7A的颜色参数,不是资源索引 */
             
             /* 加载FDOTHER.DAT索引6字体资源 (字符16x16) */
             dword res6_size = 0;
             void* fdother_6 = fd2_load_dat_resource(res_path, NULL, 6, &res6_size);
             u8* font_data = (u8*)fdother_6;
             
+            /* 加载FDTXT.DAT文本资源 */
+            char fdtxt_path[512];
+            dword fdtxt_total_size = 0;
+            snprintf(fdtxt_path, sizeof(fdtxt_path), "%sFDTXT.DAT", base_path);
+            u8* fdtxt_data = (u8*)fd2_load_dat_resource(fdtxt_path, NULL, 0, &fdtxt_total_size);
+            /* 需要整个FDTXT文件，而不仅是资源0 */
+            free(fdtxt_data);
+            FILE* fdtxt_fp = fopen(fdtxt_path, "rb");
+            u8* fdtxt_full = NULL;
+            size_t fdtxt_fsize = 0;
+            if (fdtxt_fp) {
+                fseek(fdtxt_fp, 0, SEEK_END);
+                fdtxt_fsize = ftell(fdtxt_fp);
+                fdtxt_full = (u8*)malloc(fdtxt_fsize);
+                if (fdtxt_full) {
+                    fseek(fdtxt_fp, 0, SEEK_SET);
+                    fread(fdtxt_full, 1, fdtxt_fsize, fdtxt_fp);
+                }
+                fclose(fdtxt_fp);
+            }
+            
             /* 分配屏幕缓冲区 (320x200) */
             u8* screen_buf = (u8*)malloc(64000);
             if (!screen_buf) {
                 fprintf(stderr, "[STATE_MACHINE] Failed to allocate screen buffer\n");
                 if (fdother_6) free(fdother_6);
+                if (fdtxt_full) free(fdtxt_full);
                 v15 = 1;
                 goto load_done;
             }
@@ -738,34 +834,18 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             while (1) {
                 int slot_i;
                 
-                /* 清屏为黑色 */
                 memset(screen_buf, 0, 64000);
                 
-                /* 绘制标题 "LOAD" */
+                /* 绘制标题 - 使用FDTXT资源0子文本12 (资源列表标题) 或简单英文 */
                 if (font_data) {
-                    const char* title_str = "LOAD";
-                    int title_x = (320 - 4 * 16) / 2;
-                    for (int ci = 0; ci < 4; ci++) {
-                        int char_idx = title_str[ci] - 'A';
-                        if (char_idx >= 0 && char_idx < 26) {
-                            u8* char_data = font_data + 32 * char_idx;
-                            int px = title_x + ci * 16;
-                            int py = 12;
-                            for (int row = 0; row < 16; row++) {
-                                u16 bits = *(u16*)(char_data + row * 2);
-                                bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
-                                for (int bit = 0; bit < 16; bit++) {
-                                    if (bits & (0x8000 >> bit)) {
-                                        int offset = (py + row) * 320 + (px + bit);
-                                        if (offset < 64000) screen_buf[offset] = 15;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    int title_x = (320 - 4 * CHAR_W) / 2;
+                    render_char_8bit(font_data, screen_buf, 'L' - 'A', title_x, 10, 15);
+                    render_char_8bit(font_data, screen_buf, 'O' - 'A', title_x + CHAR_W, 10, 15);
+                    render_char_8bit(font_data, screen_buf, 'A' - 'A', title_x + CHAR_W * 2, 10, 15);
+                    render_char_8bit(font_data, screen_buf, 'D' - 'A', title_x + CHAR_W * 3, 10, 15);
                 }
                 
-                /* 渲染4个存档槽 - 对应原游戏 sub_29AB2循环 */
+                /* 渲染4个存档槽 */
                 for (slot_i = 0; slot_i < 4; slot_i++) {
                     u8 slot_scene_idx = sav.battleSlots[slot_i].n17;
                     int is_empty = (slot_scene_idx == 255);
@@ -774,10 +854,8 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                     int slot_w = 280;
                     int slot_h = 36;
                     
-                    /* 选择边框颜色: 选中的高亮(15=白), 未选的暗色(7=灰) */
                     u8 border_color = (slot_i == selected_slot) ? 15 : 7;
                     
-                    /* 绘制边框矩形 */
                     for (int bx = 0; bx < slot_w; bx++) {
                         int top_off = slot_y * 320 + slot_x + bx;
                         int bot_off = (slot_y + slot_h - 1) * 320 + slot_x + bx;
@@ -791,115 +869,59 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                         if (right_off < 64000) screen_buf[right_off] = border_color;
                     }
                     
-                    /* 绘制槽位编号 (1-4) */
-                    if (font_data) {
-                        int digit = slot_i + 1;
-                        u8* char_data = font_data + 32 * digit;
-                        for (int row = 0; row < 16; row++) {
-                            u16 bits = *(u16*)(char_data + row * 2);
-                            bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
-                            for (int bit = 0; bit < 16; bit++) {
-                                if (bits & (0x8000 >> bit)) {
-                                    int offset = (slot_y + 4 + row) * 320 + (slot_x + 6 + bit);
-                                    if (offset < 64000) screen_buf[offset] = 14;
-                                }
-                            }
-                        }
-                    }
+                    /* 槽位编号 (1-4) */
+                    if (font_data)
+                        render_char_8bit(font_data, screen_buf, slot_i + 1, slot_x + 6, slot_y + 4, 14);
                     
-                    /* 绘制存档信息文本 */
+                    /* 存档信息文本 - 使用FDTXT资源0的子文本 */
                     if (is_empty) {
-                        const char* empty_str = "EMPTY";
-                        if (font_data) {
-                            for (int ci = 0; ci < 5; ci++) {
-                                int char_idx = empty_str[ci] - 'A';
-                                if (char_idx >= 0 && char_idx < 26) {
-                                    u8* char_data = font_data + 32 * char_idx;
-                                    int px = slot_x + 30 + ci * 16;
-                                    for (int row = 0; row < 16; row++) {
-                                        u16 bits = *(u16*)(char_data + row * 2);
-                                        bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
-                                        for (int bit = 0; bit < 16; bit++) {
-                                            if (bits & (0x8000 >> bit)) {
-                                                int offset = (slot_y + 4 + row) * 320 + (px + bit);
-                                                if (offset < 64000) screen_buf[offset] = 8;
-                                            }
-                                        }
-                                    }
-                                }
+                        if (font_data && fdtxt_full) {
+                            int16_t* txt_end = NULL;
+                            int16_t* empty_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 11, &txt_end);
+                            if (!empty_txt)
+                                empty_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 9, &txt_end);
+                            if (empty_txt) {
+                                render_fdtxt_text(font_data, screen_buf, empty_txt, slot_x + 30, slot_y + 4, 8);
+                            } else {
+                                render_char_8bit(font_data, screen_buf, 'E' - 'A', slot_x + 30, slot_y + 4, 8);
+                                render_char_8bit(font_data, screen_buf, 'M' - 'A', slot_x + 46, slot_y + 4, 8);
+                                render_char_8bit(font_data, screen_buf, 'P' - 'A', slot_x + 62, slot_y + 4, 8);
+                                render_char_8bit(font_data, screen_buf, 'T' - 'A', slot_x + 78, slot_y + 4, 8);
+                                render_char_8bit(font_data, screen_buf, 'Y' - 'A', slot_x + 94, slot_y + 4, 8);
                             }
                         }
                     } else {
-                        /* 绘制 "SCENE" + 场景编号 */
-                        const char* scene_str = "SCENE";
-                        if (font_data) {
-                            for (int ci = 0; ci < 5; ci++) {
-                                int char_idx = scene_str[ci] - 'A';
-                                if (char_idx >= 0 && char_idx < 26) {
-                                    u8* char_data = font_data + 32 * char_idx;
-                                    int px = slot_x + 30 + ci * 16;
-                                    for (int row = 0; row < 16; row++) {
-                                        u16 bits = *(u16*)(char_data + row * 2);
-                                        bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
-                                        for (int bit = 0; bit < 16; bit++) {
-                                            if (bits & (0x8000 >> bit)) {
-                                                int offset = (slot_y + 4 + row) * 320 + (px + bit);
-                                                if (offset < 64000) screen_buf[offset] = 10;
-                                            }
-                                        }
-                                    }
-                                }
+                        if (font_data && fdtxt_full) {
+                            int16_t* txt_end = NULL;
+                            int16_t* info_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 12, &txt_end);
+                            if (!info_txt)
+                                info_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 10, &txt_end);
+                            if (info_txt) {
+                                render_fdtxt_text(font_data, screen_buf, info_txt, slot_x + 30, slot_y + 4, 10);
+                            } else {
+                                render_char_8bit(font_data, screen_buf, 'S' - 'A', slot_x + 30, slot_y + 4, 10);
+                                render_char_8bit(font_data, screen_buf, 'C' - 'A', slot_x + 46, slot_y + 4, 10);
+                                render_char_8bit(font_data, screen_buf, 'E' - 'A', slot_x + 62, slot_y + 4, 10);
+                                render_char_8bit(font_data, screen_buf, 'N' - 'A', slot_x + 78, slot_y + 4, 10);
+                                render_char_8bit(font_data, screen_buf, 'E' - 'A', slot_x + 94, slot_y + 4, 10);
                             }
-                        }
-                        
-                        /* 绘制场景编号数字 */
-                        int scene_num = slot_scene_idx;
-                        if (font_data && scene_num >= 0 && scene_num <= 9) {
-                            u8* char_data = font_data + 32 * scene_num;
-                            int px = slot_x + 30 + 6 * 16;
-                            for (int row = 0; row < 16; row++) {
-                                u16 bits = *(u16*)(char_data + row * 2);
-                                bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
-                                for (int bit = 0; bit < 16; bit++) {
-                                    if (bits & (0x8000 >> bit)) {
-                                        int offset = (slot_y + 4 + row) * 320 + (px + bit);
-                                        if (offset < 64000) screen_buf[offset] = 10;
-                                    }
-                                }
-                            }
+                            /* 场景编号 */
+                            if (slot_scene_idx >= 0 && slot_scene_idx <= 9)
+                                render_char_8bit(font_data, screen_buf, slot_scene_idx, slot_x + 30 + 6 * CHAR_W, slot_y + 4, 10);
                         }
                     }
                 }
                 
-                /* 绘制底部提示 */
+                /* 底部提示 */
                 if (font_data) {
                     const char* prompt = "SELECT SLOT  UP/DN  ENTER=OK  ESC=CANCEL";
                     int prompt_len = (int)strlen(prompt);
-                    int prompt_x = (320 - prompt_len * 16) / 2;
+                    int prompt_x = (320 - prompt_len * CHAR_W) / 2;
                     if (prompt_x < 0) prompt_x = 10;
                     for (int ci = 0; ci < prompt_len; ci++) {
                         char c = prompt[ci];
-                        int char_idx = -1;
-                        if (c >= 'A' && c <= 'Z') char_idx = c - 'A';
-                        else if (c == ' ') char_idx = -2;
-                        else if (c == '/') char_idx = -2;
-                        else if (c == '=') char_idx = -2;
-                        
-                        if (char_idx >= 0 && char_idx < 26) {
-                            u8* char_data = font_data + 32 * char_idx;
-                            int px = prompt_x + ci * 16;
-                            int py = 180;
-                            for (int row = 0; row < 16; row++) {
-                                u16 bits = *(u16*)(char_data + row * 2);
-                                bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
-                                for (int bit = 0; bit < 16; bit++) {
-                                    if (bits & (0x8000 >> bit)) {
-                                        int offset = (py + row) * 320 + (px + bit);
-                                        if (offset < 64000) screen_buf[offset] = 14;
-                                    }
-                                }
-                            }
-                        }
+                        if (c >= 'A' && c <= 'Z')
+                            render_char_8bit(font_data, screen_buf, c - 'A', prompt_x + ci * CHAR_W, 180, 14);
                     }
                 }
                 
@@ -949,6 +971,7 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             /* 清理资源 */
             if (screen_buf) free(screen_buf);
             if (fdother_6) free(fdother_6);
+            if (fdtxt_full) free(fdtxt_full);
             
             selected_slot = load_result;
             printf("[STATE_MACHINE] User selected slot %d\n", selected_slot);
