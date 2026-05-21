@@ -94,33 +94,6 @@ static int current_frame = 0;
 static uint32_t frame_timer = 0;
 static bool portrait_loaded = false;
 
-/* 角色ID到DATO索引的映射表 (根据游戏数据提取) */
-static const struct {
-    int char_id;
-    int dato_index;
-} char_to_dato[] = {
-    {1, 0},   {2, 1},   {3, 2},   {4, 3},   {5, 4},   {6, 5},
-    {7, 6},   {8, 7},   {9, 8},   {10, 9},  {11, 10}, {12, 11},
-    {13, 12}, {14, 13}, {15, 14}, {16, 15}, {17, 16}, {18, 17},
-    {19, 18}, {20, 19}, {21, 20}, {22, 21}, {23, 22}, {24, 23},
-    {25, 24}, {26, 25}, {27, 26}, {28, 27}, {29, 28}, {30, 29},
-    {31, 30}, {32, 31}, {33, 32}, {34, 33}, {35, 34}, {36, 35},
-    {37, 36}, {38, 37}, {39, 38}, {40, 39}, {41, 40}, {42, 41},
-    {43, 42}, {44, 43}, {45, 44}, {46, 45}, {47, 46}, {48, 47},
-    {49, 48}, {50, 49}, {51, 50}, {52, 51}, {53, 52}, {54, 53},
-    {55, 54}, {56, 55}, {57, 56}, {58, 57}, {59, 58}, {60, 59},
-};
-#define CHAR_TO_DATO_COUNT (sizeof(char_to_dato) / sizeof(char_to_dato[0]))
-
-static int char_id_to_dato_index(int char_id) {
-    for (int i = 0; i < CHAR_TO_DATO_COUNT; i++) {
-        if (char_to_dato[i].char_id == char_id) {
-            return char_to_dato[i].dato_index;
-        }
-    }
-    return char_id;
-}
-
 static SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
 static SDL_Texture* texture = NULL;
@@ -351,6 +324,57 @@ static uint8_t* load_dat_resource(uint8_t* dat, size_t dat_size, int index, int*
     return buf;
 }
 
+/* 角色数据库条目（每项80字节）- 从汇编代码dword_53A45还原 */
+typedef struct {
+    uint8_t name[8];    /* 偏移 0-7: 角色名称 */
+    uint8_t id;          /* 偏移 8: 角色ID */
+    uint8_t dato_idx;    /* 偏移 7: DATO头像索引 */
+    /* 其他字段... */
+} char_db_entry_t;
+
+/* 从角色数据库获取DATO头像索引 */
+static int get_dato_idx_from_char_id(int char_id) {
+    if (!dato_data) return -1;
+    
+    /* 加载角色数据库 */
+    int db_size = 0;
+    uint8_t* db = load_dat_resource(dato_data, dato_file_size, 0, &db_size);
+    if (!db) return -1;
+    
+    int entry_count = db_size / 80;
+    int dato_idx = -1;
+    
+    /* 在角色数据库中查找匹配的ID */
+    for (int i = 0; i < entry_count; i++) {
+        if (db[i * 80 + 8] == (uint8_t)char_id) {
+            dato_idx = db[i * 80 + 7];
+            break;
+        }
+    }
+    
+    free(db);
+    return dato_idx;
+}
+
+/* 直接从角色数据库获取DATO索引（TEXT_CHAR_F/S使用）*/
+static int get_dato_idx_from_char_db_index(int char_db_index) {
+    if (!dato_data) return -1;
+    
+    int db_size = 0;
+    uint8_t* db = load_dat_resource(dato_data, dato_file_size, 0, &db_size);
+    if (!db) return -1;
+    
+    int entry_count = db_size / 80;
+    int dato_idx = -1;
+    
+    if (char_db_index >= 0 && char_db_index < entry_count) {
+        dato_idx = db[char_db_index * 80 + 7];
+    }
+    
+    free(db);
+    return dato_idx;
+}
+
 /* ============================================================
  * 字体渲染 (1:1还原sub_4ED7A)
  * ============================================================ */
@@ -441,7 +465,7 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
             invalid_count = 0;
         }
         
-        /* TEXT_NEWLINE */
+        /* TEXT_NEWLINE (-2) */
         if (word == TEXT_NEWLINE) {
             state->ptr++;
             state->x = start_x;
@@ -450,104 +474,114 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
             continue;
         }
         
-        /* TEXT_NEWLINE2 */
-        if (word != TEXT_NEWLINE2) {
-            goto CHECK_RECURSE1;
-        }
-        
-        state->ptr++;
-        state->x = start_x;
-        state->y += CHAR_HEIGHT;
-        state->line_count++;
-        
-        if (wait_for_key) {
-            SDL_Event ev;
-            bool waiting = true;
-            while (waiting) {
-                while (SDL_PollEvent(&ev)) {
-                    if (ev.type == SDL_KEYDOWN || ev.type == SDL_QUIT) {
-                        waiting = false;
-                        break;
+        /* TEXT_NEWLINE2 (-3) */
+        if (word == TEXT_NEWLINE2) {
+            state->ptr++;
+            state->x = start_x;
+            state->y += CHAR_HEIGHT;
+            state->line_count++;
+            
+            if (wait_for_key) {
+                SDL_Event ev;
+                bool waiting = true;
+                while (waiting) {
+                    while (SDL_PollEvent(&ev)) {
+                        if (ev.type == SDL_KEYDOWN || ev.type == SDL_QUIT) {
+                            waiting = false;
+                            break;
+                        }
                     }
+                    SDL_Delay(16);
                 }
-                SDL_Delay(16);
             }
+            continue;
         }
-        continue;
         
-    CHECK_RECURSE1:
+        /* TEXT_RECURSE1 (-4) */
         if (word == TEXT_RECURSE1) {
             state->ptr++;
             continue;
         }
         
+        /* TEXT_RECURSE2 (-5) */
         if (word == TEXT_RECURSE2) {
             state->ptr++;
             continue;
         }
         
-        if (word != TEXT_SHOW_NUM) {
-            goto CHECK_PORTRAIT_F;
+        /* TEXT_SHOW_NUM (-6) */
+        if (word == TEXT_SHOW_NUM) {
+            state->ptr++;
+            render_char(0, state->x, state->y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
+            state->x += CHAR_WIDTH;
+            continue;
         }
         
-        state->ptr++;
-        render_char(0, state->x, state->y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
-        state->x += CHAR_WIDTH;
-        continue;
-        
-    CHECK_PORTRAIT_F:
+        /* TEXT_PORTRAIT_F (-17) */
         if (word == TEXT_PORTRAIT_F) {
             state->ptr++;
             int16_t pid = *state->ptr++;
-            int dato_idx = char_id_to_dato_index(pid);
-            if (load_portrait(dato_idx) == 0) {
-                state->x = TEXT_START_X;
-                state->y = TEXT_START_Y;
-                state->line_count = 0;
+            int dato_idx = get_dato_idx_from_char_id(pid);
+            if (dato_idx >= 0) {
+                if (load_portrait(dato_idx) == 0) {
+                    state->x = TEXT_START_X;
+                    state->y = TEXT_START_Y;
+                    state->line_count = 0;
+                }
             }
-            state->state = TEXT_CONTINUE;
+            /* 游戏原版: goto LABEL_42 -> v11 += 2 -> 跳回主循环继续 */
             continue;
         }
         
+        /* TEXT_PORTRAIT_S (-18) */
         if (word == TEXT_PORTRAIT_S) {
             state->ptr++;
             int16_t pid = *state->ptr++;
-            int dato_idx = char_id_to_dato_index(pid);
-            if (load_portrait(dato_idx) == 0) {
-                state->x = TEXT_START_X;
-                state->y = TEXT_START_Y;
-                state->line_count = 0;
+            int dato_idx = get_dato_idx_from_char_id(pid);
+            if (dato_idx >= 0) {
+                if (load_portrait(dato_idx) == 0) {
+                    state->x = TEXT_START_X;
+                    state->y = TEXT_START_Y;
+                    state->line_count = 0;
+                }
             }
-            state->state = TEXT_CONTINUE;
+            /* 游戏原版: goto LABEL_42 -> v11 += 2 -> 跳回主循环继续 */
             continue;
         }
         
+        /* TEXT_CHAR_F (-19) */
         if (word == TEXT_CHAR_F) {
             state->ptr++;
             int16_t cid = *state->ptr++;
-            int dato_idx = char_id_to_dato_index(cid);
-            if (load_portrait(dato_idx) == 0) {
-                state->x = TEXT_START_X;
-                state->y = TEXT_START_Y;
-                state->line_count = 0;
+            int dato_idx = get_dato_idx_from_char_db_index(cid);
+            if (dato_idx >= 0) {
+                if (load_portrait(dato_idx) == 0) {
+                    state->x = TEXT_START_X;
+                    state->y = TEXT_START_Y;
+                    state->line_count = 0;
+                }
             }
-            state->state = TEXT_CONTINUE;
+            /* 游戏原版: goto LABEL_33 -> 设置后 goto LABEL_42 -> v11 += 2 -> 继续循环 */
             continue;
         }
         
+        /* TEXT_CHAR_S (-20) */
         if (word == TEXT_CHAR_S) {
             state->ptr++;
             int16_t cid = *state->ptr++;
-            int dato_idx = char_id_to_dato_index(cid);
-            if (load_portrait(dato_idx) == 0) {
-                state->x = TEXT_START_X;
-                state->y = TEXT_START_Y;
-                state->line_count = 0;
+            int dato_idx = get_dato_idx_from_char_db_index(cid);
+            if (dato_idx >= 0) {
+                if (load_portrait(dato_idx) == 0) {
+                    state->x = TEXT_START_X;
+                    state->y = TEXT_START_Y;
+                    state->line_count = 0;
+                }
             }
-            state->state = TEXT_CONTINUE;
+            /* 游戏原版: goto LABEL_41 -> 设置后 goto LABEL_42 -> v11 += 2 -> 继续循环 */
             continue;
         }
         
+        /* 默认：渲染字符 */
         if (word >= 0 && word < FONT_MAX_CHARS) {
             if (state->x > TEXT_WRAP_X) {
                 state->x = start_x;
@@ -582,45 +616,40 @@ static int16_t* get_sub_text(int res_idx, int sub_idx, int16_t** out_end)
     int16_t sc;
     memcpy(&sc, rd, 2);
     
-    /* 计算实际有效子项数量：只计算递增且在范围内的偏移 */
     int16_t* offs = (int16_t*)(rd + 2);
-    int valid_sc = 0;
-    for (int i = 0; i < sc && i < (int)(rsz / 2); i++) {
-        int16_t off = offs[i];
-        if (off >= 0 && off < (int)rsz) {
-            if (i == 0 || off > offs[i-1]) {
-                valid_sc = i + 1;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
     
-    if (sub_idx < 0 || sub_idx >= valid_sc) return NULL;
+    if (sub_idx < 0 || sub_idx >= sc) return NULL;
+    
+    /* 获取当前子项的字节偏移（直接是字节偏移，不是word索引）*/
+    int32_t byte_offset = offs[sub_idx];
+    if (byte_offset < 0 || byte_offset >= (int32_t)rsz) return NULL;
+    
+    int16_t* text_start = (int16_t*)(rd + byte_offset);
     
     if (out_end) {
-        /* 搜索 TEXT_END (-1) 标记来确定结束位置 */
-        int start_word = offs[sub_idx] / 2;
-        int max_words = (int)(rsz / 2) - start_word;
-        int16_t* text_data = (int16_t*)rd;
-        for (int i = 0; i < max_words; i++) {
-            if (text_data[start_word + i] == -1) {
-                *out_end = (int16_t*)(rd + (start_word + i + 1) * 2);
+        /* 计算text_end：从当前子项开始搜索TEXT_END(-1)标记 */
+        int16_t* p = text_start;
+        int16_t* max_p = (int16_t*)(rd + rsz);
+        
+        while (p < max_p) {
+            if (*p == -1) {
+                /* 游戏原版: TEXT_END不消耗，返回指针仍然指向TEXT_END */
+                *out_end = p;
                 goto done;
             }
+            p++;
         }
-        /* 没找到TEXT_END，使用下一个偏移或资源结尾 */
-        if (sub_idx + 1 < valid_sc) {
+        
+        /* 没找到TEXT_END，使用下一个子项的偏移或资源结尾 */
+        if (sub_idx + 1 < sc && offs[sub_idx + 1] >= 0 && offs[sub_idx + 1] < (int32_t)rsz) {
             *out_end = (int16_t*)(rd + offs[sub_idx + 1]);
         } else {
-            *out_end = (int16_t*)(rd + rsz);
+            *out_end = max_p;
         }
     done:;
     }
     
-    return (int16_t*)(rd + offs[sub_idx]);
+    return text_start;
 }
 
 static int get_sub_count(int res_idx)
@@ -638,23 +667,7 @@ static int get_sub_count(int res_idx)
     int16_t sc;
     memcpy(&sc, rd, 2);
     
-    /* 计算实际有效子项数量 */
-    int16_t* offs = (int16_t*)(rd + 2);
-    int valid_sc = 0;
-    for (int i = 0; i < sc && i < (int)(rsz / 2); i++) {
-        int16_t off = offs[i];
-        if (off >= 0 && off < (int)rsz) {
-            if (i == 0 || off > offs[i-1]) {
-                valid_sc = i + 1;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    
-    return valid_sc;
+    return sc;
 }
 
 /* ============================================================
