@@ -430,11 +430,8 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
             return;
         }
         
-        if (word != TEXT_NEWLINE && word != TEXT_NEWLINE2 && 
-            word != TEXT_RECURSE1 && word != TEXT_RECURSE2 && 
-            word != TEXT_SHOW_NUM && word != TEXT_PORTRAIT_F && 
-            word != TEXT_PORTRAIT_S && word != TEXT_CHAR_F && 
-            word != TEXT_CHAR_S) {
+        /* 只有超出合理范围的负数才是无效的 */
+        if (word < -20 && word > -1) {
             invalid_count++;
             if (invalid_count > 50) {
                 state->state = TEXT_DONE;
@@ -589,10 +586,22 @@ static int16_t* get_sub_text(int res_idx, int sub_idx, int16_t** out_end)
     int16_t* offs = (int16_t*)(rd + 2);
     
     if (out_end) {
-        if (sub_idx + 1 < sc) {
+        /* 先尝试使用下一个偏移 */
+        if (sub_idx + 1 < sc && offs[sub_idx + 1] > offs[sub_idx] && offs[sub_idx + 1] < (int)rsz) {
             *out_end = (int16_t*)(rd + offs[sub_idx + 1]);
         } else {
+            /* 搜索 TEXT_END (-1) 标记 */
+            int start_word = offs[sub_idx] / 2;
+            int max_words = (int)(rsz / 2) - start_word;
+            int16_t* text_data = (int16_t*)rd;
+            for (int i = 0; i < max_words; i++) {
+                if (text_data[start_word + i] == -1) {
+                    *out_end = (int16_t*)(rd + (start_word + i + 1) * 2);
+                    goto done;
+                }
+            }
             *out_end = (int16_t*)(rd + rsz);
+        done:;
         }
     }
     
