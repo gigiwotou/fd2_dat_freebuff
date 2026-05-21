@@ -581,28 +581,43 @@ static int16_t* get_sub_text(int res_idx, int sub_idx, int16_t** out_end)
     
     int16_t sc;
     memcpy(&sc, rd, 2);
-    if (sub_idx < 0 || sub_idx >= sc) return NULL;
     
+    /* 计算实际有效子项数量：只计算递增且在范围内的偏移 */
     int16_t* offs = (int16_t*)(rd + 2);
+    int valid_sc = 0;
+    for (int i = 0; i < sc && i < (int)(rsz / 2); i++) {
+        int16_t off = offs[i];
+        if (off >= 0 && off < (int)rsz) {
+            if (i == 0 || off > offs[i-1]) {
+                valid_sc = i + 1;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    if (sub_idx < 0 || sub_idx >= valid_sc) return NULL;
     
     if (out_end) {
-        /* 先尝试使用下一个偏移 */
-        if (sub_idx + 1 < sc && offs[sub_idx + 1] > offs[sub_idx] && offs[sub_idx + 1] < (int)rsz) {
+        /* 搜索 TEXT_END (-1) 标记来确定结束位置 */
+        int start_word = offs[sub_idx] / 2;
+        int max_words = (int)(rsz / 2) - start_word;
+        int16_t* text_data = (int16_t*)rd;
+        for (int i = 0; i < max_words; i++) {
+            if (text_data[start_word + i] == -1) {
+                *out_end = (int16_t*)(rd + (start_word + i + 1) * 2);
+                goto done;
+            }
+        }
+        /* 没找到TEXT_END，使用下一个偏移或资源结尾 */
+        if (sub_idx + 1 < valid_sc) {
             *out_end = (int16_t*)(rd + offs[sub_idx + 1]);
         } else {
-            /* 搜索 TEXT_END (-1) 标记 */
-            int start_word = offs[sub_idx] / 2;
-            int max_words = (int)(rsz / 2) - start_word;
-            int16_t* text_data = (int16_t*)rd;
-            for (int i = 0; i < max_words; i++) {
-                if (text_data[start_word + i] == -1) {
-                    *out_end = (int16_t*)(rd + (start_word + i + 1) * 2);
-                    goto done;
-                }
-            }
             *out_end = (int16_t*)(rd + rsz);
-        done:;
         }
+    done:;
     }
     
     return (int16_t*)(rd + offs[sub_idx]);
@@ -612,9 +627,34 @@ static int get_sub_count(int res_idx)
 {
     uint32_t rs = fdtxt_offsets[res_idx];
     if (rs >= fdtxt_file_size) return 0;
-    int16_t c;
-    memcpy(&c, fdtxt_data + rs, 2);
-    return (c > 0) ? c : 0;
+    
+    uint8_t* rd = fdtxt_data + rs;
+    size_t rsz;
+    uint32_t re = (res_idx + 1 < fdtxt_count && fdtxt_offsets[res_idx + 1] < fdtxt_file_size)
+                  ? fdtxt_offsets[res_idx + 1] : fdtxt_file_size;
+    rsz = re - rs;
+    if (rsz < 2) return 0;
+    
+    int16_t sc;
+    memcpy(&sc, rd, 2);
+    
+    /* 计算实际有效子项数量 */
+    int16_t* offs = (int16_t*)(rd + 2);
+    int valid_sc = 0;
+    for (int i = 0; i < sc && i < (int)(rsz / 2); i++) {
+        int16_t off = offs[i];
+        if (off >= 0 && off < (int)rsz) {
+            if (i == 0 || off > offs[i-1]) {
+                valid_sc = i + 1;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    return valid_sc;
 }
 
 /* ============================================================
