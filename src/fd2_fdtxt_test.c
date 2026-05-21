@@ -1,7 +1,7 @@
 /*
  * FDTXT.DAT 文本渲染测试 - 完整游戏对话逻辑版本
  * 
- * 1:1还原游戏对话框绘制和控制逻辑
+ * 1:1还原游戏双对话框绘制和控制逻辑
  * 基于sub_15F84和sub_4ED7A函数
  * 
  * 编译: build.bat fdtxttest
@@ -41,24 +41,42 @@
 #define FDTXT_DAT_PATH "game/FDTXT.DAT"
 #define DATO_DAT_PATH "game/DATO.DAT"
 
-/* 对话框常量 */
+/* 对话框常量 - 根据汇编代码0x165AC还原 */
 #define DIALOG_X          8
-#define DIALOG_Y          8
 #define DIALOG_W          304
-#define DIALOG_H          128
+#define DIALOG_H          64
 #define DIALOG_BG_COLOR   0xFF0C0C0C
 #define DIALOG_BORDER_COLOR 0xFF808080
 #define DIALOG_TEXT_FG    0xFFFFFFFF
 #define DIALOG_TEXT_BG    0xFF0C0C0C
 
-#define PORTRAIT_X        (DIALOG_X + 8)
-#define PORTRAIT_Y        (DIALOG_Y + 8)
+/* 下方对话框 (角色F) */
+#define DIALOG_F_Y        64
+#define DIALOG_F_X        DIALOG_X
+#define TEXT_F_START_X    (DIALOG_F_X + 8 + 64 + 8)  /* 头像右边 */
+#define TEXT_F_START_Y    (DIALOG_F_Y + 8)
+
+/* 上方对话框 (角色S) */
+#define DIALOG_S_Y        8
+#define DIALOG_S_X        DIALOG_X
+#define TEXT_S_START_X    (DIALOG_S_X + 8 + 64 + 8)  /* 头像右边 */
+#define TEXT_S_START_Y    (DIALOG_S_Y + 8)
+
+#define PORTRAIT_F_X      (DIALOG_F_X + 8)
+#define PORTRAIT_F_Y      (DIALOG_F_Y + 8)
+#define PORTRAIT_S_X      (DIALOG_S_X + 8)
+#define PORTRAIT_S_Y      (DIALOG_S_Y + 8)
 #define PORTRAIT_W        64
-#define PORTRAIT_H        64
-#define TEXT_START_X      (PORTRAIT_X + PORTRAIT_W + 8)
-#define TEXT_START_Y      (DIALOG_Y + 12)
+#define PORTRAIT_H        48
+
 #define TEXT_WRAP_X       (DIALOG_X + DIALOG_W - CHAR_WIDTH - 4)
-#define TEXT_MAX_LINES    5
+#define TEXT_MAX_LINES    3
+
+/* 对话框类型 (1:1还原n1832) */
+typedef enum {
+    DIALOG_TYPE_F = 1832,   /* 下方对话框 (0x728) */
+    DIALOG_TYPE_S = 36887   /* 上方对话框 (0x9017) */
+} dialog_type_t;
 
 /* 文本状态 (1:1还原sub_15F84) */
 typedef enum {
@@ -69,10 +87,12 @@ typedef enum {
 } text_state_t;
 
 typedef struct {
-    int16_t* ptr;      /* 当前文本指针 */
-    int x, y;          /* 当前渲染位置 */
-    int line_count;    /* 当前行数 */
-    text_state_t state; /* 当前状态 */
+    int16_t* ptr;           /* 当前文本指针 */
+    int x, y;               /* 当前渲染位置 */
+    int line_count;         /* 当前行数 */
+    text_state_t state;     /* 当前状态 */
+    dialog_type_t dialog_type; /* 当前对话框类型 (n1832) */
+    int n658255;            /* 当前Y坐标基准 (658255或693535) */
 } text_state_t_struct;
 
 /* 全局变量 */
@@ -227,16 +247,25 @@ static void update_portrait_frame(uint32_t delta_ms)
 /* ============================================================
  * 渲染头像到对话框内 (带缩放)
  * ============================================================ */
-static void render_portrait(void)
+static void render_portrait(int dialog_type)
 {
     if (!portrait_loaded || !portrait_frames[current_frame]) return;
     
     uint8_t* frame = portrait_frames[current_frame];
     
+    int px_start, py_start;
+    if (dialog_type == DIALOG_TYPE_F) {
+        px_start = PORTRAIT_F_X;
+        py_start = PORTRAIT_F_Y;
+    } else {
+        px_start = PORTRAIT_S_X;
+        py_start = PORTRAIT_S_Y;
+    }
+    
     for (int y = 0; y < PORTRAIT_H; y++) {
         for (int x = 0; x < PORTRAIT_W; x++) {
-            int px = PORTRAIT_X + x;
-            int py = PORTRAIT_Y + y;
+            int px = px_start + x;
+            int py = py_start + y;
             if (px < 0 || px >= SCREEN_WIDTH || py < 0 || py >= SCREEN_HEIGHT) continue;
             
             int src_x = x * portrait_width / PORTRAIT_W;
@@ -255,10 +284,19 @@ static void render_portrait(void)
 /* ============================================================
  * 绘制对话框 (背景+边框)
  * ============================================================ */
-static void draw_dialog_box(void)
+static void draw_dialog_box(int dialog_type)
 {
+    int dy, dh;
+    if (dialog_type == DIALOG_TYPE_F) {
+        dy = DIALOG_F_Y;
+        dh = DIALOG_H;
+    } else {
+        dy = DIALOG_S_Y;
+        dh = DIALOG_H;
+    }
+    
     /* 背景填充 */
-    for (int y = DIALOG_Y; y < DIALOG_Y + DIALOG_H; y++) {
+    for (int y = dy; y < dy + dh; y++) {
         for (int x = DIALOG_X; x < DIALOG_X + DIALOG_W; x++) {
             screen_buffer[y * SCREEN_WIDTH + x] = DIALOG_BG_COLOR;
         }
@@ -266,17 +304,17 @@ static void draw_dialog_box(void)
     
     /* 外边框 (亮色) */
     for (int x = DIALOG_X; x < DIALOG_X + DIALOG_W; x++) {
-        screen_buffer[DIALOG_Y * SCREEN_WIDTH + x] = DIALOG_BORDER_COLOR;
-        screen_buffer[(DIALOG_Y + DIALOG_H - 1) * SCREEN_WIDTH + x] = DIALOG_BORDER_COLOR;
+        screen_buffer[dy * SCREEN_WIDTH + x] = DIALOG_BORDER_COLOR;
+        screen_buffer[(dy + dh - 1) * SCREEN_WIDTH + x] = DIALOG_BORDER_COLOR;
     }
-    for (int y = DIALOG_Y; y < DIALOG_Y + DIALOG_H; y++) {
+    for (int y = dy; y < dy + dh; y++) {
         screen_buffer[y * SCREEN_WIDTH + DIALOG_X] = DIALOG_BORDER_COLOR;
         screen_buffer[y * SCREEN_WIDTH + DIALOG_X + DIALOG_W - 1] = DIALOG_BORDER_COLOR;
     }
     
     /* 内边框 (暗色) */
-    int ix = DIALOG_X + 1, iy = DIALOG_Y + 1;
-    int iw = DIALOG_W - 2, ih = DIALOG_H - 2;
+    int ix = DIALOG_X + 1, iy = dy + 1;
+    int iw = DIALOG_W - 2, ih = dh - 2;
     uint32_t inner_color = 0xFF404040;
     for (int x = ix; x < ix + iw; x++) {
         screen_buffer[iy * SCREEN_WIDTH + x] = inner_color;
@@ -401,6 +439,31 @@ static void render_char(int16_t word, int x, int y, uint32_t fg, uint32_t bg, bo
     }
 }
 
+/* 切换对话框类型 (1:1还原sub_15F84)
+ * 
+ * 根据汇编代码:
+ * - TEXT_PORTRAIT_F(-17) / TEXT_CHAR_F(-19): 设置 n1832=1832, n658255=658255
+ * - TEXT_PORTRAIT_S(-18) / TEXT_CHAR_S(-20): 设置 n1832=36887, n658255=693535
+ * - 重置: x, y, line_count, n3=0
+ */
+static void switch_dialog_type(text_state_t_struct* state, dialog_type_t new_type)
+{
+    if (state->dialog_type != new_type) {
+        state->dialog_type = new_type;
+        state->n658255 = (new_type == DIALOG_TYPE_F) ? 658255 : 693535;
+        state->line_count = 0;
+        
+        /* 根据对话框类型设置起始位置 */
+        if (new_type == DIALOG_TYPE_F) {
+            state->x = TEXT_F_START_X;
+            state->y = TEXT_F_START_Y;
+        } else {
+            state->x = TEXT_S_START_X;
+            state->y = TEXT_S_START_Y;
+        }
+    }
+}
+
 /* 文本渲染 (1:1还原sub_15F84核心循环)
  * 
  * 游戏逻辑 (按汇编顺序):
@@ -410,10 +473,10 @@ static void render_char(int16_t word, int x, int y, uint32_t fg, uint32_t bg, bo
  * - TEXT_RECURSE1(-4): 递归调用sub_15F84 (L107-L110)
  * - TEXT_RECURSE2(-5): 递归调用sub_15F84 (L112-L115)
  * - TEXT_SHOW_NUM(-6): 显示数字 (L119-L131)
- * - TEXT_PORTRAIT_F(-17): 加载头像 (L135-L166)
- * - TEXT_PORTRAIT_S(-18): 加载头像 (L167-L194)
- * - TEXT_CHAR_F(-19): 加载角色 (L195-L211)
- * - TEXT_CHAR_S(-20): 加载角色 (L212-L228)
+ * - TEXT_PORTRAIT_F(-17): 加载头像, 切换对话框F (L135-L166)
+ * - TEXT_PORTRAIT_S(-18): 加载头像, 切换对话框S (L167-L194)
+ * - TEXT_CHAR_F(-19): 加载角色, 切换对话框F (L195-L211)
+ * - TEXT_CHAR_S(-20): 加载角色, 切换对话框S (L212-L228)
  * - 默认: sub_4ED7A渲染字符, n658255_1+=16, if(sub_10620())arg20=0, if(arg20)sub_164E8() (L229-L235)
  * 
  * 注意：sub_16C57(1)在函数内部阻塞等待按键，不return到主循环
@@ -423,8 +486,6 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
     if (!state->ptr || !text_end) return;
     
     (void)start_y;
-    
-    int invalid_count = 0;
     
     /* 1:1还原sub_15F84主循环 */
     while (1) {
@@ -454,21 +515,16 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
             return;
         }
         
-        /* 只有超出合理范围的负数才是无效的 */
-        if (word < -20 && word > -1) {
-            invalid_count++;
-            if (invalid_count > 50) {
-                state->state = TEXT_DONE;
-                return;
-            }
-        } else {
-            invalid_count = 0;
-        }
-        
         /* TEXT_NEWLINE (-2) */
         if (word == TEXT_NEWLINE) {
             state->ptr++;
-            state->x = start_x;
+            
+            /* 根据当前对话框类型重置X位置 */
+            if (state->dialog_type == DIALOG_TYPE_F) {
+                state->x = TEXT_F_START_X;
+            } else {
+                state->x = TEXT_S_START_X;
+            }
             state->y += CHAR_HEIGHT;
             state->line_count++;
             continue;
@@ -477,7 +533,13 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         /* TEXT_NEWLINE2 (-3) */
         if (word == TEXT_NEWLINE2) {
             state->ptr++;
-            state->x = start_x;
+            
+            /* 根据当前对话框类型重置X位置 */
+            if (state->dialog_type == DIALOG_TYPE_F) {
+                state->x = TEXT_F_START_X;
+            } else {
+                state->x = TEXT_S_START_X;
+            }
             state->y += CHAR_HEIGHT;
             state->line_count++;
             
@@ -521,15 +583,14 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         if (word == TEXT_PORTRAIT_F) {
             state->ptr++;
             int16_t pid = *state->ptr++;
+            
+            /* 切换到下方对话框 */
+            switch_dialog_type(state, DIALOG_TYPE_F);
+            
             int dato_idx = get_dato_idx_from_char_id(pid);
             if (dato_idx >= 0) {
-                if (load_portrait(dato_idx) == 0) {
-                    state->x = TEXT_START_X;
-                    state->y = TEXT_START_Y;
-                    state->line_count = 0;
-                }
+                load_portrait(dato_idx);
             }
-            /* 游戏原版: goto LABEL_42 -> v11 += 2 -> 跳回主循环继续 */
             continue;
         }
         
@@ -537,15 +598,14 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         if (word == TEXT_PORTRAIT_S) {
             state->ptr++;
             int16_t pid = *state->ptr++;
+            
+            /* 切换到上方对话框 */
+            switch_dialog_type(state, DIALOG_TYPE_S);
+            
             int dato_idx = get_dato_idx_from_char_id(pid);
             if (dato_idx >= 0) {
-                if (load_portrait(dato_idx) == 0) {
-                    state->x = TEXT_START_X;
-                    state->y = TEXT_START_Y;
-                    state->line_count = 0;
-                }
+                load_portrait(dato_idx);
             }
-            /* 游戏原版: goto LABEL_42 -> v11 += 2 -> 跳回主循环继续 */
             continue;
         }
         
@@ -553,15 +613,14 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         if (word == TEXT_CHAR_F) {
             state->ptr++;
             int16_t cid = *state->ptr++;
+            
+            /* 切换到下方对话框 */
+            switch_dialog_type(state, DIALOG_TYPE_F);
+            
             int dato_idx = get_dato_idx_from_char_db_index(cid);
             if (dato_idx >= 0) {
-                if (load_portrait(dato_idx) == 0) {
-                    state->x = TEXT_START_X;
-                    state->y = TEXT_START_Y;
-                    state->line_count = 0;
-                }
+                load_portrait(dato_idx);
             }
-            /* 游戏原版: goto LABEL_33 -> 设置后 goto LABEL_42 -> v11 += 2 -> 继续循环 */
             continue;
         }
         
@@ -569,27 +628,30 @@ static void render_text_item(text_state_t_struct* state, int start_x, int start_
         if (word == TEXT_CHAR_S) {
             state->ptr++;
             int16_t cid = *state->ptr++;
+            
+            /* 切换到上方对话框 */
+            switch_dialog_type(state, DIALOG_TYPE_S);
+            
             int dato_idx = get_dato_idx_from_char_db_index(cid);
             if (dato_idx >= 0) {
-                if (load_portrait(dato_idx) == 0) {
-                    state->x = TEXT_START_X;
-                    state->y = TEXT_START_Y;
-                    state->line_count = 0;
-                }
+                load_portrait(dato_idx);
             }
-            /* 游戏原版: goto LABEL_41 -> 设置后 goto LABEL_42 -> v11 += 2 -> 继续循环 */
             continue;
         }
         
         /* 默认：渲染字符 */
         if (word >= 0 && word < FONT_MAX_CHARS) {
+            /* 根据当前对话框类型获取起始X和换行X */
+            int current_start_x = (state->dialog_type == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+            int current_dialog_y = (state->dialog_type == DIALOG_TYPE_F) ? DIALOG_F_Y : DIALOG_S_Y;
+            
             if (state->x > TEXT_WRAP_X) {
-                state->x = start_x;
+                state->x = current_start_x;
                 state->y += CHAR_HEIGHT;
                 state->line_count++;
             }
             
-            if (state->y >= DIALOG_Y && state->y < DIALOG_Y + DIALOG_H) {
+            if (state->y >= current_dialog_y && state->y < current_dialog_y + DIALOG_H) {
                 render_char(word, state->x, state->y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
             }
             state->x += CHAR_WIDTH;
@@ -715,7 +777,7 @@ int main(int argc, char* argv[])
 {
     (void)argc; (void)argv;
     
-    printf("=== FDTXT 对话框测试 (完整游戏逻辑) ===\n\n");
+    printf("=== FDTXT 对话框测试 (双对话框系统) ===\n\n");
     
     /* 加载字体 */
     printf("1. 加载字体...\n");
@@ -768,10 +830,12 @@ int main(int argc, char* argv[])
     /* 文本状态机 (1:1还原sub_15F84) */
     text_state_t_struct text_state;
     text_state.ptr = NULL;
-    text_state.x = TEXT_START_X;
-    text_state.y = TEXT_START_Y;
+    text_state.x = TEXT_F_START_X;
+    text_state.y = TEXT_F_START_Y;
     text_state.line_count = 0;
     text_state.state = TEXT_CONTINUE;
+    text_state.dialog_type = DIALOG_TYPE_F;  /* 默认下方对话框 */
+    text_state.n658255 = 658255;
     
     printf("控制:\n");
     printf("  上/下: 切换资源集 (0-%d)\n", fdtxt_count - 1);
@@ -852,13 +916,20 @@ int main(int argc, char* argv[])
         /* 渲染 */
         if (need_render) {
             clear_screen();
-            draw_dialog_box();
-            render_portrait();
+            
+            /* 绘制双对话框 */
+            draw_dialog_box(DIALOG_TYPE_F);
+            draw_dialog_box(DIALOG_TYPE_S);
+            
+            /* 渲染当前对话框的头像 */
+            render_portrait(text_state.dialog_type);
             
             /* 初始化文本状态 */
             if (!text_initialized) {
-                text_state.x = TEXT_START_X;
-                text_state.y = TEXT_START_Y;
+                text_state.dialog_type = DIALOG_TYPE_F;
+                text_state.n658255 = 658255;
+                text_state.x = TEXT_F_START_X;
+                text_state.y = TEXT_F_START_Y;
                 text_state.line_count = 0;
                 text_state.state = TEXT_CONTINUE;
                 
@@ -874,13 +945,15 @@ int main(int argc, char* argv[])
             if (text_state.ptr && text_state.state != TEXT_DONE) {
                 int16_t* txt_end = NULL;
                 get_sub_text(cur_res, cur_sub, &txt_end);
-                render_text_item(&text_state, TEXT_START_X, TEXT_START_Y, true, txt_end);
+                render_text_item(&text_state, TEXT_F_START_X, TEXT_F_START_Y, true, txt_end);
             }
             
             render_frame();
             
             int sc = get_sub_count(cur_res);
-            printf("\r资源集: %d/%d  子项: %d/%d  ", cur_res, fdtxt_count-1, cur_sub, sc > 0 ? sc-1 : 0);
+            printf("\r资源集: %d/%d  子项: %d/%d  对话框: %s ", 
+                   cur_res, fdtxt_count-1, cur_sub, sc > 0 ? sc-1 : 0,
+                   text_state.dialog_type == DIALOG_TYPE_F ? "下方(F)" : "上方(S)");
             fflush(stdout);
             
             need_render = false;
