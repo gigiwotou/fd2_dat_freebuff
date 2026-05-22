@@ -94,7 +94,9 @@ typedef enum {
 
 /* 文本状态结构体 - 1:1还原sub_15F84局部变量 */
 typedef struct {
-    int16_t* ptr;
+    int16_t* ptr;           /* 当前解析位置 */
+    int16_t* text_start;    /* 文本起始位置（用于重放） */
+    int16_t* render_end;    /* 渲染终点（用于WAIT_KEY状态下重新渲染） */
     int n658255_1;
     int n658255;
     int n3;
@@ -102,9 +104,8 @@ typedef struct {
     int v35;
     int n2;
     text_state_e state;
-    
-    int pixel_x;
-    int pixel_y;
+    int pixel_x;  /* 当前渲染的X坐标 */
+    int pixel_y;  /* 当前渲染的Y坐标 */
 } text_state_t;
 
 /* 全局变量 */
@@ -180,11 +181,18 @@ static int load_portrait(int index)
     
     uint32_t count;
     memcpy(&count, dato_data + 6, 4);
-    if ((uint32_t)index >= count - 1) return -1;
+    if ((uint32_t)index >= count - 1) {
+        printf("   [load_portrait] 警告: 索引%d超出范围 (count=%u)\n", index, count);
+        return -1;
+    }
     
     uint32_t off_start, off_end;
-    memcpy(&off_start, dato_data + 10 + index * 4, 4);
-    memcpy(&off_end, dato_data + 10 + (index + 1) * 4, 4);
+    uint32_t offset_pos = 10 + index * 4;
+    memcpy(&off_start, dato_data + offset_pos, 4);
+    memcpy(&off_end, dato_data + offset_pos + 4, 4);
+    
+    printf("   [load_portrait] 加载索引%d, 偏移表位置=%u, start=%u, end=%u, 文件大小=%zu\n",
+           index, offset_pos, off_start, off_end, dato_file_size);
     
     /* 检查偏移是否有效（必须在文件大小内） */
     if (off_start >= dato_file_size || off_end > dato_file_size) {
@@ -454,216 +462,6 @@ static void render_char(int16_t word, int x, int y, uint32_t fg, uint32_t bg, bo
 }
 
 /* ============================================================
- * 切换对话框类型 - 1:1还原汇编代码
- * ============================================================ */
-static void switch_dialog(text_state_t* state, dialog_type_t new_type, int n2_value)
-{
-    state->n1832 = new_type;
-    
-    /* 不在此处绘制对话框 - 由主循环统一处理
-     * 避免覆盖已渲染的文本 */
-    
-    /* 1:1还原IDA代码：先将n3重置为0，再计算坐标 */
-    state->n3 = 0;
-    
-    if (new_type == DIALOG_TYPE_F) {
-        state->n658255 = 658255;
-        state->n658255_1 = 658255;
-        state->pixel_x = TEXT_F_START_X;
-        state->pixel_y = TEXT_F_START_Y;
-    } else {
-        state->n658255 = 693535;
-        state->n658255_1 = 693535;
-        state->pixel_x = TEXT_S_START_X;
-        state->pixel_y = TEXT_S_START_Y;
-    }
-    
-    state->n2 = n2_value;
-}
-
-/* ============================================================
- * 文本渲染 - 1:1还原sub_15F84核心循环
- * ============================================================ */
-static void render_text_item(text_state_t* state, int16_t* text_end)
-{
-    if (!state->ptr || !text_end) return;
-    
-    while (1) {
-        if (state->ptr >= text_end) {
-            state->state = TEXT_STATE_DONE;
-            return;
-        }
-        
-        int16_t word = *state->ptr;
-        
-        /* TEXT_END */
-        if (word == TEXT_END) {
-            state->ptr++;
-            state->state = TEXT_STATE_DONE;
-            state->n1832 = DIALOG_TYPE_NONE;
-            return;
-        }
-        
-        /* TEXT_NEWLINE */
-        if (word == TEXT_NEWLINE) {
-            state->ptr++;
-            state->n3++;
-            state->n658255_1 = state->n3 * 19 * 320 + state->n658255;
-            
-            if (state->n1832 == DIALOG_TYPE_F) {
-                state->pixel_x = TEXT_F_START_X;
-                state->pixel_y = TEXT_F_START_Y + state->n3 * CHAR_HEIGHT;
-            } else {
-                state->pixel_x = TEXT_S_START_X;
-                state->pixel_y = TEXT_S_START_Y + state->n3 * CHAR_HEIGHT;
-            }
-            continue;
-        }
-        
-        /* TEXT_NEWLINE2 */
-        if (word == TEXT_NEWLINE2) {
-            state->ptr++;
-            state->n3++;
-            state->n658255_1 = state->n3 * 19 * 320 + state->n658255;
-            state->state = TEXT_STATE_WAIT_KEY;
-            
-            if (state->n1832 == DIALOG_TYPE_F) {
-                state->pixel_x = TEXT_F_START_X;
-                state->pixel_y = TEXT_F_START_Y + state->n3 * CHAR_HEIGHT;
-            } else {
-                state->pixel_x = TEXT_S_START_X;
-                state->pixel_y = TEXT_S_START_Y + state->n3 * CHAR_HEIGHT;
-            }
-            return;
-        }
-        
-        /* TEXT_RECURSE1 */
-        if (word == TEXT_RECURSE1) {
-            state->ptr++;
-            continue;
-        }
-        
-        /* TEXT_RECURSE2 */
-        if (word == TEXT_RECURSE2) {
-            state->ptr++;
-            continue;
-        }
-        
-        /* TEXT_SHOW_NUM */
-        if (word == TEXT_SHOW_NUM) {
-            state->ptr++;
-            render_char(0, state->pixel_x, state->pixel_y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
-            state->n658255_1 += 16;
-            state->pixel_x += CHAR_WIDTH;
-            continue;
-        }
-        
-        /* TEXT_PORTRAIT_F */
-        if (word == TEXT_PORTRAIT_F) {
-            state->ptr++;
-            int16_t pid = *state->ptr++;
-            
-            switch_dialog(state, DIALOG_TYPE_F, 2);
-            
-            int dato_idx = get_dato_idx_from_char_id(pid);
-            if (dato_idx >= 0) {
-                load_portrait(dato_idx);
-                render_portrait(DIALOG_TYPE_F);
-            }
-            continue;
-        }
-        
-        /* TEXT_PORTRAIT_S */
-        if (word == TEXT_PORTRAIT_S) {
-            state->ptr++;
-            int16_t pid = *state->ptr++;
-            
-            switch_dialog(state, DIALOG_TYPE_S, 112);
-            
-            int dato_idx = get_dato_idx_from_char_id(pid);
-            if (dato_idx >= 0) {
-                load_portrait(dato_idx);
-                render_portrait(DIALOG_TYPE_S);
-            }
-            continue;
-        }
-        
-        /* TEXT_CHAR_F */
-        if (word == TEXT_CHAR_F) {
-            state->ptr++;
-            int16_t cid = *state->ptr++;
-            
-            /* 切换对话框并立即绘制 */
-            switch_dialog(state, DIALOG_TYPE_F, 2);
-            
-            int dato_idx = get_dato_idx_from_char_db_index(cid);
-            if (dato_idx >= 0) {
-                load_portrait(dato_idx);
-                render_portrait(DIALOG_TYPE_F);
-            }
-            continue;
-        }
-        
-        /* TEXT_CHAR_S */
-        if (word == TEXT_CHAR_S) {
-            state->ptr++;
-            int16_t cid = *state->ptr++;
-            
-            /* 切换对话框并立即绘制 */
-            switch_dialog(state, DIALOG_TYPE_S, 112);
-            
-            int dato_idx = get_dato_idx_from_char_db_index(cid);
-            if (dato_idx >= 0) {
-                load_portrait(dato_idx);
-                render_portrait(DIALOG_TYPE_S);
-            }
-            continue;
-        }
-
-        /* TEXT_DELAY (-2) */
-        if (word == TEXT_DELAY) {
-            state->ptr++;
-            state->ptr++; /* skip delay parameter (int16) */
-            continue;
-        }
-        
-        /* 默认：渲染字符 */
-        if (word >= 0 && word < FONT_MAX_CHARS) {
-            if (state->n3 >= TEXT_MAX_LINES) {
-                state->state = TEXT_STATE_DONE;
-                return;
-            }
-            
-            /* 检查X边界并自动换行 */
-            int end_x = (state->n1832 == DIALOG_TYPE_F) ? TEXT_F_END_X : TEXT_S_END_X;
-            if (state->pixel_x + CHAR_WIDTH > end_x) {
-                state->n3++;
-                state->n658255_1 = state->n3 * 19 * 320 + state->n658255;
-                
-                if (state->n3 >= TEXT_MAX_LINES) {
-                    state->state = TEXT_STATE_DONE;
-                    return;
-                }
-                
-                if (state->n1832 == DIALOG_TYPE_F) {
-                    state->pixel_x = TEXT_F_START_X;
-                    state->pixel_y = TEXT_F_START_Y + state->n3 * CHAR_HEIGHT;
-                } else {
-                    state->pixel_x = TEXT_S_START_X;
-                    state->pixel_y = TEXT_S_START_Y + state->n3 * CHAR_HEIGHT;
-                }
-            }
-            
-            render_char(word, state->pixel_x, state->pixel_y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
-            state->n658255_1 += 16;
-            state->pixel_x += CHAR_WIDTH;
-        }
-        
-        state->ptr++;
-    }
-}
-
-/* ============================================================
  * 获取文本项
  * ============================================================ */
 static int16_t* get_sub_text(int res_idx, int sub_idx, int16_t** out_end)
@@ -759,6 +557,44 @@ static void render_frame(void)
 
 static void clear_screen(void) { memset(screen_buffer, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 4); }
 
+/* ============================================================
+ * 屏幕滚动 - 1:1还原sub_16E24
+ * 当n3==3时调用，将屏幕内容上移，清空最后一行
+ * ============================================================ */
+static void scroll_screen(dialog_type_t dialog_type)
+{
+    int dialog_x, dialog_y;
+    if (dialog_type == DIALOG_TYPE_F) {
+        dialog_x = DIALOG_F_X;
+        dialog_y = DIALOG_F_Y;
+    } else if (dialog_type == DIALOG_TYPE_S) {
+        dialog_x = DIALOG_S_X;
+        dialog_y = DIALOG_S_Y;
+    } else {
+        return;
+    }
+    
+    int text_area_x = dialog_x + 2;
+    int text_area_y = dialog_y + 2;
+    int text_width = 208;
+    int text_height = DIALOG_H - 4;
+    
+    for (int y = text_area_y; y < text_area_y + text_height - 16; y++) {
+        for (int x = text_area_x; x < text_area_x + text_width; x++) {
+            int src_y = y + 16;
+            if (src_y < SCREEN_HEIGHT) {
+                screen_buffer[y * SCREEN_WIDTH + x] = screen_buffer[src_y * SCREEN_WIDTH + x];
+            }
+        }
+    }
+    
+    for (int y = text_area_y + text_height - 16; y < text_area_y + text_height; y++) {
+        for (int x = text_area_x; x < text_area_x + text_width; x++) {
+            screen_buffer[y * SCREEN_WIDTH + x] = DIALOG_BG_COLOR;
+        }
+    }
+}
+
 static void cleanup(void)
 {
     free(screen_buffer);
@@ -766,6 +602,229 @@ static void cleanup(void)
     if (renderer) SDL_DestroyRenderer(renderer);
     if (window) SDL_DestroyWindow(window);
     SDL_Quit();
+}
+
+/* ============================================================
+ * 文本渲染 - 1:1还原sub_15F84核心循环
+ * 一次性从头渲染到结束，遇到TEXT_NEWLINE2时暂停
+ * 1:1还原IDA逻辑：遇到控制码时立即绘制对话框和头像，然后继续渲染文字
+ * ============================================================ */
+static void render_text_full(text_state_t* state, int16_t* text_end)
+{
+    if (!state->ptr || !text_end) return;
+    
+    /* 保存初始文本指针 */
+    if (state->text_start == NULL) {
+        state->text_start = state->ptr;
+    }
+    
+    /* 如果状态是DONE，需要从头重新渲染 */
+    if (state->state == TEXT_STATE_DONE) {
+        /* 从头重放控制码，不渲染 */
+        int16_t* replay = state->text_start;
+        int r_n3 = 0;
+        int r_n1832 = DIALOG_TYPE_F;
+        int r_pixel_x = TEXT_F_START_X;
+        int r_pixel_y = TEXT_F_START_Y;
+        int r_n2 = 0;
+        
+        while (replay < text_end) {
+            int16_t word = *replay;
+            
+            if (word == TEXT_END) {
+                replay++;
+                r_n1832 = DIALOG_TYPE_NONE;
+                break;
+            }
+            
+            if (word == TEXT_NEWLINE) {
+                replay++;
+                if ((r_n1832 == DIALOG_TYPE_F || r_n1832 == DIALOG_TYPE_S) && r_n3 == 3) {
+                    r_n3--;
+                }
+                r_n3++;
+                r_pixel_y += CHAR_HEIGHT;
+                r_pixel_x = (r_n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+                continue;
+            }
+            
+            if (word == TEXT_RECURSE1 || word == TEXT_RECURSE2) {
+                replay++;
+                continue;
+            }
+            
+            if (word == TEXT_SHOW_NUM) {
+                replay++;
+                replay++;
+                continue;
+            }
+            
+            if (word == TEXT_PORTRAIT_F) {
+                replay++;
+                replay++;
+                r_n1832 = DIALOG_TYPE_F;
+                r_n2 = 2;
+                r_n3 = 0;
+                r_pixel_x = TEXT_F_START_X;
+                r_pixel_y = TEXT_F_START_Y;
+                continue;
+            }
+            
+            if (word == TEXT_PORTRAIT_S) {
+                replay++;
+                replay++;
+                r_n1832 = DIALOG_TYPE_S;
+                r_n2 = 112;
+                r_n3 = 0;
+                r_pixel_x = TEXT_S_START_X;
+                r_pixel_y = TEXT_S_START_Y;
+                continue;
+            }
+            
+            if (word == TEXT_CHAR_F) {
+                replay++;
+                replay++;
+                r_n1832 = DIALOG_TYPE_F;
+                r_n2 = 2;
+                r_n3 = 0;
+                r_pixel_x = TEXT_F_START_X;
+                r_pixel_y = TEXT_F_START_Y;
+                continue;
+            }
+            
+            if (word == TEXT_CHAR_S) {
+                replay++;
+                replay++;
+                r_n1832 = DIALOG_TYPE_S;
+                r_n2 = 112;
+                r_n3 = 0;
+                r_pixel_x = TEXT_S_START_X;
+                r_pixel_y = TEXT_S_START_Y;
+                continue;
+            }
+            
+            if (word >= 0 && word < FONT_MAX_CHARS) {
+                r_pixel_x += CHAR_WIDTH;
+            }
+            
+            replay++;
+        }
+        
+        /* 恢复重放后的状态 */
+        state->n3 = r_n3;
+        state->n1832 = r_n1832;
+        state->pixel_x = r_pixel_x;
+        state->pixel_y = r_pixel_y;
+        state->n2 = r_n2;
+        state->ptr = state->text_start;
+    }
+    
+    /* 从当前ptr渲染到结束 */
+    while (state->ptr < text_end) {
+        int16_t word = *state->ptr;
+        
+        if (word == TEXT_END) {
+            state->ptr++;
+            state->state = TEXT_STATE_DONE;
+            state->n1832 = DIALOG_TYPE_NONE;
+            return;
+        }
+        
+        if (word == TEXT_NEWLINE) {
+            state->ptr++;
+            if ((state->n1832 == DIALOG_TYPE_F || state->n1832 == DIALOG_TYPE_S) && state->n3 == 3) {
+                scroll_screen(state->n1832);
+                state->n3--;
+            }
+            state->n3++;
+            state->pixel_y += CHAR_HEIGHT;
+            state->pixel_x = (state->n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+            continue;  /* IDA: goto LABEL_50; 继续循环 */
+        }
+        
+        if (word == TEXT_RECURSE1 || word == TEXT_RECURSE2) {
+            state->ptr++;
+            continue;
+        }
+        
+        if (word == TEXT_SHOW_NUM) {
+            state->ptr++;
+            state->ptr++;
+            continue;
+        }
+        
+        if (word == TEXT_PORTRAIT_F) {
+            state->ptr++;
+            int16_t pid = *state->ptr++;
+            state->n1832 = DIALOG_TYPE_F;
+            state->n2 = 2;
+            int dato_idx = get_dato_idx_from_char_id(pid);
+            if (dato_idx >= 0 && dato_idx < 135) {
+                load_portrait(dato_idx);
+                render_portrait(state->n1832);
+            }
+            state->n3 = 0;
+            state->pixel_x = TEXT_F_START_X;
+            state->pixel_y = TEXT_F_START_Y;
+            continue;  /* IDA: goto LABEL_33 */
+        }
+        
+        if (word == TEXT_PORTRAIT_S) {
+            state->ptr++;
+            int16_t pid = *state->ptr++;
+            state->n1832 = DIALOG_TYPE_S;
+            state->n2 = 112;
+            int dato_idx = get_dato_idx_from_char_id(pid);
+            if (dato_idx >= 0 && dato_idx < 135) {
+                load_portrait(dato_idx);
+                render_portrait(state->n1832);
+            }
+            state->n3 = 0;
+            state->pixel_x = TEXT_S_START_X;
+            state->pixel_y = TEXT_S_START_Y;
+            continue;  /* IDA: goto LABEL_42 */
+        }
+        
+        if (word == TEXT_CHAR_F) {
+            state->ptr++;
+            int16_t cid = *state->ptr++;
+            state->n1832 = DIALOG_TYPE_F;
+            state->n2 = 2;
+            int dato_idx = get_dato_idx_from_char_db_index(cid);
+            if (dato_idx >= 0 && dato_idx < 135) {
+                load_portrait(dato_idx);
+                render_portrait(state->n1832);
+            }
+            state->n3 = 0;
+            state->pixel_x = TEXT_F_START_X;
+            state->pixel_y = TEXT_F_START_Y;
+            continue;  /* IDA: goto LABEL_33 */
+        }
+        
+        if (word == TEXT_CHAR_S) {
+            state->ptr++;
+            int16_t cid = *state->ptr++;
+            state->n1832 = DIALOG_TYPE_S;
+            state->n2 = 112;
+            int dato_idx = get_dato_idx_from_char_db_index(cid);
+            if (dato_idx >= 0 && dato_idx < 135) {
+                load_portrait(dato_idx);
+                render_portrait(state->n1832);
+            }
+            state->n3 = 0;
+            state->pixel_x = TEXT_S_START_X;
+            state->pixel_y = TEXT_S_START_Y;
+            continue;  /* IDA: goto LABEL_42 */
+        }
+        
+        /* 默认：渲染字符 (IDA: sub_4ED7A(..., n658255_1, ...); n658255_1+=16;) */
+        if (word >= 0 && word < FONT_MAX_CHARS) {
+            render_char(word, state->pixel_x, state->pixel_y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
+            state->pixel_x += CHAR_WIDTH;
+        }
+        
+        state->ptr++;
+    }
 }
 
 /* ============================================================
@@ -831,8 +890,6 @@ int main(int argc, char* argv[])
     text_state.n658255_1 = 658255;
     text_state.n3 = 0;
     text_state.state = TEXT_STATE_CONTINUE;
-    text_state.pixel_x = TEXT_F_START_X;
-    text_state.pixel_y = TEXT_F_START_Y;
     
     printf("控制:\n");
     printf("  上/下: 切换资源集 (0-%d)\n", fdtxt_count - 1);
@@ -854,6 +911,7 @@ int main(int argc, char* argv[])
                             cur_res--; cur_sub = 0;
                             text_initialized = false;
                             text_done = false;
+                            portrait_loaded = false;
                             need_render = true;
                         }
                         break;
@@ -862,6 +920,7 @@ int main(int argc, char* argv[])
                             cur_res++; cur_sub = 0;
                             text_initialized = false;
                             text_done = false;
+                            portrait_loaded = false;
                             need_render = true;
                         }
                         break;
@@ -870,6 +929,7 @@ int main(int argc, char* argv[])
                             cur_sub--;
                             text_initialized = false;
                             text_done = false;
+                            portrait_loaded = false;
                             need_render = true;
                         }
                         break;
@@ -880,6 +940,7 @@ int main(int argc, char* argv[])
                                 cur_sub++;
                                 text_initialized = false;
                                 text_done = false;
+                                portrait_loaded = false;
                                 need_render = true;
                             }
                         }
@@ -897,6 +958,7 @@ int main(int argc, char* argv[])
                                 cur_sub++;
                                 text_initialized = false;
                                 text_done = false;
+                                portrait_loaded = false;
                                 need_render = true;
                             }
                         } else {
@@ -916,7 +978,6 @@ int main(int argc, char* argv[])
                 printf("   DIALOG_F_X=%d, DIALOG_F_Y=%d\n", DIALOG_F_X, DIALOG_F_Y);
                 printf("   DIALOG_S_X=%d, DIALOG_S_Y=%d\n", DIALOG_S_X, DIALOG_S_Y);
                 printf("   PORTRAIT_F_X=%d, PORTRAIT_F_Y=%d\n", PORTRAIT_F_X, PORTRAIT_F_Y);
-                printf("   TEXT_F_START_X=%d, TEXT_F_START_Y=%d\n", TEXT_F_START_X, TEXT_F_START_Y);
                 text_state.n1832 = DIALOG_TYPE_F;
                 text_state.n658255 = 658255;
                 text_state.n658255_1 = 658255;
@@ -924,6 +985,8 @@ int main(int argc, char* argv[])
                 text_state.state = TEXT_STATE_CONTINUE;
                 text_state.v35 = 0;
                 text_state.n2 = 0;
+                text_state.text_start = NULL;
+                text_state.render_end = NULL;
                 text_state.pixel_x = TEXT_F_START_X;
                 text_state.pixel_y = TEXT_F_START_Y;
                 
@@ -940,30 +1003,34 @@ int main(int argc, char* argv[])
                 text_done = false;
             }
             
-            /* 渲染文本（内部会根据控制码自动绘制对话框和头像） */
+            /* 渲染对话框 */
+            if (text_state.n1832 == DIALOG_TYPE_F || text_state.n1832 == DIALOG_TYPE_S) {
+                draw_dialog_box(text_state.n1832);
+            }
+            
+            /* 渲染文本和头像 */
             if (text_state.ptr && text_state.state != TEXT_STATE_DONE) {
                 int16_t* txt_end = NULL;
                 get_sub_text(cur_res, cur_sub, &txt_end);
                 
-                render_text_item(&text_state, txt_end);
+                render_text_full(&text_state, txt_end);
                 
                 if (text_state.state == TEXT_STATE_DONE) {
                     text_done = true;
                 }
             }
             
-            /* 如果对话框存在但还未绘制（初始化情况），补充绘制 */
-            if (!portrait_loaded && (text_state.n1832 == DIALOG_TYPE_F || text_state.n1832 == DIALOG_TYPE_S)) {
-                draw_dialog_box(text_state.n1832);
-            }
+            /* 渲染头像 - 1:1还原IDA: 头像在控制码处理时已立即渲染，这里不再重复渲染 */
+            /* 主循环只在首次初始化时绘制对话框，头像由render_text_full在控制码处理时立即渲染 */
             
             render_frame();
             
             int sc = get_sub_count(cur_res);
-            printf("\r资源集: %d/%d  子项: %d/%d  对话框: %s ", 
+            printf("\r资源集: %d/%d  子项: %d/%d  对话框: %s  行: %d", 
                    cur_res, fdtxt_count-1, cur_sub, sc > 0 ? sc-1 : 0,
                    text_state.n1832 == DIALOG_TYPE_F ? "下方(F)" : 
-                   (text_state.n1832 == DIALOG_TYPE_S ? "上方(S)" : "无"));
+                   (text_state.n1832 == DIALOG_TYPE_S ? "上方(S)" : "无"),
+                   text_state.n3);
             fflush(stdout);
             
             need_render = false;
