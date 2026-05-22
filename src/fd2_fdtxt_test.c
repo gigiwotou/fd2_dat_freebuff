@@ -127,6 +127,11 @@ static int current_frame = 0;
 static uint32_t frame_timer = 0;
 static bool portrait_loaded = false;
 
+/* 头像动画计数器 - 1:1还原sub_164E8中的dword_53A14和n3_3 */
+static int portrait_tick_counter = 0;  /* dword_53A14: 每2次字符渲染切换一次帧 */
+static int portrait_frame_cycle = 0;   /* n3_3: 0->1->2->3->0循环，但3跳到1 */
+static dialog_type_t portrait_dialog_type = DIALOG_TYPE_NONE;  /* 当前对话框类型 */
+
 static SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
 static SDL_Texture* texture = NULL;
@@ -315,6 +320,31 @@ static void render_portrait(dialog_type_t dialog_type)
 }
 
 /* ============================================================
+ * 清除对话框 - 1:1还原sub_16559(0)
+ * 将对话框区域填充为黑色，清除旧对话框内容
+ * ============================================================ */
+static void clear_dialog_box(dialog_type_t dialog_type)
+{
+    int dx, dy;
+    if (dialog_type == DIALOG_TYPE_F) {
+        dx = DIALOG_F_X;
+        dy = DIALOG_F_Y;
+    } else if (dialog_type == DIALOG_TYPE_S) {
+        dx = DIALOG_S_X;
+        dy = DIALOG_S_Y;
+    } else {
+        return;
+    }
+    
+    /* 将对话框区域填充为黑色 */
+    for (int y = dy; y < dy + DIALOG_H; y++) {
+        for (int x = dx; x < dx + DIALOG_W; x++) {
+            screen_buffer[y * SCREEN_WIDTH + x] = 0x00000000;
+        }
+    }
+}
+
+/* ============================================================
  * 绘制对话框
  * ============================================================ */
 static void draw_dialog_box(dialog_type_t dialog_type)
@@ -357,6 +387,52 @@ static void draw_dialog_box(dialog_type_t dialog_type)
     for (int y = iy; y < iy + ih; y++) {
         screen_buffer[y * SCREEN_WIDTH + ix] = DIALOG_BORDER_IN;
         screen_buffer[y * SCREEN_WIDTH + ix + iw - 1] = DIALOG_BORDER_IN;
+    }
+}
+
+/* ============================================================
+ * 头像动画帧切换 - 1:1还原sub_164E8
+ * 
+ * IDA逻辑：
+ *   if (++dword_53A14 == 2) {
+ *     if (++n3_3 == 4) n3_3 = 0;
+ *     n3 = n3_3;
+ *     if (n3_3 == 3) n3 = 1;
+ *     sub_16559(n3, ...);
+ *     dword_53A14 = 0;
+ *   }
+ * 
+ * 含义：
+ *   - 每2次字符渲染切换一次头像帧
+ *   - 帧顺序：0 -> 1 -> 2 -> 3 -> 1 -> 2 -> 3 -> 1...
+ *   - 注意：帧3之后跳到帧1，而不是帧0
+ * ============================================================ */
+static void portrait_animation_tick(void)
+{
+    if (!portrait_loaded || portrait_dialog_type == DIALOG_TYPE_NONE) return;
+    
+    portrait_tick_counter++;
+    
+    if (portrait_tick_counter == 2) {
+        portrait_tick_counter = 0;
+        portrait_frame_cycle++;
+        
+        if (portrait_frame_cycle == 4) {
+            portrait_frame_cycle = 0;
+        }
+        
+        /* IDA: if (n3_3 == 3) n3 = 1; */
+        int display_frame = portrait_frame_cycle;
+        if (portrait_frame_cycle == 3) {
+            display_frame = 1;
+        }
+        
+        if (display_frame != current_frame && portrait_frames[display_frame]) {
+            current_frame = display_frame;
+            /* 立即重绘当前对话框区域的头像 */
+            draw_dialog_box(portrait_dialog_type);
+            render_portrait(portrait_dialog_type);
+        }
     }
 }
 
@@ -606,8 +682,13 @@ static void cleanup(void)
 
 /* ============================================================
  * 文本渲染 - 1:1还原sub_15F84核心循环
- * 一次性从头渲染到结束，遇到TEXT_NEWLINE2时暂停
- * 1:1还原IDA逻辑：遇到控制码时立即绘制对话框和头像，然后继续渲染文字
+ * 
+ * IDA关键逻辑：
+ * 1. sub_15F84逐字符处理文本流
+ * 2. 遇到控制码时立即绘制对话框和头像
+ * 3. 每渲染一个字符后调用sub_164E8实现打字机效果和头像4帧动画
+ * 4. TEXT_NEWLINE2(-3)触发sub_16C57等待玩家按键
+ * 5. 超过3行时调用sub_16E24滚动屏幕
  * ============================================================ */
 static void render_text_full(text_state_t* state, int16_t* text_end)
 {
@@ -620,7 +701,7 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
     
     /* 如果状态是DONE，需要从头重新渲染 */
     if (state->state == TEXT_STATE_DONE) {
-        /* 从头重放控制码，不渲染 */
+        /* 从头重放控制码，不渲染，计算最终状态 */
         int16_t* replay = state->text_start;
         int r_n3 = 0;
         int r_n1832 = DIALOG_TYPE_F;
@@ -648,6 +729,17 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
                 continue;
             }
             
+            if (word == TEXT_NEWLINE2) {
+                replay++;
+                if ((r_n1832 == DIALOG_TYPE_F || r_n1832 == DIALOG_TYPE_S) && r_n3 == 3) {
+                    r_n3--;
+                }
+                r_n3++;
+                r_pixel_y += CHAR_HEIGHT;
+                r_pixel_x = (r_n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+                continue;
+            }
+            
             if (word == TEXT_RECURSE1 || word == TEXT_RECURSE2) {
                 replay++;
                 continue;
@@ -659,7 +751,7 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
                 continue;
             }
             
-            if (word == TEXT_PORTRAIT_F) {
+            if (word == TEXT_PORTRAIT_F || word == TEXT_CHAR_F) {
                 replay++;
                 replay++;
                 r_n1832 = DIALOG_TYPE_F;
@@ -670,29 +762,7 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
                 continue;
             }
             
-            if (word == TEXT_PORTRAIT_S) {
-                replay++;
-                replay++;
-                r_n1832 = DIALOG_TYPE_S;
-                r_n2 = 112;
-                r_n3 = 0;
-                r_pixel_x = TEXT_S_START_X;
-                r_pixel_y = TEXT_S_START_Y;
-                continue;
-            }
-            
-            if (word == TEXT_CHAR_F) {
-                replay++;
-                replay++;
-                r_n1832 = DIALOG_TYPE_F;
-                r_n2 = 2;
-                r_n3 = 0;
-                r_pixel_x = TEXT_F_START_X;
-                r_pixel_y = TEXT_F_START_Y;
-                continue;
-            }
-            
-            if (word == TEXT_CHAR_S) {
+            if (word == TEXT_PORTRAIT_S || word == TEXT_CHAR_S) {
                 replay++;
                 replay++;
                 r_n1832 = DIALOG_TYPE_S;
@@ -719,10 +789,11 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
         state->ptr = state->text_start;
     }
     
-    /* 从当前ptr渲染到结束 */
+    /* 从当前ptr渲染到结束 - 1:1还原IDA sub_15F84主循环 */
     while (state->ptr < text_end) {
         int16_t word = *state->ptr;
         
+        /* IDA: v17 = *v11; if (v17 == -1) ... */
         if (word == TEXT_END) {
             state->ptr++;
             state->state = TEXT_STATE_DONE;
@@ -730,8 +801,25 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
             return;
         }
         
+        /* IDA: if (v17 == -2) ... */
         if (word == TEXT_NEWLINE) {
             state->ptr++;
+            /* if ((n1832 == 1832 || n1832 == 36887) && n3 == 3) { sub_16E24(); --n3; } */
+            if ((state->n1832 == DIALOG_TYPE_F || state->n1832 == DIALOG_TYPE_S) && state->n3 == 3) {
+                scroll_screen(state->n1832);
+                state->n3--;
+            }
+            /* n658255_1 = ++n3 * a9 * a5 + n658255; */
+            state->n3++;
+            state->pixel_y += CHAR_HEIGHT;
+            state->pixel_x = (state->n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+            continue;  /* IDA: goto LABEL_50; ++v11; */
+        }
+        
+        /* IDA: if (v17 == -3) ... */
+        if (word == TEXT_NEWLINE2) {
+            state->ptr++;
+            /* 与-2相同的逻辑，但设置WAIT_KEY状态 */
             if ((state->n1832 == DIALOG_TYPE_F || state->n1832 == DIALOG_TYPE_S) && state->n3 == 3) {
                 scroll_screen(state->n1832);
                 state->n3--;
@@ -739,88 +827,186 @@ static void render_text_full(text_state_t* state, int16_t* text_end)
             state->n3++;
             state->pixel_y += CHAR_HEIGHT;
             state->pixel_x = (state->n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
-            continue;  /* IDA: goto LABEL_50; 继续循环 */
+            
+            /* IDA: sub_16559(0); sub_16C57(1); a10=1; */
+            /* sub_16C57(1)等待玩家按键，设置a10=1允许继续 */
+            state->state = TEXT_STATE_WAIT_KEY;
+            return;
         }
         
+        /* IDA: v17 == -4 or -5 (RECURSE) */
         if (word == TEXT_RECURSE1 || word == TEXT_RECURSE2) {
             state->ptr++;
             continue;
         }
         
+        /* IDA: v17 == -6 (SHOW_NUM) */
         if (word == TEXT_SHOW_NUM) {
             state->ptr++;
             state->ptr++;
             continue;
         }
         
+        /* IDA: v17 == -17 (PORTRAIT_F) */
         if (word == TEXT_PORTRAIT_F) {
             state->ptr++;
             int16_t pid = *state->ptr++;
-            state->n1832 = DIALOG_TYPE_F;
-            state->n2 = 2;
-            int dato_idx = get_dato_idx_from_char_id(pid);
-            if (dato_idx >= 0 && dato_idx < 135) {
-                load_portrait(dato_idx);
+            
+            /* 清理旧头像 */
+            if (state->v35) {
                 render_portrait(state->n1832);
             }
+            
+            state->n1832 = DIALOG_TYPE_F;
+            portrait_dialog_type = DIALOG_TYPE_F;
+            int dato_idx = get_dato_idx_from_char_id(pid);
+            if (dato_idx < 0) {
+                state->n2 = 0;
+            } else {
+                state->n2 = 2;
+            }
+            
+            if (dato_idx >= 0 && dato_idx < 135) {
+                load_portrait(dato_idx);
+                draw_dialog_box(state->n1832);
+                render_portrait(state->n1832);
+                
+                /* 重置动画计数器 */
+                portrait_tick_counter = 0;
+                portrait_frame_cycle = 0;
+                current_frame = 0;
+            }
+            
+            /* IDA: a10=1; n3=0; n658255=658255; n658255_1=658255; */
             state->n3 = 0;
             state->pixel_x = TEXT_F_START_X;
             state->pixel_y = TEXT_F_START_Y;
-            continue;  /* IDA: goto LABEL_33 */
+            continue;
         }
         
+        /* IDA: v17 == -18 (PORTRAIT_S) */
         if (word == TEXT_PORTRAIT_S) {
             state->ptr++;
             int16_t pid = *state->ptr++;
-            state->n1832 = DIALOG_TYPE_S;
-            state->n2 = 112;
-            int dato_idx = get_dato_idx_from_char_id(pid);
-            if (dato_idx >= 0 && dato_idx < 135) {
-                load_portrait(dato_idx);
+            
+            if (state->v35) {
                 render_portrait(state->n1832);
             }
+            
+            state->n1832 = DIALOG_TYPE_S;
+            portrait_dialog_type = DIALOG_TYPE_S;
+            int dato_idx = get_dato_idx_from_char_id(pid);
+            if (dato_idx < 0) {
+                state->n2 = 0;
+            } else {
+                state->n2 = 112;
+            }
+            
+            if (dato_idx >= 0 && dato_idx < 135) {
+                load_portrait(dato_idx);
+                draw_dialog_box(state->n1832);
+                render_portrait(state->n1832);
+                
+                portrait_tick_counter = 0;
+                portrait_frame_cycle = 0;
+                current_frame = 0;
+            }
+            
             state->n3 = 0;
             state->pixel_x = TEXT_S_START_X;
             state->pixel_y = TEXT_S_START_Y;
-            continue;  /* IDA: goto LABEL_42 */
+            continue;
         }
         
+        /* IDA: v17 == -19 (CHAR_F) */
         if (word == TEXT_CHAR_F) {
             state->ptr++;
             int16_t cid = *state->ptr++;
+            
+            /* IDA: if (v26) { sub_16559(0); sub_16C57(0); sub_16B43(v26, n2); } */
+            /* 清除旧对话框区域 */
+            if (state->n1832 == DIALOG_TYPE_F || state->n1832 == DIALOG_TYPE_S) {
+                clear_dialog_box(state->n1832);
+            }
+            
             state->n1832 = DIALOG_TYPE_F;
-            state->n2 = 2;
+            portrait_dialog_type = DIALOG_TYPE_F;
             int dato_idx = get_dato_idx_from_char_db_index(cid);
+            if (dato_idx < 0) {
+                state->n2 = 0;
+            } else {
+                state->n2 = 2;
+            }
+            
             if (dato_idx >= 0 && dato_idx < 135) {
                 load_portrait(dato_idx);
+                draw_dialog_box(state->n1832);
                 render_portrait(state->n1832);
+                
+                portrait_tick_counter = 0;
+                portrait_frame_cycle = 0;
+                current_frame = 0;
             }
+            
             state->n3 = 0;
             state->pixel_x = TEXT_F_START_X;
             state->pixel_y = TEXT_F_START_Y;
-            continue;  /* IDA: goto LABEL_33 */
+            continue;
         }
         
+        /* IDA: v17 == -20 (CHAR_S) */
         if (word == TEXT_CHAR_S) {
             state->ptr++;
             int16_t cid = *state->ptr++;
+            
+            /* IDA: if (v26) { sub_16559(0); sub_16C57(0); sub_16B43(v26, n2); } */
+            /* 清除旧对话框区域 */
+            if (state->n1832 == DIALOG_TYPE_F || state->n1832 == DIALOG_TYPE_S) {
+                clear_dialog_box(state->n1832);
+            }
+            
             state->n1832 = DIALOG_TYPE_S;
-            state->n2 = 112;
+            portrait_dialog_type = DIALOG_TYPE_S;
             int dato_idx = get_dato_idx_from_char_db_index(cid);
+            if (dato_idx < 0) {
+                state->n2 = 0;
+            } else {
+                state->n2 = 112;
+            }
+            
             if (dato_idx >= 0 && dato_idx < 135) {
                 load_portrait(dato_idx);
+                draw_dialog_box(state->n1832);
                 render_portrait(state->n1832);
+                
+                portrait_tick_counter = 0;
+                portrait_frame_cycle = 0;
+                current_frame = 0;
             }
+            
             state->n3 = 0;
             state->pixel_x = TEXT_S_START_X;
             state->pixel_y = TEXT_S_START_Y;
-            continue;  /* IDA: goto LABEL_42 */
+            continue;
         }
         
-        /* 默认：渲染字符 (IDA: sub_4ED7A(..., n658255_1, ...); n658255_1+=16;) */
+        /* 默认：渲染字符
+         * IDA: sub_4ED7A(dword_53A75, v17, n658255_1, a5, a6, a7, a8);
+         *      n658255_1 += 16;
+         *      if (sub_10620()) a10 = 0;
+         *      if (a10) sub_164E8();
+         */
         if (word >= 0 && word < FONT_MAX_CHARS) {
             render_char(word, state->pixel_x, state->pixel_y, DIALOG_TEXT_FG, DIALOG_TEXT_BG, true);
             state->pixel_x += CHAR_WIDTH;
+            
+            /* IDA: sub_164E8实现打字机效果和头像动画
+             * - 每2次字符渲染切换一次头像帧
+             * - 4帧循环：0->1->2->3->0 (但3会跳到1)
+             * - 调用sub_25A96实现延迟
+             */
+            portrait_animation_tick();
+            SDL_Delay(30);
         }
         
         state->ptr++;
@@ -912,6 +1098,9 @@ int main(int argc, char* argv[])
                             text_initialized = false;
                             text_done = false;
                             portrait_loaded = false;
+                            portrait_tick_counter = 0;
+                            portrait_frame_cycle = 0;
+                            portrait_dialog_type = DIALOG_TYPE_NONE;
                             need_render = true;
                         }
                         break;
@@ -921,6 +1110,9 @@ int main(int argc, char* argv[])
                             text_initialized = false;
                             text_done = false;
                             portrait_loaded = false;
+                            portrait_tick_counter = 0;
+                            portrait_frame_cycle = 0;
+                            portrait_dialog_type = DIALOG_TYPE_NONE;
                             need_render = true;
                         }
                         break;
@@ -930,6 +1122,9 @@ int main(int argc, char* argv[])
                             text_initialized = false;
                             text_done = false;
                             portrait_loaded = false;
+                            portrait_tick_counter = 0;
+                            portrait_frame_cycle = 0;
+                            portrait_dialog_type = DIALOG_TYPE_NONE;
                             need_render = true;
                         }
                         break;
@@ -941,6 +1136,9 @@ int main(int argc, char* argv[])
                                 text_initialized = false;
                                 text_done = false;
                                 portrait_loaded = false;
+                                portrait_tick_counter = 0;
+                                portrait_frame_cycle = 0;
+                                portrait_dialog_type = DIALOG_TYPE_NONE;
                                 need_render = true;
                             }
                         }
@@ -959,6 +1157,9 @@ int main(int argc, char* argv[])
                                 text_initialized = false;
                                 text_done = false;
                                 portrait_loaded = false;
+                                portrait_tick_counter = 0;
+                                portrait_frame_cycle = 0;
+                                portrait_dialog_type = DIALOG_TYPE_NONE;
                                 need_render = true;
                             }
                         } else {
