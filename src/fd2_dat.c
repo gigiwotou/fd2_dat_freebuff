@@ -227,8 +227,8 @@ int fd_analyze_resource(const byte *data, int size) {
 /* 参数: dst=目标缓冲区, src=源数据(包含4字节宽高头), pitch=行间距 */
 void sub_4EBFF(byte* dst, byte* src, int pitch) {
     /* 解析源数据头部的宽高信息 */
-    dword width = src[0] | (src[1] << 8);
-    dword height = src[2] | (src[3] << 8);
+    word width = src[0] | (src[1] << 8);
+    word height = src[2] | (src[3] << 8);
     
     /* 像素数据从偏移4开始 */
     byte* pixel_data = src + 4;
