@@ -6,18 +6,19 @@
  * 核心UI绘制逻辑分析 (从IDA汇编反推):
  * 
  * 1. 窗口系统 (sub_168B6):
- *    - 使用16x16像素的窗口图块
- *    - 从FDOTHER索引7读取窗口边框数据
+ *    - FDOTHER索引7的tile数据结构:
+ *      * 偏移0-1: 总宽度 (WORD)
+ *      * 偏移2-3: 总高度 (WORD)
+ *      * 偏移4-5: tile数量 (WORD)
+ *      * 偏移6+: tile偏移表 (DWORD数组)
+ *    - 每个tile: WORD宽度 + WORD高度 + 像素数据
+ *    - tile数据指针 = FDOTHER_DAT__7 + *(DWORD *)(FDOTHER_DAT__7 + 4*tile_index + 6)
+ *    - 像素格式: 8位调色板索引，逐行存储
  *    - 窗口结构:
- *      * 左上角 (tile 1)
- *      * 上边框 (tile 2, 水平重复)
- *      * 右上角 (tile 3)
- *      * 左边框 (tile 5, 垂直重复)
- *      * 右边框 (tile 6, 垂直重复)
- *      * 左下角 (tile 7)
- *      * 下边框 (tile 8, 水平重复)
- *      * 右下角 (tile 17)
- *      * 内容区域 (tile 13, 填充)
+ *      * 4个角 (tile 1-4)
+ *      * 4条边 (tile 5-8, 14-17)
+ *      * 循环边缘 (tile 9-12)
+ *      * 中心区域 (tile 13)
  * 
  * 2. 菜单系统 (sub_165AC):
  *    - 创建多层菜单面板
@@ -172,26 +173,69 @@ static void fd2_ui_blit_rle(const u8* res_data, u32 res_size, int dx, int dy) {
     free(pixels);
 }
 
+/**
+ * 根据tile索引获取tile数据指针 (sub_1685C逻辑)
+ * 
+ * 原版公式: tile数据指针 = FDOTHER_DAT__7 + *(DWORD *)(FDOTHER_DAT__7 + 4*tile_index + 6)
+ * 
+ * @param tile_index tile索引
+ * @return tile数据指针，失败返回NULL
+ */
+static const u8* fd2_ui_get_tile_ptr(int tile_index) {
+    if (!g_ui_render.fdother_data || g_ui_render.fdother_size < 6) return NULL;
+    
+    const u8* base = g_ui_render.fdother_data;
+    
+    u16 tile_count = base[4] | (base[5] << 8);
+    if (tile_index < 0 || tile_index >= tile_count) return NULL;
+    
+    u32 offset_addr = 6 + tile_index * 4;
+    if (offset_addr + 4 > g_ui_render.fdother_size) return NULL;
+    
+    u32 offset = base[offset_addr] | 
+                 (base[offset_addr + 1] << 8) |
+                 (base[offset_addr + 2] << 16) |
+                 (base[offset_addr + 3] << 24);
+    
+    const u8* tile_ptr = base + offset;
+    if (tile_ptr + 4 > base + g_ui_render.fdother_size) return NULL;
+    
+    return tile_ptr;
+}
+
+/**
+ * 渲染单个tile到屏幕 (根据sub_4ED0B逻辑)
+ * 
+ * 原版逻辑:
+ * 1. 读取tile宽度 (WORD)
+ * 2. 读取tile高度 (WORD)
+ * 3. 逐行复制像素数据到屏幕缓冲区
+ * 
+ * @param tile_index tile索引
+ * @param dx 目标X坐标
+ * @param dy 目标Y坐标
+ */
 static void fd2_ui_render_tile(int tile_index, int dx, int dy) {
-    if (!g_ui_render.fdother_data || g_ui_render.fdother_size < 32) return;
-
-    const u8* tile_data = &g_ui_render.fdother_data[tile_index * 32];
-    if (tile_data + 32 > g_ui_render.fdother_data + g_ui_render.fdother_size) return;
-
-    for (int row = 0; row < 16; row++) {
-        int sy = dy + row;
+    const u8* tile_data = fd2_ui_get_tile_ptr(tile_index);
+    if (!tile_data) return;
+    
+    int tw = tile_data[0] | (tile_data[1] << 8);
+    int th = tile_data[2] | (tile_data[3] << 8);
+    
+    if (tw <= 0 || th <= 0) return;
+    
+    const u8* pixels = tile_data + 4;
+    
+    for (int y = 0; y < th; y++) {
+        int sy = dy + y;
         if (sy < 0 || sy >= FD2_SCREEN_H) continue;
-
-        u16 bits = (tile_data[row * 2] << 8) | tile_data[row * 2 + 1];
-
-        for (int col = 0; col < 16; col++) {
-            int sx = dx + col;
+        
+        for (int x = 0; x < tw; x++) {
+            int sx = dx + x;
             if (sx < 0 || sx >= FD2_SCREEN_W) continue;
-
-            if (bits & 0x8000) {
-                g_ui_render.screen[sy * FD2_SCREEN_W + sx] = 15;
-            }
-            bits <<= 1;
+            
+            u8 p = pixels[y * tw + x];
+            g_ui_render.screen[sy * FD2_SCREEN_W + sx] = p;
         }
     }
 }
@@ -200,15 +244,17 @@ static void fd2_ui_render_tile(int tile_index, int dx, int dy) {
  * 绘制对话框/窗口 (根据sub_168B6逻辑)
  * 
  * 原版窗口绘制逻辑:
- * - 使用16x16像素的窗口图块
- * - 从FDOTHER_DAT__7读取窗口边框数据
- * - 支持任意尺寸的窗口
+ * - 4个角 (tile 1-4): 左上、右上、左下、右下
+ * - 上边框 (tile 5): 水平重复
+ * - 下边框 (tile 8): 水平重复
+ * - 左边框 (tile 14): 垂直重复
+ * - 右边框 (tile 15): 垂直重复
+ * - 内容区域 (tile 13): 双循环填充
  * 
  * @param x 窗口X坐标
  * @param y 窗口Y坐标
  * @param cols 窗口列数 (宽度 = cols * 16)
  * @param rows 窗口行数 (高度 = rows * 16)
- * @param tile_data 窗口图块数据指针 (从FDOTHER索引7获取)
  */
 static void fd2_ui_draw_window(int x, int y, int cols, int rows) {
     if (cols < 2 || rows < 2) return;
@@ -216,28 +262,28 @@ static void fd2_ui_draw_window(int x, int y, int cols, int rows) {
     int tw = g_ui_render.tile_w;
     int th = g_ui_render.tile_h;
 
-    // 绘制四个角
-    fd2_ui_render_tile(1, x, y);                          // 左上角
-    fd2_ui_render_tile(3, x + (cols - 1) * tw, y);       // 右上角
-    fd2_ui_render_tile(7, x, y + (rows - 1) * th);       // 左下角
-    fd2_ui_render_tile(17, x + (cols - 1) * tw, y + (rows - 1) * th); // 右下角
+    // 绘制四个角 (tile 1-4)
+    fd2_ui_render_tile(1, x, y);                              // 左上角
+    fd2_ui_render_tile(2, x + (cols - 1) * tw, y);           // 右上角
+    fd2_ui_render_tile(3, x, y + (rows - 1) * th);           // 左下角
+    fd2_ui_render_tile(4, x + (cols - 1) * tw, y + (rows - 1) * th); // 右下角
 
-    // 绘制上下边框
+    // 绘制上下边框 (tile 5, 8)
     for (int i = 1; i < cols - 1; i++) {
-        fd2_ui_render_tile(2, x + i * tw, y);            // 上边框
+        fd2_ui_render_tile(5, x + i * tw, y);                // 上边框
         fd2_ui_render_tile(8, x + i * tw, y + (rows - 1) * th); // 下边框
     }
 
-    // 绘制左右边框
+    // 绘制左右边框 (tile 14, 15)
     for (int i = 1; i < rows - 1; i++) {
-        fd2_ui_render_tile(5, x, y + i * th);            // 左边框
-        fd2_ui_render_tile(6, x + (cols - 1) * tw, y + i * th); // 右边框
+        fd2_ui_render_tile(14, x, y + i * th);               // 左边框
+        fd2_ui_render_tile(15, x + (cols - 1) * tw, y + i * th); // 右边框
     }
 
-    // 填充内容区域
+    // 填充内容区域 (tile 13)
     for (int row = 1; row < rows - 1; row++) {
         for (int col = 1; col < cols - 1; col++) {
-            fd2_ui_render_tile(13, x + col * tw, y + row * th); // 内容区域
+            fd2_ui_render_tile(13, x + col * tw, y + row * th);
         }
     }
 }
@@ -305,10 +351,6 @@ static void fd2_ui_wait_for_key(const char* message) {
     }
 }
 
-static void fd2_ui_delay(int ms) {
-    SDL_Delay(ms);
-}
-
 /**
  * 绘制主菜单对话框 (根据sub_165AC + sub_168B6逻辑)
  * 
@@ -336,7 +378,8 @@ static void fd2_ui_draw_main_menu_dialog(fd2_resources_t* res) {
     const u8* tile_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 7, &g_ui_render.fdother_size);
     if (tile_data) {
         g_ui_render.fdother_data = tile_data;
-        printf("  [2] 加载窗口图块 (FDOTHER索引7, 大小=%u)\n", g_ui_render.fdother_size);
+        u16 tile_count = tile_data[4] | (tile_data[5] << 8);
+        printf("  [2] 加载窗口图块 (FDOTHER索引7, 大小=%u, tile数量=%d)\n", g_ui_render.fdother_size, tile_count);
     }
 
     // 保存原始屏幕 (根据sub_4ECBF逻辑)
@@ -354,7 +397,6 @@ static void fd2_ui_draw_main_menu_dialog(fd2_resources_t* res) {
         fd2_ui_present();
     }
     printf("    - 对话框展开动画完成\n");
-
 
     // 绘制菜单项文本 (使用FDOTHER图块)
     const char* menu_items[] = {"新游戏", "继续游戏", "密码输入", "系统设置", "退出游戏"};
