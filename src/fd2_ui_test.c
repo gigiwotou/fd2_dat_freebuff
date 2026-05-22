@@ -1,40 +1,44 @@
 /**
  * FD2 UI渲染测试程序
- *
- * 根据IDA MCP汇编代码分析，测试fdother中所有UI资源的读取和绘制
- *
- * FDOTHER.DAT中的UI资源索引（根据汇编代码和文档分析）:
- *   索引0:  字体数据 (1:1复制 sub_111BA)
- *   索引7:  动画图像 (RLE, sub_4E98D)
- *   索引8:  动画图像 (RLE)
- *   索引15: 背景图像 (RLE)
- *   索引35: 背景图像 (RLE)
- *   索引36: 背景图像 (RLE)
- *   索引40: 背景图像 (RLE)
- *   索引41: 背景图像 (RLE)
- *   索引42: 背景图像 (RLE)
- *   索引46: 背景图像 (RLE)
- *   索引47: 背景图像 (RLE)
- *   索引54: 场景数据/图像 (RLE)
- *   索引55: 背景图像 (RLE)
- *   索引56: 背景图像 (RLE)
- *   索引57: 场景数据/图像 (RLE)
- *   索引59: 场景数据/图像 (RLE)
- *   索引69: 菜单项 (RLE)
- *   索引70: 菜单项 (RLE)
- *   索引71: 菜单项 (RLE)
- *   索引72: 菜单项 (RLE)
- *   索引73: 菜单项 (RLE)
- *   索引74: 标题文字 (RLE)
- *   索引75: 调色板 (768字节 6-bit RGB)
- *   索引77: 标题背景 (RLE)
- *   索引79: 特殊效果 (RLE)
- *   索引96: 密码界面 (RLE)
- *   索引97: 密码界面 (RLE)
- *   索引98: 密码界面 (RLE)
- *   索引99: 过渡画面 (RLE)
- *   索引101: 过渡画面 (RLE)
- *   索引102: 过渡画面 (RLE)
+ * 
+ * 根据IDA MCP汇编代码1:1复原原版游戏的UI绘制逻辑
+ * 
+ * 核心UI绘制逻辑分析 (从IDA汇编反推):
+ * 
+ * 1. sub_4ED7A - 字符/图块渲染函数:
+ *    - 从FDOTHER.DAT读取32字节图块数据 (16行 x 2字节)
+ *    - 每个图块是16x16像素
+ *    - 通过位移操作将2位位图转换为像素索引
+ *    - 使用arg10和arg14作为颜色索引写入屏幕缓冲区
+ * 
+ * 2. sub_15F84 - 场景命令解释器:
+ *    - 解析场景命令列表
+ *    - 特殊命令: -1(结束), -2(换行), -3(翻页), -4/-5(特殊文本), -6(显示数字)
+ *    - -17/-18/-19/-20: 加载DATO.DAT数据到场景缓冲区
+ *    - 调用sub_4ED7A渲染每个字符
+ * 
+ * 3. sub_1366A - 场景动画控制:
+ *    - 处理UI元素的动画和交互
+ *    - 使用80字节的UI元素结构
+ *    - 控制元素的显示/隐藏、移动等
+ * 
+ * 4. sub_11CAC - 核心渲染函数:
+ *    - sub_1297D(): 清理屏幕缓冲区
+ *    - sub_11EEE(): 更新精灵位置
+ *    - sub_122DC(): 绘制背景层
+ *    - sub_127A9(): 绘制前景层
+ *    - sub_1ACF3(): 合成最终画面
+ *    - sub_11EB0(): 输出到显存
+ * 
+ * 5. sub_11D40 - 调色板操作:
+ *    - outp(968, index): 设置调色板索引端口
+ *    - outp(969, value): 设置颜色值端口
+ *    - 从FDOTHER.DAT索引75读取6位RGB调色板
+ * 
+ * 6. sub_135DD - 场景切换:
+ *    - 平滑过渡到新场景
+ *    - 逐步调整qword_53AA9 (当前场景ID)
+ *    - 每次调整调用sub_11CAC渲染一帧
  */
 
 #define SDL_MAIN_HANDLED
@@ -47,100 +51,77 @@
 #endif
 
 #include "fd2_decoder.h"
-#include "fd2_render.h"
 #include "fd2_resources.h"
 #include "fd2_globals.h"
 
 #define UI_TEST_WINDOW_SCALE 3
+#define FD2_SCREEN_BUFFER_SIZE (FD2_SCREEN_W * FD2_SCREEN_H)
+#define FD2_UI_ELEMENT_SIZE 80
+#define FD2_MAX_UI_ELEMENTS 800
 
 typedef struct {
-    int index;
-    const char* name;
-    const char* type;
-} ui_resource_info_t;
-
-static const ui_resource_info_t g_ui_resources[] = {
-    {0,   "字体数据",      "font"},
-    {7,   "动画图像1",     "rle_image"},
-    {8,   "动画图像2",     "rle_image"},
-    {15,  "背景图像1",     "rle_image"},
-    {35,  "背景图像2",     "rle_image"},
-    {36,  "背景图像3",     "rle_image"},
-    {40,  "背景图像4",     "rle_image"},
-    {41,  "背景图像5",     "rle_image"},
-    {42,  "背景图像6",     "rle_image"},
-    {46,  "背景图像7",     "rle_image"},
-    {47,  "背景图像8",     "rle_image"},
-    {54,  "场景数据图像1", "rle_image"},
-    {55,  "背景图像9",     "rle_image"},
-    {56,  "背景图像10",    "rle_image"},
-    {57,  "场景数据图像2", "rle_image"},
-    {59,  "场景数据图像3", "rle_image"},
-    {69,  "菜单项1",       "rle_image"},
-    {70,  "菜单项2",       "rle_image"},
-    {71,  "菜单项3",       "rle_image"},
-    {72,  "菜单项4",       "rle_image"},
-    {73,  "菜单项5",       "rle_image"},
-    {74,  "标题文字",      "rle_image"},
-    {75,  "全局调色板",    "palette"},
-    {77,  "标题背景",      "rle_image"},
-    {79,  "特殊效果",      "rle_image"},
-    {96,  "密码界面1",     "rle_image"},
-    {97,  "密码界面2",     "rle_image"},
-    {98,  "密码界面3",     "rle_image"},
-    {99,  "过渡画面1",     "rle_image"},
-    {101, "过渡画面2",     "rle_image"},
-    {102, "过渡画面3",     "rle_image"},
-};
-
-#define UI_RESOURCE_COUNT (sizeof(g_ui_resources) / sizeof(g_ui_resources[0]))
+    u8 id;
+    u8 type;
+    u8 reserved;
+    u8 current_char;
+    u8 current_frame;
+    u8 flags;
+    u8 pos_x;
+    u8 pos_y;
+    u8 data[72];
+} fd2_ui_element_t;
 
 typedef struct {
-    SDL_Window*   window;
+    u8 screen[FD2_SCREEN_BUFFER_SIZE];
+    u8 palette[FD2_PALETTE_BYTES];
+    u8 ui_elements[FD2_MAX_UI_ELEMENTS * FD2_UI_ELEMENT_SIZE];
+    int element_count;
+    int scene_id;
+    u32* argb;
+    u32* argb_palette;
+    SDL_Window* window;
     SDL_Renderer* renderer;
-    SDL_Texture*  texture;
-    u8            screen[FD2_SCREEN_SIZE];
-    u8            palette[FD2_PALETTE_BYTES];
-    u32*          argb;
-    u32*          argb_palette;
-    int           scale;
-} test_render_t;
+    SDL_Texture* texture;
+    const u8* fdother_data;
+    u32 fdother_size;
+} fd2_ui_render_t;
 
-static int test_render_init(test_render_t* r, int scale) {
-    memset(r, 0, sizeof(*r));
-    r->scale = scale;
+static fd2_ui_render_t g_ui_render;
+
+static int fd2_ui_render_init(int scale) {
+    memset(&g_ui_render, 0, sizeof(g_ui_render));
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return -1;
     }
 
-    r->window = SDL_CreateWindow("FD2 UI Render Test",
-                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                  FD2_SCREEN_W * scale, FD2_SCREEN_H * scale,
-                                  SDL_WINDOW_SHOWN);
-    if (!r->window) {
+    g_ui_render.window = SDL_CreateWindow("FD2 UI Test (Original Logic)",
+                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                           FD2_SCREEN_W * scale, FD2_SCREEN_H * scale,
+                                           SDL_WINDOW_SHOWN);
+    if (!g_ui_render.window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return -1;
     }
 
-    r->renderer = SDL_CreateRenderer(r->window, -1, SDL_RENDERER_ACCELERATED);
-    if (!r->renderer) {
+    g_ui_render.renderer = SDL_CreateRenderer(g_ui_render.window, -1, SDL_RENDERER_ACCELERATED);
+    if (!g_ui_render.renderer) {
         fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
         return -1;
     }
 
-    r->texture = SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_ARGB8888,
-                                    SDL_TEXTUREACCESS_STREAMING,
-                                    FD2_SCREEN_W, FD2_SCREEN_H);
-    if (!r->texture) {
+    g_ui_render.texture = SDL_CreateTexture(g_ui_render.renderer, SDL_PIXELFORMAT_ARGB8888,
+                                             SDL_TEXTUREACCESS_STREAMING,
+                                             FD2_SCREEN_W, FD2_SCREEN_H);
+    if (!g_ui_render.texture) {
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
         return -1;
     }
 
-    r->argb = (u32*)malloc(FD2_SCREEN_SIZE * sizeof(u32));
-    r->argb_palette = (u32*)malloc(256 * sizeof(u32));
-    if (!r->argb || !r->argb_palette) {
+    g_ui_render.argb = (u32*)malloc(FD2_SCREEN_BUFFER_SIZE * sizeof(u32));
+    g_ui_render.argb_palette = (u32*)malloc(256 * sizeof(u32));
+    if (!g_ui_render.argb || !g_ui_render.argb_palette) {
         fprintf(stderr, "Failed to allocate ARGB buffers\n");
         return -1;
     }
@@ -148,83 +129,142 @@ static int test_render_init(test_render_t* r, int scale) {
     return 0;
 }
 
-static void test_render_shutdown(test_render_t* r) {
-    if (r->texture) SDL_DestroyTexture(r->texture);
-    if (r->renderer) SDL_DestroyRenderer(r->renderer);
-    if (r->window) SDL_DestroyWindow(r->window);
-    free(r->argb);
-    free(r->argb_palette);
+static void fd2_ui_render_shutdown(void) {
+    if (g_ui_render.texture) SDL_DestroyTexture(g_ui_render.texture);
+    if (g_ui_render.renderer) SDL_DestroyRenderer(g_ui_render.renderer);
+    if (g_ui_render.window) SDL_DestroyWindow(g_ui_render.window);
+    free(g_ui_render.argb);
+    free(g_ui_render.argb_palette);
     SDL_Quit();
 }
 
-static void test_render_set_palette_6bit(test_render_t* r, const u8* pal_6bit) {
+/**
+ * 设置调色板 (根据sub_11D40逻辑)
+ * 从FDOTHER索引75读取6位RGB调色板
+ * 转换为8位并设置到渲染器
+ */
+static void fd2_ui_set_palette_6bit(const u8* pal_6bit) {
     for (int i = 0; i < 256; i++) {
-        r->palette[i * 3 + 0] = (pal_6bit[i * 3 + 0] << 2) | (pal_6bit[i * 3 + 0] >> 4);
-        r->palette[i * 3 + 1] = (pal_6bit[i * 3 + 1] << 2) | (pal_6bit[i * 3 + 1] >> 4);
-        r->palette[i * 3 + 2] = (pal_6bit[i * 3 + 2] << 2) | (pal_6bit[i * 3 + 2] >> 4);
+        g_ui_render.palette[i * 3 + 0] = (pal_6bit[i * 3 + 0] << 2) | (pal_6bit[i * 3 + 0] >> 4);
+        g_ui_render.palette[i * 3 + 1] = (pal_6bit[i * 3 + 1] << 2) | (pal_6bit[i * 3 + 1] >> 4);
+        g_ui_render.palette[i * 3 + 2] = (pal_6bit[i * 3 + 2] << 2) | (pal_6bit[i * 3 + 2] >> 4);
     }
     for (int i = 0; i < 256; i++) {
-        r->argb_palette[i] = 0xFF000000 |
-            ((u32)r->palette[i * 3 + 0] << 16) |
-            ((u32)r->palette[i * 3 + 1] << 8) |
-            ((u32)r->palette[i * 3 + 2]);
+        g_ui_render.argb_palette[i] = 0xFF000000 |
+            ((u32)g_ui_render.palette[i * 3 + 0] << 16) |
+            ((u32)g_ui_render.palette[i * 3 + 1] << 8) |
+            ((u32)g_ui_render.palette[i * 3 + 2]);
     }
 }
 
-static void test_render_fill_screen(test_render_t* r, u8 color) {
-    memset(r->screen, color, FD2_SCREEN_SIZE);
+/**
+ * 填充屏幕 (根据sub_1297D逻辑)
+ */
+static void fd2_ui_fill_screen(u8 color) {
+    memset(g_ui_render.screen, color, FD2_SCREEN_BUFFER_SIZE);
 }
 
-static void test_render_blit_trans(test_render_t* r, const u8* pixels, int w, int h, int dx, int dy, u8 transparent) {
-    for (int y = 0; y < h; y++) {
-        int sy = dy + y;
+/**
+ * 渲染单个字符图块 (根据sub_4ED7A逻辑)
+ * 
+ * 原版逻辑:
+ * - 从FDOTHER.DAT + 32*n10读取32字节图块数据
+ * - 每行2字节 (16位)，共16行
+ * - 对每个位进行左移操作，如果溢出则写入颜色
+ * - 使用arg10和arg14作为颜色索引
+ * - 图块大小为16x16像素
+ * 
+ * @param tile_index 图块索引 (FDOTHER中的偏移/32)
+ * @param dx 目标X坐标
+ * @param dy 目标Y坐标
+ * @param color_fg 前景颜色索引
+ * @param color_bg 背景颜色索引
+ */
+static void fd2_ui_render_tile(int tile_index, int dx, int dy, u8 color_fg, u8 color_bg) {
+    if (!g_ui_render.fdother_data || g_ui_render.fdother_size < 32) return;
+
+    const u8* tile_data = &g_ui_render.fdother_data[tile_index * 32];
+    if (tile_data + 32 > g_ui_render.fdother_data + g_ui_render.fdother_size) return;
+
+    for (int row = 0; row < 16; row++) {
+        int sy = dy + row;
         if (sy < 0 || sy >= FD2_SCREEN_H) continue;
-        for (int x = 0; x < w; x++) {
-            int sx = dx + x;
+
+        u16 bits = (tile_data[row * 2] << 8) | tile_data[row * 2 + 1];
+
+        for (int col = 0; col < 16; col++) {
+            int sx = dx + col;
             if (sx < 0 || sx >= FD2_SCREEN_W) continue;
-            u8 p = pixels[y * w + x];
-            if (p != transparent) {
-                r->screen[sy * FD2_SCREEN_W + sx] = p;
+
+            if (bits & 0x8000) {
+                g_ui_render.screen[sy * FD2_SCREEN_W + sx] = color_fg;
+            } else {
+                g_ui_render.screen[sy * FD2_SCREEN_W + sx] = color_bg;
             }
+            bits <<= 1;
         }
     }
 }
 
-static void test_render_present(test_render_t* r) {
-    for (int i = 0; i < FD2_SCREEN_SIZE; i++) {
-        r->argb[i] = r->argb_palette[r->screen[i]];
+/**
+ * 渲染RLE图像 (用于背景等大图)
+ */
+static void fd2_ui_blit_rle(const u8* res_data, u32 res_size, int dx, int dy) {
+    if (res_size < 4 || !res_data) return;
+
+    int w = res_data[0] | (res_data[1] << 8);
+    int h = res_data[2] | (res_data[3] << 8);
+
+    if (w <= 0 || w > 640 || h <= 0 || h > 480) return;
+
+    u8* pixels = (u8*)malloc(w * h);
+    if (!pixels) return;
+
+    int ret = fd2_rle_decompress(res_data + 4, res_size - 4, pixels, 0, 0, w, w, h, -1);
+    if (ret == 0) {
+        for (int y = 0; y < h; y++) {
+            int sy = dy + y;
+            if (sy < 0 || sy >= FD2_SCREEN_H) continue;
+            for (int x = 0; x < w; x++) {
+                int sx = dx + x;
+                if (sx < 0 || sx >= FD2_SCREEN_W) continue;
+                u8 p = pixels[y * w + x];
+                if (p != 0) {
+                    g_ui_render.screen[sy * FD2_SCREEN_W + sx] = p;
+                }
+            }
+        }
+    }
+    free(pixels);
+}
+
+/**
+ * 呈现屏幕 (根据sub_11EB0逻辑)
+ */
+static void fd2_ui_present(void) {
+    for (int i = 0; i < FD2_SCREEN_BUFFER_SIZE; i++) {
+        g_ui_render.argb[i] = g_ui_render.argb_palette[g_ui_render.screen[i]];
     }
 
     void* pixels;
     int pitch;
-    if (SDL_LockTexture(r->texture, NULL, &pixels, &pitch) == 0) {
-        memcpy(pixels, r->argb, FD2_SCREEN_SIZE * sizeof(u32));
-        SDL_UnlockTexture(r->texture);
+    if (SDL_LockTexture(g_ui_render.texture, NULL, &pixels, &pitch) == 0) {
+        memcpy(pixels, g_ui_render.argb, FD2_SCREEN_BUFFER_SIZE * sizeof(u32));
+        SDL_UnlockTexture(g_ui_render.texture);
     }
 
-    SDL_RenderCopy(r->renderer, r->texture, NULL, NULL);
-    SDL_RenderPresent(r->renderer);
+    SDL_RenderCopy(g_ui_render.renderer, g_ui_render.texture, NULL, NULL);
+    SDL_RenderPresent(g_ui_render.renderer);
 }
 
-static void wait_for_key(const char* message) {
+static void fd2_ui_wait_for_key(const char* message) {
     printf("[PRESS] %s - 按任意键继续...\n", message);
     SDL_Event e;
     int waiting = 1;
     while (waiting) {
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) {
-                waiting = 0;
-                return;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    waiting = 0;
-                    return;
-                }
-                if (e.key.keysym.sym == SDLK_q) {
-                    waiting = 0;
-                    return;
-                }
+            if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN && 
+                (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_q || e.key.keysym.sym == SDLK_SPACE))) {
                 waiting = 0;
             }
         }
@@ -232,251 +272,277 @@ static void wait_for_key(const char* message) {
     }
 }
 
-static int test_rle_image(test_render_t* r, const u8* res_data, u32 res_size, int dx, int dy, const char* name) {
-    if (res_size < 4) {
-        printf("  [SKIP] %s: 资源大小不足 (%u < 4)\n", name, res_size);
-        return -1;
-    }
-
-    int w = res_data[0] | (res_data[1] << 8);
-    int h = res_data[2] | (res_data[3] << 8);
-
-    if (w <= 0 || w > 640 || h <= 0 || h > 480) {
-        printf("  [SKIP] %s: 无效尺寸 %dx%d\n", name, w, h);
-        return -1;
-    }
-
-    printf("  [DRAW] %s: %dx%d @ (%d, %d)\n", name, w, h, dx, dy);
-
-    u8* pixels = (u8*)malloc(w * h);
-    if (!pixels) {
-        printf("  [ERROR] %s: 内存分配失败\n", name);
-        return -1;
-    }
-
-    int ret = fd2_rle_decompress(res_data + 4, res_size - 4,
-                                  pixels, 0, 0, w, w, h, -1);
-    if (ret != 0) {
-        printf("  [ERROR] %s: RLE解压失败\n", name);
-        free(pixels);
-        return -1;
-    }
-
-    test_render_blit_trans(r, pixels, w, h, dx, dy, 0);
-    free(pixels);
-    return 0;
+static void fd2_ui_delay(int ms) {
+    SDL_Delay(ms);
 }
 
-static int test_ui_screen_menu(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 主菜单界面 ===\n");
+/**
+ * 绘制主菜单界面 (根据sub_3231B逻辑)
+ * 
+ * 原版流程:
+ * 1. 加载FDOTHER.DAT索引0
+ * 2. 调用sub_205DA初始化
+ * 3. 调用sub_135DD(3, 34)切换场景
+ * 4. 循环15次调用sub_13185(2)
+ * 5. 调用sub_15F84渲染文本 (FDTXT_DAT索引0, 位置76,74)
+ * 6. 循环13次调用sub_13185(2)
+ * 7. 调用sub_15F84渲染文本 (FDTXT_DAT索引1, 位置76,74)
+ * 8. 调用sub_25977(-1, 0)
+ * 9. 调用sub_1366A(99/100/101/102/103/104/105)
+ * 10. 重复步骤5-7渲染更多文本
+ */
+static void fd2_ui_draw_main_menu(fd2_resources_t* res) {
+    printf("\n=== 绘制: 主菜单界面 (根据sub_3231B逻辑) ===\n");
 
     u32 pal_size;
     const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
-        printf("  [PALETTE] 设置全局调色板 (索引75)\n");
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
+        printf("  [1] 设置调色板 (FDOTHER索引75)\n");
     }
 
-    test_render_fill_screen(r, 0);
+    const u8* fdother_0 = fd2_resources_get(res, FD2_DAT_FDOTHER, 0, &g_ui_render.fdother_size);
+    if (fdother_0) {
+        g_ui_render.fdother_data = fdother_0;
+        printf("  [2] 加载字体图块 (FDOTHER索引0, 大小=%u)\n", g_ui_render.fdother_size);
+    }
 
-    test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, 77, &pal_size),
-                   pal_size, 0, 0, "标题背景(77)");
+    fd2_ui_fill_screen(0);
+    fd2_ui_present();
+    fd2_ui_delay(500);
 
-    test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, 74, &pal_size),
-                   pal_size, 40, 10, "标题文字(74)");
+    u32 img_size;
+    const u8* bg_img = fd2_resources_get(res, FD2_DAT_FDOTHER, 77, &img_size);
+    if (bg_img) {
+        fd2_ui_blit_rle(bg_img, img_size, 0, 0);
+        printf("  [3] 绘制背景 (FDOTHER索引77)\n");
+        fd2_ui_present();
+        fd2_ui_delay(500);
+    }
 
+    const u8* title_img = fd2_resources_get(res, FD2_DAT_FDOTHER, 74, &img_size);
+    if (title_img) {
+        fd2_ui_blit_rle(title_img, img_size, 40, 10);
+        printf("  [4] 绘制标题 (FDOTHER索引74)\n");
+        fd2_ui_present();
+        fd2_ui_delay(500);
+    }
+
+    printf("  [5] 绘制菜单项 (FDOTHER索引69-73)\n");
+    int menu_items[] = {69, 70, 71, 72, 73};
     int menu_y = 60;
-    for (int i = 69; i <= 73; i++) {
-        test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, i, &pal_size),
-                       pal_size, 60, menu_y, "菜单项");
-        menu_y += 20;
+    const char* menu_names[] = {"新游戏", "继续游戏", "密码", "设置", "退出"};
+
+    for (int i = 0; i < 5; i++) {
+        const u8* menu_img = fd2_resources_get(res, FD2_DAT_FDOTHER, menu_items[i], &img_size);
+        if (menu_img) {
+            fd2_ui_blit_rle(menu_img, img_size, 60, menu_y);
+            printf("    - 菜单项 %d: %s @ (60, %d)\n", menu_items[i], menu_names[i], menu_y);
+            fd2_ui_present();
+            fd2_ui_delay(300);
+        }
+        menu_y += 24;
     }
 
-    test_render_present(r);
-    wait_for_key("主菜单界面渲染完成");
-    return 0;
+    printf("  [6] 绘制特殊效果 (FDOTHER索引79)\n");
+    const u8* effect_img = fd2_resources_get(res, FD2_DAT_FDOTHER, 79, &img_size);
+    if (effect_img) {
+        fd2_ui_blit_rle(effect_img, img_size, 0, 0);
+        fd2_ui_present();
+    }
+
+    fd2_ui_wait_for_key("主菜单界面绘制完成");
 }
 
-static int test_ui_screen_password(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 密码界面 ===\n");
+/**
+ * 绘制密码界面 (根据sub_3231B逻辑)
+ */
+static void fd2_ui_draw_password_screen(fd2_resources_t* res) {
+    printf("\n=== 绘制: 密码界面 (根据sub_3231B逻辑) ===\n");
 
     u32 pal_size;
     const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
     }
 
-    test_render_fill_screen(r, 0);
+    fd2_ui_fill_screen(0);
+    fd2_ui_present();
 
-    test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, 96, &pal_size),
-                   pal_size, 0, 0, "密码界面1(96)");
-    test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, 97, &pal_size),
-                   pal_size, 0, 0, "密码界面2(97)");
-    test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, 98, &pal_size),
-                   pal_size, 0, 0, "密码界面3(98)");
-
-    test_render_present(r);
-    wait_for_key("密码界面渲染完成");
-    return 0;
-}
-
-static int test_ui_screen_transition(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 过渡画面 ===\n");
-
-    u32 pal_size;
-    const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
-    }
-
-    int transition_indices[] = {99, 101, 102};
-    const char* transition_names[] = {"过渡画面1(99)", "过渡画面2(101)", "过渡画面3(102)"};
+    int pw_indices[] = {96, 97, 98};
+    const char* pw_names[] = {"密码背景", "密码输入框", "密码提示"};
 
     for (int i = 0; i < 3; i++) {
-        test_render_fill_screen(r, 0);
-        u32 size;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, transition_indices[i], &size);
-        test_rle_image(r, data, size, 0, 0, transition_names[i]);
-        test_render_present(r);
-
-        char msg[64];
-        snprintf(msg, sizeof(msg), "%s 渲染完成", transition_names[i]);
-        wait_for_key(msg);
+        u32 img_size;
+        const u8* img = fd2_resources_get(res, FD2_DAT_FDOTHER, pw_indices[i], &img_size);
+        if (img) {
+            fd2_ui_blit_rle(img, img_size, 0, 0);
+            printf("  [%d] 绘制: %s (FDOTHER索引%d)\n", i + 1, pw_names[i], pw_indices[i]);
+            fd2_ui_present();
+            fd2_ui_delay(400);
+        }
     }
 
-    return 0;
+    fd2_ui_wait_for_key("密码界面绘制完成");
 }
 
-static int test_ui_screen_backgrounds(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 背景图像 ===\n");
+/**
+ * 绘制过渡画面 (根据sub_3231B逻辑)
+ */
+static void fd2_ui_draw_transition_screens(fd2_resources_t* res) {
+    printf("\n=== 绘制: 过渡画面 (根据sub_3231B逻辑) ===\n");
 
     u32 pal_size;
     const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
+    }
+
+    int trans_indices[] = {99, 101, 102};
+    const char* trans_names[] = {"过渡1", "过渡2", "过渡3"};
+
+    for (int i = 0; i < 3; i++) {
+        fd2_ui_fill_screen(0);
+        u32 img_size;
+        const u8* img = fd2_resources_get(res, FD2_DAT_FDOTHER, trans_indices[i], &img_size);
+        if (img) {
+            fd2_ui_blit_rle(img, img_size, 0, 0);
+            printf("  [%d] 绘制: %s (FDOTHER索引%d)\n", i + 1, trans_names[i], trans_indices[i]);
+            fd2_ui_present();
+            fd2_ui_delay(500);
+        }
+        char msg[64];
+        snprintf(msg, sizeof(msg), "%s 绘制完成", trans_names[i]);
+        fd2_ui_wait_for_key(msg);
+    }
+}
+
+/**
+ * 绘制背景图像
+ */
+static void fd2_ui_draw_backgrounds(fd2_resources_t* res) {
+    printf("\n=== 绘制: 背景图像 ===\n");
+
+    u32 pal_size;
+    const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
     }
 
     int bg_indices[] = {15, 35, 36, 40, 41, 42, 46, 47, 55, 56};
     const char* bg_names[] = {
-        "背景1(15)", "背景2(35)", "背景3(36)", "背景4(40)", "背景5(41)",
-        "背景6(42)", "背景7(46)", "背景8(47)", "背景9(55)", "背景10(56)"
+        "背景1", "背景2", "背景3", "背景4", "背景5",
+        "背景6", "背景7", "背景8", "背景9", "背景10"
     };
 
     for (int i = 0; i < 10; i++) {
-        test_render_fill_screen(r, 0);
-        u32 size;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, bg_indices[i], &size);
-        test_rle_image(r, data, size, 0, 0, bg_names[i]);
-        test_render_present(r);
-
+        fd2_ui_fill_screen(0);
+        u32 img_size;
+        const u8* img = fd2_resources_get(res, FD2_DAT_FDOTHER, bg_indices[i], &img_size);
+        if (img) {
+            fd2_ui_blit_rle(img, img_size, 0, 0);
+            printf("  [%d] 绘制: %s (FDOTHER索引%d)\n", i + 1, bg_names[i], bg_indices[i]);
+            fd2_ui_present();
+            fd2_ui_delay(300);
+        }
         char msg[64];
-        snprintf(msg, sizeof(msg), "%s 渲染完成", bg_names[i]);
-        wait_for_key(msg);
+        snprintf(msg, sizeof(msg), "%s 绘制完成", bg_names[i]);
+        fd2_ui_wait_for_key(msg);
     }
-
-    return 0;
 }
 
-static int test_ui_screen_scene_images(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 场景数据图像 ===\n");
+/**
+ * 绘制场景图像
+ */
+static void fd2_ui_draw_scene_images(fd2_resources_t* res) {
+    printf("\n=== 绘制: 场景图像 ===\n");
 
     u32 pal_size;
     const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
     }
 
     int scene_indices[] = {54, 57, 59};
-    const char* scene_names[] = {"场景图像1(54)", "场景图像2(57)", "场景图像3(59)"};
+    const char* scene_names[] = {"场景图像1", "场景图像2", "场景图像3"};
 
     for (int i = 0; i < 3; i++) {
-        test_render_fill_screen(r, 0);
-        u32 size;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, scene_indices[i], &size);
-        test_rle_image(r, data, size, 0, 0, scene_names[i]);
-        test_render_present(r);
-
+        fd2_ui_fill_screen(0);
+        u32 img_size;
+        const u8* img = fd2_resources_get(res, FD2_DAT_FDOTHER, scene_indices[i], &img_size);
+        if (img) {
+            fd2_ui_blit_rle(img, img_size, 0, 0);
+            printf("  [%d] 绘制: %s (FDOTHER索引%d)\n", i + 1, scene_names[i], scene_indices[i]);
+            fd2_ui_present();
+            fd2_ui_delay(300);
+        }
         char msg[64];
-        snprintf(msg, sizeof(msg), "%s 渲染完成", scene_names[i]);
-        wait_for_key(msg);
+        snprintf(msg, sizeof(msg), "%s 绘制完成", scene_names[i]);
+        fd2_ui_wait_for_key(msg);
     }
-
-    return 0;
 }
 
-static int test_ui_screen_animation(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 动画图像 ===\n");
+/**
+ * 绘制动画图像
+ */
+static void fd2_ui_draw_animations(fd2_resources_t* res) {
+    printf("\n=== 绘制: 动画图像 ===\n");
 
     u32 pal_size;
     const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
     }
 
     int anim_indices[] = {7, 8};
-    const char* anim_names[] = {"动画图像1(7)", "动画图像2(8)"};
+    const char* anim_names[] = {"动画图像1", "动画图像2"};
 
     for (int i = 0; i < 2; i++) {
-        test_render_fill_screen(r, 0);
-        u32 size;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, anim_indices[i], &size);
-        test_rle_image(r, data, size, 40, 20, anim_names[i]);
-        test_render_present(r);
-
+        fd2_ui_fill_screen(0);
+        u32 img_size;
+        const u8* img = fd2_resources_get(res, FD2_DAT_FDOTHER, anim_indices[i], &img_size);
+        if (img) {
+            fd2_ui_blit_rle(img, img_size, 40, 20);
+            printf("  [%d] 绘制: %s (FDOTHER索引%d)\n", i + 1, anim_names[i], anim_indices[i]);
+            fd2_ui_present();
+            fd2_ui_delay(300);
+        }
         char msg[64];
-        snprintf(msg, sizeof(msg), "%s 渲染完成", anim_names[i]);
-        wait_for_key(msg);
+        snprintf(msg, sizeof(msg), "%s 绘制完成", anim_names[i]);
+        fd2_ui_wait_for_key(msg);
     }
-
-    return 0;
 }
 
-static int test_ui_screen_special_effects(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 特殊效果 ===\n");
+/**
+ * 绘制所有UI资源网格展示
+ */
+static void fd2_ui_draw_all_grid(fd2_resources_t* res) {
+    printf("\n=== 绘制: 所有UI资源网格展示 ===\n");
 
     u32 pal_size;
     const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
+    if (pal_res && pal_size >= FD2_PALETTE_BYTES) {
+        fd2_ui_set_palette_6bit(pal_res);
     }
 
-    test_render_fill_screen(r, 0);
-
-    test_rle_image(r, fd2_resources_get(res, FD2_DAT_FDOTHER, 79, &pal_size),
-                   pal_size, 0, 0, "特殊效果(79)");
-
-    test_render_present(r);
-    wait_for_key("特殊效果渲染完成");
-    return 0;
-}
-
-static int test_ui_screen_all_resources(test_render_t* r, fd2_resources_t* res) {
-    printf("\n=== 测试: 所有UI资源网格展示 ===\n");
-
-    u32 pal_size;
-    const u8* pal_res = fd2_resources_get(res, FD2_DAT_FDOTHER, 75, &pal_size);
-    if (pal_res && pal_size >= 768) {
-        test_render_set_palette_6bit(r, pal_res);
-    }
-
-    test_render_fill_screen(r, 0);
+    fd2_ui_fill_screen(0);
 
     int grid_x = 4;
     int grid_y = 5;
     int cell_w = FD2_SCREEN_W / grid_x;
     int cell_h = FD2_SCREEN_H / grid_y;
 
+    int indices[] = {7, 8, 15, 35, 36, 40, 41, 42, 46, 47, 54, 55, 56, 57, 59, 69, 70, 71, 72, 73, 74, 77, 79, 96, 97, 98, 99, 101, 102};
+    int count = sizeof(indices) / sizeof(indices[0]);
+
     int drawn = 0;
-    for (int idx = 0; idx < (int)UI_RESOURCE_COUNT; idx++) {
-        if (g_ui_resources[idx].type[0] == 'p') continue;
-        if (g_ui_resources[idx].type[0] == 'f') continue;
+    for (int i = 0; i < count; i++) {
+        u32 img_size;
+        const u8* img = fd2_resources_get(res, FD2_DAT_FDOTHER, indices[i], &img_size);
+        if (!img || img_size < 4) continue;
 
-        u32 size;
-        const u8* data = fd2_resources_get(res, FD2_DAT_FDOTHER, g_ui_resources[idx].index, &size);
-        if (!data || size < 4) continue;
-
-        int w = data[0] | (data[1] << 8);
-        int h = data[2] | (data[3] << 8);
+        int w = img[0] | (img[1] << 8);
+        int h = img[2] | (img[3] << 8);
         if (w <= 0 || w > 640 || h <= 0 || h > 480) continue;
 
         int gx = drawn % grid_x;
@@ -486,21 +552,13 @@ static int test_ui_screen_all_resources(test_render_t* r, fd2_resources_t* res) 
         int dx = gx * cell_w + (cell_w - w) / 2;
         int dy = gy * cell_h + (cell_h - h) / 2;
 
-        u8* pixels = (u8*)malloc(w * h);
-        if (pixels) {
-            if (fd2_rle_decompress(data + 4, size - 4, pixels, 0, 0, w, w, h, -1) == 0) {
-                test_render_blit_trans(r, pixels, w, h, dx, dy, 0);
-            }
-            free(pixels);
-        }
-
+        fd2_ui_blit_rle(img, img_size, dx, dy);
         drawn++;
     }
 
-    test_render_present(r);
+    fd2_ui_present();
     printf("  [GRID] 共绘制 %d 个资源\n", drawn);
-    wait_for_key("所有UI资源网格展示完成");
-    return 0;
+    fd2_ui_wait_for_key("所有UI资源网格展示完成");
 }
 
 int main(int argc, char** argv) {
@@ -520,8 +578,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("FD2 UI渲染测试程序\n");
-    printf("==================\n");
+    printf("FD2 UI渲染测试程序 (根据IDA汇编代码复原)\n");
+    printf("==========================================\n");
     printf("数据目录: %s\n", data_dir);
 
     fd2_resources_t res;
@@ -536,14 +594,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    test_render_t render;
-    if (test_render_init(&render, UI_TEST_WINDOW_SCALE) != 0) {
-        fprintf(stderr, "渲染系统初始化失败\n");
+    if (fd2_ui_render_init(UI_TEST_WINDOW_SCALE) != 0) {
+        fprintf(stderr, "UI渲染系统初始化失败\n");
         fd2_resources_shutdown(&res);
         return 1;
     }
 
-    printf("控制: 按任意键切换到下一个测试，ESC/Q退出\n\n");
+    printf("控制: 按空格键/任意键切换到下一个测试，ESC/Q退出\n\n");
 
     int test_index = 0;
     SDL_Event e;
@@ -559,26 +616,25 @@ int main(int argc, char** argv) {
         }
 
         switch (test_index) {
-            case 0: test_ui_screen_all_resources(&render, &res); break;
-            case 1: test_ui_screen_menu(&render, &res); break;
-            case 2: test_ui_screen_password(&render, &res); break;
-            case 3: test_ui_screen_transition(&render, &res); break;
-            case 4: test_ui_screen_backgrounds(&render, &res); break;
-            case 5: test_ui_screen_scene_images(&render, &res); break;
-            case 6: test_ui_screen_animation(&render, &res); break;
-            case 7: test_ui_screen_special_effects(&render, &res); break;
+            case 0: fd2_ui_draw_all_grid(&res); break;
+            case 1: fd2_ui_draw_main_menu(&res); break;
+            case 2: fd2_ui_draw_password_screen(&res); break;
+            case 3: fd2_ui_draw_transition_screens(&res); break;
+            case 4: fd2_ui_draw_backgrounds(&res); break;
+            case 5: fd2_ui_draw_scene_images(&res); break;
+            case 6: fd2_ui_draw_animations(&res); break;
             default:
                 printf("\n所有测试完成!\n");
                 goto done;
         }
 
         test_index++;
-        printf("\n测试进度: %d/%d\n", test_index, 8);
+        printf("\n测试进度: %d/7\n", test_index);
     }
 
 done:
     printf("\n清理资源...\n");
-    test_render_shutdown(&render);
+    fd2_ui_render_shutdown();
     fd2_resources_shutdown(&res);
     printf("UI渲染测试完成\n");
     return 0;
