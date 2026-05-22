@@ -17,4 +17,7 @@ int fd_decompress_rle(const byte *src, int src_size, byte *dst, int dst_width, i
 /* Resource analysis for debugging */
 int fd_analyze_resource(const byte *data, int size);
 
+/* sub_4EBFF: Render pixel data to screen buffer (1:1 from IDA) */
+void sub_4EBFF(byte* dst, byte* src, int pitch);
+
 #endif

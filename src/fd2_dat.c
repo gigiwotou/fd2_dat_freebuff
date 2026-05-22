@@ -221,3 +221,28 @@ int fd_analyze_resource(const byte *data, int size) {
     // Placeholder for debugging
     return 0;
 }
+
+/* sub_4EBFF: 渲染像素数据到屏幕缓冲区 */
+/* 根据IDA Pro MCP反编译代码1:1实现 */
+/* 参数: dst=目标缓冲区, src=源数据(包含4字节宽高头), pitch=行间距 */
+void sub_4EBFF(byte* dst, byte* src, int pitch) {
+    /* 解析源数据头部的宽高信息 */
+    dword width = src[0] | (src[1] << 8);
+    dword height = src[2] | (src[3] << 8);
+    
+    /* 像素数据从偏移4开始 */
+    byte* pixel_data = src + 4;
+    
+    /* 外层循环: 遍历每一行 */
+    for (int y = 0; y < height; y++) {
+        byte* row_start = dst;  /* 记录当前行起始位置 */
+        
+        /* 内层循环: 遍历当前行的每个像素 */
+        for (int x = 0; x < width; x++) {
+            *dst++ = *pixel_data++;  /* 将像素值写入目标缓冲区 */
+        }
+        
+        /* 移动到下一行 (根据目标缓冲区的pitch) */
+        dst = row_start + pitch;
+    }
+}

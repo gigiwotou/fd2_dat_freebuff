@@ -41,13 +41,15 @@ static void render_char_8bit(u8* font_data, u8* screen, int word, int x, int y, 
     
     u8* cdata = font_data + word * 32;
     for (int row = 0; row < CHAR_H; row++) {
-        u16 bits = *(u16*)(cdata + row * 2);
-        bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);
+        u16 bits;
+        memcpy(&bits, cdata + row * 2, 2);  /* 用memcpy避免对齐问题，和fd2_fdtxt_test.c一致 */
+        bits = ((bits & 0xFF) << 8) | ((bits >> 8) & 0xFF);  /* 字节交换 */
         for (int col = 0; col < CHAR_W; col++) {
-            if (!(bits & (0x8000 >> col))) continue;
-            int px = x + col, py = y + row;
-            if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
-                screen[py * SCREEN_WIDTH + px] = color;
+            if (bits & (1 << (15 - col))) {  /* 和fd2_fdtxt_test.c一致 */
+                int px = x + col, py = y + row;
+                if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
+                    screen[py * SCREEN_WIDTH + px] = color;
+            }
         }
     }
 }
@@ -68,7 +70,7 @@ static void render_fdtxt_text(u8* font, u8* screen, const int16_t* text, int x, 
     }
 }
 
-/* 加载FDTXT.DAT子文本 */
+/* 加载FDTXT.DAT子文本 (按资源索引) */
 static int16_t* fdtxt_get_sub(u8* fdtxt, size_t fdtxt_size, int res_idx, int sub_idx, int16_t** out_end) {
     if (res_idx < 0) return NULL;
     u32 count;
@@ -95,6 +97,31 @@ static int16_t* fdtxt_get_sub(u8* fdtxt, size_t fdtxt_size, int res_idx, int sub
         else *out_end = (int16_t*)(rd + rsz);
     }
     return (int16_t*)(rd + offs[sub_idx]);
+}
+
+/* 按sub_15F84公式获取文本数据 */
+static int16_t* fdtxt_get_text_by_index(u8* res0_data, size_t res0_size, int index, int16_t** out_end) {
+    if (!res0_data || index < 0) return NULL;
+    
+    /* 公式: v15 = (int16*)(*(int16*)(arg0 + 2*arg4) + arg0) */
+    /* 注意：索引表从位置0开始（不是位置2），arg0指向资源0起始 */
+    size_t pos = (size_t)(2 * index);
+    if (pos + 2 > res0_size) return NULL;
+    
+    /* 读取该位置的值 */
+    int16_t offset_val;
+    memcpy(&offset_val, res0_data + pos, 2);
+    
+    /* 如果offset_val是负数或超出范围，说明索引无效 */
+    if (offset_val < 0 || (size_t)offset_val >= res0_size) return NULL;
+    
+    int16_t* text_ptr = (int16_t*)(res0_data + offset_val);
+    if (out_end) {
+        int16_t* p = text_ptr;
+        while (*p != -1 && (u8*)p < res0_data + res0_size) p++;
+        *out_end = p + 1;
+    }
+    return text_ptr;
 }
 
 /* ========================================================================
@@ -789,40 +816,23 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             printf("[STATE_MACHINE] Save loaded successfully\n");
             
             /* 阶段4: 显示存档slot选择界面（对应原游戏 sub_29BCB） */
-            /* 201/205/76在原游戏中是sub_4ED7A的颜色参数,不是资源索引 */
             
-            /* 加载FDOTHER.DAT索引6字体资源 (字符16x16) */
-            dword res6_size = 0;
-            void* fdother_6 = fd2_load_dat_resource(res_path, NULL, 6, &res6_size);
-            u8* font_data = (u8*)fdother_6;
+            /* 加载FDOTHER.DAT索引3字体资源 (字符16x16) */
+            dword res3_size = 0;
+            void* fdother_3 = fd2_load_dat_resource(res_path, NULL, 3, &res3_size);
+            u8* font_data = (u8*)fdother_3;
             
-            /* 加载FDTXT.DAT文本资源 */
+            /* 加载FDTXT.DAT资源0 */
             char fdtxt_path[512];
-            dword fdtxt_total_size = 0;
+            dword fdtxt_res0_size = 0;
             snprintf(fdtxt_path, sizeof(fdtxt_path), "%sFDTXT.DAT", base_path);
-            u8* fdtxt_data = (u8*)fd2_load_dat_resource(fdtxt_path, NULL, 0, &fdtxt_total_size);
-            /* 需要整个FDTXT文件，而不仅是资源0 */
-            free(fdtxt_data);
-            FILE* fdtxt_fp = fopen(fdtxt_path, "rb");
-            u8* fdtxt_full = NULL;
-            size_t fdtxt_fsize = 0;
-            if (fdtxt_fp) {
-                fseek(fdtxt_fp, 0, SEEK_END);
-                fdtxt_fsize = ftell(fdtxt_fp);
-                fdtxt_full = (u8*)malloc(fdtxt_fsize);
-                if (fdtxt_full) {
-                    fseek(fdtxt_fp, 0, SEEK_SET);
-                    fread(fdtxt_full, 1, fdtxt_fsize, fdtxt_fp);
-                }
-                fclose(fdtxt_fp);
-            }
+            u8* fdtxt_res0 = (u8*)fd2_load_dat_resource(fdtxt_path, NULL, 0, &fdtxt_res0_size);
             
-            /* 分配屏幕缓冲区 (320x200) */
             u8* screen_buf = (u8*)malloc(64000);
             if (!screen_buf) {
                 fprintf(stderr, "[STATE_MACHINE] Failed to allocate screen buffer\n");
-                if (fdother_6) free(fdother_6);
-                if (fdtxt_full) free(fdtxt_full);
+                if (fdother_3) free(fdother_3);
+                if (fdtxt_res0) free(fdtxt_res0);
                 v15 = 1;
                 goto load_done;
             }
@@ -834,15 +844,24 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
             while (1) {
                 int slot_i;
                 
+                printf("[LOAD_UI] Rendering load UI...\n");
+                
+                /* 清屏为黑色 */
                 memset(screen_buf, 0, 64000);
                 
-                /* 绘制标题 - 使用FDTXT资源0子文本12 (资源列表标题) 或简单英文 */
-                if (font_data) {
-                    int title_x = (320 - 4 * CHAR_W) / 2;
-                    render_char_8bit(font_data, screen_buf, 'L' - 'A', title_x, 10, 15);
-                    render_char_8bit(font_data, screen_buf, 'O' - 'A', title_x + CHAR_W, 10, 15);
-                    render_char_8bit(font_data, screen_buf, 'A' - 'A', title_x + CHAR_W * 2, 10, 15);
-                    render_char_8bit(font_data, screen_buf, 'D' - 'A', title_x + CHAR_W * 3, 10, 15);
+                /* 使用资源13渲染背景 (原游戏sub_29BCB中的sub_4EBFF调用) */
+                /* 公式: sub_4EBFF(dst + 35845, *(fdother_13 + 70) + fdother_13, 320) */
+                if (fdother_13) {
+                    /* fdother_13指向资源13的数据 */
+                    /* 位置70处有DWORD指向背景图像 */
+                    dword bg_offset;
+                    memcpy(&bg_offset, (u8*)fdother_13 + 70, 4);
+                    printf("[LOAD_UI] Background offset from resource 13: 0x%x\n", bg_offset);
+                    
+                    /* 背景图像指针 = 资源13基址 + 偏移 */
+                    u8* bg_data = (u8*)fdother_13 + bg_offset;
+                    printf("[LOAD_UI] Rendering background with sub_4EBFF...\n");
+                    sub_4EBFF(screen_buf + 35845, bg_data, 320);
                 }
                 
                 /* 渲染4个存档槽 */
@@ -873,61 +892,53 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                     if (font_data)
                         render_char_8bit(font_data, screen_buf, slot_i + 1, slot_x + 6, slot_y + 4, 14);
                     
-                    /* 存档信息文本 - 使用FDTXT资源0的子文本 */
-                    if (is_empty) {
-                        if (font_data && fdtxt_full) {
-                            int16_t* txt_end = NULL;
-                            int16_t* empty_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 11, &txt_end);
-                            if (!empty_txt)
-                                empty_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 9, &txt_end);
-                            if (empty_txt) {
-                                render_fdtxt_text(font_data, screen_buf, empty_txt, slot_x + 30, slot_y + 4, 8);
+                    printf("[LOAD_UI] Slot %d: scene=%d, empty=%d\n", slot_i, slot_scene_idx, is_empty);
+                    
+                    /* 存档信息文本 - 使用资源0的sub_15F84公式 */
+                    /* 空槽位: 索引514, 场景名: 514+场景索引, 子场景名: 550+场景索引 */
+                    if (font_data && fdtxt_res0 && fdtxt_res0_size > 0) {
+                        int16_t* txt_end = NULL;
+                        
+                        if (is_empty) {
+                            /* 空槽位: 使用索引514 */
+                            printf("[LOAD_UI] Slot %d: rendering empty slot text (index 514)\n", slot_i);
+                            int16_t* info_txt = fdtxt_get_text_by_index(fdtxt_res0, fdtxt_res0_size, 514, &txt_end);
+                            if (info_txt) {
+                                printf("[LOAD_UI] Slot %d: text rendered\n", slot_i);
+                                render_fdtxt_text(font_data, screen_buf, info_txt, slot_x + 30, slot_y + 4, 10);
                             } else {
-                                render_char_8bit(font_data, screen_buf, 'E' - 'A', slot_x + 30, slot_y + 4, 8);
-                                render_char_8bit(font_data, screen_buf, 'M' - 'A', slot_x + 46, slot_y + 4, 8);
-                                render_char_8bit(font_data, screen_buf, 'P' - 'A', slot_x + 62, slot_y + 4, 8);
-                                render_char_8bit(font_data, screen_buf, 'T' - 'A', slot_x + 78, slot_y + 4, 8);
-                                render_char_8bit(font_data, screen_buf, 'Y' - 'A', slot_x + 94, slot_y + 4, 8);
+                                printf("[LOAD_UI] Slot %d: text not found\n", slot_i);
+                            }
+                        } else {
+                            /* 非空槽位: 场景名称 (514 + 场景索引) */
+                            int scene_name_idx = 514 + slot_scene_idx;
+                            printf("[LOAD_UI] Slot %d: rendering scene name (index %d)\n", slot_i, scene_name_idx);
+                            int16_t* scene_txt = fdtxt_get_text_by_index(fdtxt_res0, fdtxt_res0_size, scene_name_idx, &txt_end);
+                            if (scene_txt) {
+                                printf("[LOAD_UI] Slot %d: scene text rendered\n", slot_i);
+                                render_fdtxt_text(font_data, screen_buf, scene_txt, slot_x + 30, slot_y + 4, 10);
+                            }
+                            
+                            /* 子场景名称 (550 + 场景索引) */
+                            int subscene_name_idx = 550 + slot_scene_idx;
+                            printf("[LOAD_UI] Slot %d: rendering subscene name (index %d)\n", slot_i, subscene_name_idx);
+                            int16_t* subscene_txt = fdtxt_get_text_by_index(fdtxt_res0, fdtxt_res0_size, subscene_name_idx, &txt_end);
+                            if (subscene_txt) {
+                                printf("[LOAD_UI] Slot %d: subscene text rendered\n", slot_i);
+                                render_fdtxt_text(font_data, screen_buf, subscene_txt, slot_x + 30, slot_y + 20, 10);
                             }
                         }
                     } else {
-                        if (font_data && fdtxt_full) {
-                            int16_t* txt_end = NULL;
-                            int16_t* info_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 12, &txt_end);
-                            if (!info_txt)
-                                info_txt = fdtxt_get_sub(fdtxt_full, fdtxt_fsize, 0, 10, &txt_end);
-                            if (info_txt) {
-                                render_fdtxt_text(font_data, screen_buf, info_txt, slot_x + 30, slot_y + 4, 10);
-                            } else {
-                                render_char_8bit(font_data, screen_buf, 'S' - 'A', slot_x + 30, slot_y + 4, 10);
-                                render_char_8bit(font_data, screen_buf, 'C' - 'A', slot_x + 46, slot_y + 4, 10);
-                                render_char_8bit(font_data, screen_buf, 'E' - 'A', slot_x + 62, slot_y + 4, 10);
-                                render_char_8bit(font_data, screen_buf, 'N' - 'A', slot_x + 78, slot_y + 4, 10);
-                                render_char_8bit(font_data, screen_buf, 'E' - 'A', slot_x + 94, slot_y + 4, 10);
-                            }
-                            /* 场景编号 */
-                            if (slot_scene_idx >= 0 && slot_scene_idx <= 9)
-                                render_char_8bit(font_data, screen_buf, slot_scene_idx, slot_x + 30 + 6 * CHAR_W, slot_y + 4, 10);
-                        }
-                    }
-                }
-                
-                /* 底部提示 */
-                if (font_data) {
-                    const char* prompt = "SELECT SLOT  UP/DN  ENTER=OK  ESC=CANCEL";
-                    int prompt_len = (int)strlen(prompt);
-                    int prompt_x = (320 - prompt_len * CHAR_W) / 2;
-                    if (prompt_x < 0) prompt_x = 10;
-                    for (int ci = 0; ci < prompt_len; ci++) {
-                        char c = prompt[ci];
-                        if (c >= 'A' && c <= 'Z')
-                            render_char_8bit(font_data, screen_buf, c - 'A', prompt_x + ci * CHAR_W, 180, 14);
+                        printf("[LOAD_UI] Slot %d: font_data=%p, fdtxt_res0=%p, size=%zu\n", 
+                               slot_i, font_data, fdtxt_res0, fdtxt_res0_size);
                     }
                 }
                 
                 /* 将屏幕缓冲区拷贝到渲染器 */
+                printf("[LOAD_UI] Blitting to screen...\n");
                 memcpy(sm->render.screen, screen_buf, 64000);
                 fd2_render_present(&sm->render);
+                printf("[LOAD_UI] Screen presented, waiting for input...\n");
                 
                 /* 等待输入: 对应原游戏 sub_16C57 */
                 SDL_Event event;
@@ -935,10 +946,12 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                 
                 while (SDL_WaitEvent(&event)) {
                     if (event.type == SDL_QUIT) {
+                        printf("[LOAD_UI] SDL_QUIT received\n");
                         load_result = -1;
                         goto load_exit;
                     }
                     if (event.type == SDL_KEYDOWN) {
+                        printf("[LOAD_UI] Key pressed: %d\n", event.key.keysym.scancode);
                         switch (event.key.keysym.scancode) {
                             case SDL_SCANCODE_UP:
                                 if (selected_slot > 0) {
@@ -954,24 +967,34 @@ int fd2_state_machine_run(fd2_state_machine_t* sm) {
                                 break;
                             case SDL_SCANCODE_RETURN:
                             case SDL_SCANCODE_SPACE:
+                                printf("[LOAD_UI] Confirm slot %d\n", selected_slot);
                                 load_result = selected_slot;
                                 goto load_exit;
                             case SDL_SCANCODE_ESCAPE:
+                                printf("[LOAD_UI] ESC pressed\n");
                                 load_result = -1;
                                 goto load_exit;
                             default:
                                 break;
                         }
-                        if (need_refresh) break;
+                        if (need_refresh) {
+                            printf("[LOAD_UI] Need refresh, breaking\n");
+                            break;
+                        }
                     }
                 }
+                
+                /* 如果SDL_WaitEvent返回0，检查是否需要刷新 */
+                if (need_refresh) continue;
+                printf("[LOAD_UI] SDL_WaitEvent returned 0, checking for errors...\n");
             }
             
         load_exit:
             /* 清理资源 */
             if (screen_buf) free(screen_buf);
-            if (fdother_6) free(fdother_6);
-            if (fdtxt_full) free(fdtxt_full);
+            if (fdother_3) free(fdother_3);
+            if (fdother_13) free(fdother_13);
+            if (fdtxt_res0) free(fdtxt_res0);
             
             selected_slot = load_result;
             printf("[STATE_MACHINE] User selected slot %d\n", selected_slot);
