@@ -70,9 +70,15 @@ typedef struct {
     u32 fdother_size;
     int tile_w;
     int tile_h;
+    // 解压后的tile数据缓冲区
+    u8* decompressed_tiles;
+    u32* tile_offsets;
+    u16 tile_count;
 } fd2_ui_render_t;
 
 static fd2_ui_render_t g_ui_render;
+static const char* g_data_dir = NULL;
+static fd2_resources_t g_res;
 
 static int fd2_ui_render_init(int scale) {
     memset(&g_ui_render, 0, sizeof(g_ui_render));
@@ -174,32 +180,215 @@ static void fd2_ui_blit_rle(const u8* res_data, u32 res_size, int dx, int dy) {
 }
 
 /**
+ * 解压所有tile数据到独立缓冲区
+ * 
+ * 原版游戏可能在加载索引5后立即解压所有tile，或者在首次使用时解压。
+ * 为了简化，我们在加载后一次性解压所有tile。
+ * 
+ * @param raw_data 原始tile集数据
+ * @param raw_size 原始数据大小
+ * @return 0成功，-1失败
+ */
+static int fd2_ui_decompress_all_tiles(const u8* raw_data, u32 raw_size) {
+    if (!raw_data || raw_size < 6) return -1;
+    
+    u16 tile_count = raw_data[4] | (raw_data[5] << 8);
+    if (tile_count == 0 || tile_count > 1000) return -1;
+    
+    g_ui_render.tile_count = tile_count;
+    
+    // 分配tile偏移表
+    g_ui_render.tile_offsets = (u32*)malloc(tile_count * sizeof(u32));
+    if (!g_ui_render.tile_offsets) return -1;
+    
+    // 解析tile偏移表
+    for (int i = 0; i < tile_count; i++) {
+        u32 offset_addr = 6 + i * 4;
+        if (offset_addr + 4 > raw_size) break;
+        
+        g_ui_render.tile_offsets[i] = raw_data[offset_addr] | 
+                                      (raw_data[offset_addr + 1] << 8) |
+                                      (raw_data[offset_addr + 2] << 16) |
+                                      (raw_data[offset_addr + 3] << 24);
+    }
+    
+    // 计算解压后的总大小
+    u32 total_decompressed_size = 0;
+    for (int i = 0; i < tile_count; i++) {
+        u32 tile_offset = g_ui_render.tile_offsets[i];
+        if (tile_offset + 4 > raw_size) continue;
+        
+        u16 w = raw_data[tile_offset] | (raw_data[tile_offset + 1] << 8);
+        u16 h = raw_data[tile_offset + 2] | (raw_data[tile_offset + 3] << 8);
+        
+        total_decompressed_size += 4 + w * h; // 4字节头部 + 像素数据
+    }
+    
+    // 分配解压缓冲区
+    g_ui_render.decompressed_tiles = (u8*)malloc(total_decompressed_size);
+    if (!g_ui_render.decompressed_tiles) {
+        free(g_ui_render.tile_offsets);
+        g_ui_render.tile_offsets = NULL;
+        return -1;
+    }
+    
+    // 解压每个tile
+    u32 write_pos = 0;
+    for (int i = 0; i < tile_count; i++) {
+        u32 tile_offset = g_ui_render.tile_offsets[i];
+        if (tile_offset + 4 > raw_size) continue;
+        
+        u16 w = raw_data[tile_offset] | (raw_data[tile_offset + 1] << 8);
+        u16 h = raw_data[tile_offset + 2] | (raw_data[tile_offset + 3] << 8);
+        
+        if (w == 0 || h == 0 || w > 640 || h > 480) continue;
+        
+        // 计算下一个tile的偏移，得到当前tile的压缩数据大小
+        u32 next_tile_offset = (i + 1 < tile_count) ? g_ui_render.tile_offsets[i + 1] : raw_size;
+        u32 compressed_size = next_tile_offset - tile_offset;
+        
+        if (compressed_size < 4) continue;
+        
+        // 写入头部 (w, h)
+        g_ui_render.decompressed_tiles[write_pos + 0] = w & 0xFF;
+        g_ui_render.decompressed_tiles[write_pos + 1] = (w >> 8) & 0xFF;
+        g_ui_render.decompressed_tiles[write_pos + 2] = h & 0xFF;
+        g_ui_render.decompressed_tiles[write_pos + 3] = (h >> 8) & 0xFF;
+        
+        // RLE解压像素数据
+        u8* pixel_buf = (u8*)malloc(w * h);
+        if (pixel_buf) {
+            int ret = fd2_rle_decompress(raw_data + tile_offset + 4, compressed_size - 4, 
+                                         pixel_buf, 0, 0, w, w, h, -1);
+            if (ret == 0) {
+                memcpy(g_ui_render.decompressed_tiles + write_pos + 4, pixel_buf, w * h);
+            }
+            free(pixel_buf);
+        }
+        
+        // 更新tile偏移表为解压后的偏移
+        g_ui_render.tile_offsets[i] = write_pos;
+        
+        write_pos += 4 + w * h;
+    }
+    
+    printf("  [DECOMPRESS] 解压 %d 个tile，总大小=%u 字节\n", tile_count, total_decompressed_size);
+    return 0;
+}
+
+/**
+ * 加载FDOTHER索引5的原始tile数据 (窗口tile集，不解压)
+ * 
+ * 根据IDA汇编分析:
+ * - main函数(0x25BF4): push 5 + push _FDOTHER_DAT__7 + call sub_111BA
+ * - _FDOTHER_DAT__7是全局变量名，但实际加载的是索引5
+ * - sub_111BA直接读取原始数据，不做RLE解压
+ * 
+ * @param data_dir 数据目录
+ * @param out_size 输出数据大小
+ * @return 原始数据指针，失败返回NULL
+ */
+static const u8* fd2_ui_load_raw_tile_set(const char* data_dir, u32* out_size) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", data_dir, "FDOTHER.DAT");
+    
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "无法打开 %s\n", path);
+        return NULL;
+    }
+    
+    // 读取DAT头部
+    char magic[6];
+    if (fread(magic, 1, 6, f) != 6) {
+        fclose(f);
+        return NULL;
+    }
+    if (memcmp(magic, "LLLLLL", 6) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    
+    dword resource_count;
+    if (fread(&resource_count, 4, 1, f) != 1) {
+        fclose(f);
+        return NULL;
+    }
+    
+    if (5 >= resource_count) {
+        fclose(f);
+        return NULL;
+    }
+    
+    // 读取偏移表
+    dword* offsets = malloc(resource_count * 4);
+    if (!offsets) {
+        fclose(f);
+        return NULL;
+    }
+    fseek(f, 10, SEEK_SET);
+    if (fread(offsets, 4, resource_count, f) != resource_count) {
+        free(offsets);
+        fclose(f);
+        return NULL;
+    }
+    
+    // 获取索引5的数据范围 (窗口tile集)
+    dword start = offsets[5];
+    dword end = (5 + 1 < resource_count) ? offsets[5 + 1] : (dword)-1;
+    dword size;
+    if (end == (dword)-1) {
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        size = file_size - start;
+    } else {
+        size = end - start;
+    }
+    
+    // 读取原始数据
+    u8* data = malloc(size);
+    if (!data) {
+        free(offsets);
+        fclose(f);
+        return NULL;
+    }
+    
+    fseek(f, start, SEEK_SET);
+    if (fread(data, 1, size, f) != size) {
+        free(data);
+        free(offsets);
+        fclose(f);
+        return NULL;
+    }
+    
+    free(offsets);
+    fclose(f);
+    
+    if (out_size) *out_size = size;
+    printf("  [LOAD] FDOTHER索引5原始数据 (窗口tile集): size=%u\n", size);
+    return data;
+}
+
+/**
  * 根据tile索引获取tile数据指针 (sub_1685C逻辑)
  * 
- * 原版公式: tile数据指针 = FDOTHER_DAT__7 + *(DWORD *)(FDOTHER_DAT__7 + 4*tile_index + 6)
+ * 原版公式: tile数据指针 = FDOTHER_DAT__7 + *(DWORD *)(FDOTHER_DAT__7 + 4 * tile_index + 6)
+ * 
+ * 修改后: 使用解压后的tile数据
  * 
  * @param tile_index tile索引
  * @return tile数据指针，失败返回NULL
  */
 static const u8* fd2_ui_get_tile_ptr(int tile_index) {
-    if (!g_ui_render.fdother_data || g_ui_render.fdother_size < 6) return NULL;
+    if (!g_ui_render.decompressed_tiles || !g_ui_render.tile_offsets) return NULL;
     
-    const u8* base = g_ui_render.fdother_data;
+    if (tile_index < 0 || tile_index >= g_ui_render.tile_count) {
+        fprintf(stderr, "  [WARN] tile_index=%d 超出范围 (tile_count=%d)\n", 
+                tile_index, g_ui_render.tile_count);
+        return NULL;
+    }
     
-    u16 tile_count = base[4] | (base[5] << 8);
-    if (tile_index < 0 || tile_index >= tile_count) return NULL;
-    
-    u32 offset_addr = 6 + tile_index * 4;
-    if (offset_addr + 4 > g_ui_render.fdother_size) return NULL;
-    
-    u32 offset = base[offset_addr] | 
-                 (base[offset_addr + 1] << 8) |
-                 (base[offset_addr + 2] << 16) |
-                 (base[offset_addr + 3] << 24);
-    
-    const u8* tile_ptr = base + offset;
-    if (tile_ptr + 4 > base + g_ui_render.fdother_size) return NULL;
-    
+    const u8* tile_ptr = g_ui_render.decompressed_tiles + g_ui_render.tile_offsets[tile_index];
     return tile_ptr;
 }
 
@@ -374,13 +563,8 @@ static void fd2_ui_draw_main_menu_dialog(fd2_resources_t* res) {
     fd2_ui_fill_screen(32);
     fd2_ui_present();
 
-    // 加载窗口图块数据 (FDOTHER索引7)
-    const u8* tile_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 7, &g_ui_render.fdother_size);
-    if (tile_data) {
-        g_ui_render.fdother_data = tile_data;
-        u16 tile_count = tile_data[4] | (tile_data[5] << 8);
-        printf("  [2] 加载窗口图块 (FDOTHER索引7, 大小=%u, tile数量=%d)\n", g_ui_render.fdother_size, tile_count);
-    }
+    printf("  [2] 窗口图块数据已在初始化时加载并解压 (tile数量=%d)\n", 
+           g_ui_render.tile_count);
 
     // 保存原始屏幕 (根据sub_4ECBF逻辑)
     fd2_ui_backup_region(40, 30, 240, 140);
@@ -441,11 +625,6 @@ static void fd2_ui_draw_status_dialog(fd2_resources_t* res) {
     fd2_ui_fill_screen(32);
     fd2_ui_present();
 
-    const u8* tile_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 7, &g_ui_render.fdother_size);
-    if (tile_data) {
-        g_ui_render.fdother_data = tile_data;
-    }
-
     // 绘制主对话框
     printf("  [1] 绘制属性对话框 (18列 x 12行 = 288x192像素)\n");
     fd2_ui_draw_window(16, 4, 18, 12);
@@ -505,11 +684,6 @@ static void fd2_ui_draw_save_load_dialog(fd2_resources_t* res) {
 
     fd2_ui_fill_screen(32);
     fd2_ui_present();
-
-    const u8* tile_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 7, &g_ui_render.fdother_size);
-    if (tile_data) {
-        g_ui_render.fdother_data = tile_data;
-    }
 
     // 绘制主对话框
     printf("  [1] 绘制存盘对话框 (16列 x 10行 = 256x160像素)\n");
@@ -575,11 +749,6 @@ static void fd2_ui_draw_battle_menu(fd2_resources_t* res) {
         printf("  [1] 绘制战场背景 (FDOTHER索引15)\n");
     }
     fd2_ui_present();
-
-    const u8* tile_data = fd2_resources_get(res, FD2_DAT_FDOTHER, 7, &g_ui_render.fdother_size);
-    if (tile_data) {
-        g_ui_render.fdother_data = tile_data;
-    }
 
     // 绘制角色状态窗口 (左上角)
     printf("  [2] 绘制角色状态窗口 (8列 x 6行 = 128x96像素)\n");
@@ -707,26 +876,49 @@ int main(int argc, char** argv) {
             data_dir = ".";
         }
     }
+    
+    g_data_dir = data_dir;
 
     printf("FD2 UI渲染测试程序 (根据IDA汇编代码复原)\n");
     printf("==========================================\n");
     printf("数据目录: %s\n", data_dir);
 
-    fd2_resources_t res;
-    if (fd2_resources_init(&res, data_dir) != 0) {
+    if (fd2_resources_init(&g_res, data_dir) != 0) {
         fprintf(stderr, "资源管理器初始化失败\n");
         return 1;
     }
 
-    if (fd2_resources_load_dat(&res, FD2_DAT_FDOTHER) != 0) {
+    if (fd2_resources_load_dat(&g_res, FD2_DAT_FDOTHER) != 0) {
         fprintf(stderr, "FDOTHER.DAT加载失败\n");
-        fd2_resources_shutdown(&res);
+        fd2_resources_shutdown(&g_res);
         return 1;
     }
-
+    
+    // 先初始化UI渲染系统
     if (fd2_ui_render_init(UI_TEST_WINDOW_SCALE) != 0) {
         fprintf(stderr, "UI渲染系统初始化失败\n");
-        fd2_resources_shutdown(&res);
+        fd2_resources_shutdown(&g_res);
+        return 1;
+    }
+    
+    // 加载FDOTHER索引5的原始tile数据 (全局只加载一次)
+    const u8* tile_data = fd2_ui_load_raw_tile_set(data_dir, &g_ui_render.fdother_size);
+    if (tile_data) {
+        g_ui_render.fdother_data = tile_data;
+        u16 tile_count = tile_data[4] | (tile_data[5] << 8);
+        printf("  [INIT] 加载窗口图块 (FDOTHER索引5原始数据, 大小=%u, tile数量=%d)\n", 
+               g_ui_render.fdother_size, tile_count);
+        
+        // 解压所有tile数据
+        if (fd2_ui_decompress_all_tiles(tile_data, g_ui_render.fdother_size) == 0) {
+            printf("  [INIT] tile数据解压成功\n");
+        } else {
+            fprintf(stderr, "  [WARN] tile数据解压失败，将使用原始数据\n");
+        }
+    } else {
+        fprintf(stderr, "FDOTHER索引5原始数据加载失败\n");
+        fd2_ui_render_shutdown();
+        fd2_resources_shutdown(&g_res);
         return 1;
     }
 
@@ -746,11 +938,11 @@ int main(int argc, char** argv) {
         }
 
         switch (test_index) {
-            case 0: fd2_ui_draw_main_menu_dialog(&res); break;
-            case 1: fd2_ui_draw_status_dialog(&res); break;
-            case 2: fd2_ui_draw_save_load_dialog(&res); break;
-            case 3: fd2_ui_draw_battle_menu(&res); break;
-            case 4: fd2_ui_draw_all_grid(&res); break;
+            case 0: fd2_ui_draw_main_menu_dialog(&g_res); break;
+            case 1: fd2_ui_draw_status_dialog(&g_res); break;
+            case 2: fd2_ui_draw_save_load_dialog(&g_res); break;
+            case 3: fd2_ui_draw_battle_menu(&g_res); break;
+            case 4: fd2_ui_draw_all_grid(&g_res); break;
             default:
                 printf("\n所有测试完成!\n");
                 goto done;
@@ -763,7 +955,7 @@ int main(int argc, char** argv) {
 done:
     printf("\n清理资源...\n");
     fd2_ui_render_shutdown();
-    fd2_resources_shutdown(&res);
+    fd2_resources_shutdown(&g_res);
     printf("UI渲染测试完成\n");
     return 0;
 }
