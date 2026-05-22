@@ -42,6 +42,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "fd2_decoder.h"
 #include "fd2_render.h"
@@ -203,7 +206,7 @@ static void test_render_present(test_render_t* r) {
     SDL_RenderPresent(r->renderer);
 }
 
-static void wait_for_key(test_render_t* r, const char* message) {
+static void wait_for_key(const char* message) {
     printf("[PRESS] %s - 按任意键继续...\n", message);
     SDL_Event e;
     int waiting = 1;
@@ -290,7 +293,7 @@ static int test_ui_screen_menu(test_render_t* r, fd2_resources_t* res) {
     }
 
     test_render_present(r);
-    wait_for_key(r, "主菜单界面渲染完成");
+    wait_for_key("主菜单界面渲染完成");
     return 0;
 }
 
@@ -313,7 +316,7 @@ static int test_ui_screen_password(test_render_t* r, fd2_resources_t* res) {
                    pal_size, 0, 0, "密码界面3(98)");
 
     test_render_present(r);
-    wait_for_key(r, "密码界面渲染完成");
+    wait_for_key("密码界面渲染完成");
     return 0;
 }
 
@@ -338,7 +341,7 @@ static int test_ui_screen_transition(test_render_t* r, fd2_resources_t* res) {
 
         char msg[64];
         snprintf(msg, sizeof(msg), "%s 渲染完成", transition_names[i]);
-        wait_for_key(r, msg);
+        wait_for_key(msg);
     }
 
     return 0;
@@ -368,7 +371,7 @@ static int test_ui_screen_backgrounds(test_render_t* r, fd2_resources_t* res) {
 
         char msg[64];
         snprintf(msg, sizeof(msg), "%s 渲染完成", bg_names[i]);
-        wait_for_key(r, msg);
+        wait_for_key(msg);
     }
 
     return 0;
@@ -395,7 +398,7 @@ static int test_ui_screen_scene_images(test_render_t* r, fd2_resources_t* res) {
 
         char msg[64];
         snprintf(msg, sizeof(msg), "%s 渲染完成", scene_names[i]);
-        wait_for_key(r, msg);
+        wait_for_key(msg);
     }
 
     return 0;
@@ -422,7 +425,7 @@ static int test_ui_screen_animation(test_render_t* r, fd2_resources_t* res) {
 
         char msg[64];
         snprintf(msg, sizeof(msg), "%s 渲染完成", anim_names[i]);
-        wait_for_key(r, msg);
+        wait_for_key(msg);
     }
 
     return 0;
@@ -443,7 +446,7 @@ static int test_ui_screen_special_effects(test_render_t* r, fd2_resources_t* res
                    pal_size, 0, 0, "特殊效果(79)");
 
     test_render_present(r);
-    wait_for_key(r, "特殊效果渲染完成");
+    wait_for_key("特殊效果渲染完成");
     return 0;
 }
 
@@ -496,14 +499,25 @@ static int test_ui_screen_all_resources(test_render_t* r, fd2_resources_t* res) 
 
     test_render_present(r);
     printf("  [GRID] 共绘制 %d 个资源\n", drawn);
-    wait_for_key(r, "所有UI资源网格展示完成");
+    wait_for_key("所有UI资源网格展示完成");
     return 0;
 }
 
 int main(int argc, char** argv) {
-    const char* data_dir = ".";
+    const char* data_dir = NULL;
     if (argc > 1) {
         data_dir = argv[1];
+    } else {
+        char exe_dir[512];
+        GetModuleFileNameA(NULL, exe_dir, sizeof(exe_dir));
+        char* last_sep = strrchr(exe_dir, '\\');
+        if (!last_sep) last_sep = strrchr(exe_dir, '/');
+        if (last_sep) {
+            *last_sep = '\0';
+            data_dir = exe_dir;
+        } else {
+            data_dir = ".";
+        }
     }
 
     printf("FD2 UI渲染测试程序\n");
@@ -559,7 +573,7 @@ int main(int argc, char** argv) {
         }
 
         test_index++;
-        printf("\n测试进度: %d/8\n", test_index, 8);
+        printf("\n测试进度: %d/%d\n", test_index, 8);
     }
 
 done:

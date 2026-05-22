@@ -4,7 +4,7 @@ setlocal EnableDelayedExpansion
 
 :: FD2 Build Script for Windows (MSYS2)
 :: Supports both UCRT64 and MINGW64 environments
-:: Usage: build.bat [all|game|test|intro|menu_debug|sub_111ba_test|clean|release] [mingw64]
+:: Usage: build.bat [all|game|test|intro|menu_debug|sub_111ba_test|ui_test|clean|release] [mingw64]
 
 :: Detect environment
 set MSYS2_PREFIX=C:\msys64\ucrt64
@@ -40,6 +40,7 @@ set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
+set TARGET_UI_TEST=%BIN_DIR%\fd2_ui_test%EXE_EXT%
 
 :: Parse arguments (order-independent)
 set TARGET=all
@@ -51,6 +52,7 @@ if /I "%~1"=="all" set TARGET=all
 if /I "%~1"=="game" set TARGET=game
 if /I "%~1"=="clean" set TARGET=clean
 if /I "%~1"=="release" set RELEASE=1
+if /I "%~1"=="ui_test" set TARGET=ui_test
 if /I "%~1"=="mingw64" set MSYS2_PREFIX=C:\msys64\mingw64
 shift
 goto :arg_loop
@@ -141,6 +143,7 @@ if "%TARGET%"=="all" (
 :: Individual targets
 if "%TARGET%"=="game" goto :build_game
 if "%TARGET%"=="release" goto :build_release
+if "%TARGET%"=="ui_test" goto :build_ui_test
 
 if "%TARGET%"=="all" (
     echo.
@@ -166,6 +169,26 @@ if "%TARGET%"=="all" (
     echo Build complete! All targets generated in %BIN_DIR%\.
     goto :end
 )
+
+:build_ui_test
+call :compile %SRC_DIR%\fd2_ui_test.c %OBJ_DIR%\fd2_ui_test.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_resources.c %OBJ_DIR%\fd2_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
+if errorlevel 1 goto :error
+
+echo Linking %TARGET_UI_TEST%
+%GCC% %CFLAGS% -o %TARGET_UI_TEST% %OBJ_DIR%\fd2_ui_test.o %DECODER_OBJ% %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_rle.o %LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_UI_TEST%
+
+echo.
+echo Copying required DLLs...
+copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+goto :end
 
 :build_game
 call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
