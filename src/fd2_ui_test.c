@@ -37,6 +37,9 @@
 #include <windows.h>
 #endif
 
+// 引入通用FDOTHER解析器
+#include "../include/fd2_fdother_parser.h"
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -224,59 +227,33 @@ static const u8* fd2_ui_load_resource(const char* data_dir, int index, u32* out_
 static int fd2_ui_parse_tileset(const u8* raw_data, u32 raw_size) {
     if (!raw_data || raw_size < 6) return -1;
     
-    if (memcmp(raw_data, "LMI1", 4) != 0) {
-        fprintf(stderr, "  [WARN] 魔术字节不是'LMI1'\n");
+    // 创建临时资源对象用于解析
+    fd2_resource_t res;
+    res.data = (unsigned char*)raw_data;
+    res.size = raw_size;
+    res.type = fd2_fdother_identify_type(&res);
+    
+    if (res.type != FD2_RES_TYPE_LMI1) {
+        fprintf(stderr, "  [WARN] 不是LMI1格式\n");
         return -1;
     }
     
-    u16 tile_count = raw_data[4] | (raw_data[5] << 8);
-    if (tile_count == 0 || tile_count > 1000) return -1;
-    
-    g_ui_render.tile_count = tile_count;
-    g_ui_render.tile_offsets = (u32*)calloc(tile_count, sizeof(u32));
-    g_ui_render.tile_widths = (u16*)calloc(tile_count, sizeof(u16));
-    g_ui_render.tile_heights = (u16*)calloc(tile_count, sizeof(u16));
-    g_ui_render.tile_pixels = (u8**)calloc(tile_count, sizeof(u8*));
-    
-    if (!g_ui_render.tile_offsets || !g_ui_render.tile_widths || 
-        !g_ui_render.tile_heights || !g_ui_render.tile_pixels) return -1;
-    
-    for (int i = 0; i < tile_count; i++) {
-        u32 offset_addr = 6 + i * 4;
-        if (offset_addr + 4 > raw_size) break;
-        
-        u32 tile_offset = raw_data[offset_addr] | 
-                          (raw_data[offset_addr + 1] << 8) |
-                          (raw_data[offset_addr + 2] << 16) |
-                          (raw_data[offset_addr + 3] << 24);
-        
-        g_ui_render.tile_offsets[i] = tile_offset;
-        
-        if (tile_offset + 4 > raw_size) continue;
-        
-        u16 w = raw_data[tile_offset] | (raw_data[tile_offset + 1] << 8);
-        u16 h = raw_data[tile_offset + 2] | (raw_data[tile_offset + 3] << 8);
-        
-        g_ui_render.tile_widths[i] = w;
-        g_ui_render.tile_heights[i] = h;
-        
-        if (w > 0 && h > 0 && w <= 320 && h <= 200) {
-            u32 pixel_size = w * h;
-            u8* pixels = (u8*)malloc(pixel_size);
-            if (pixels) {
-                memcpy(pixels, raw_data + tile_offset + 4, pixel_size);
-                g_ui_render.tile_pixels[i] = pixels;
-            }
-        }
-        
-        if (i < 20) {
-            printf("    Tile %2d: offset=0x%05X, %dx%d, 加载=%s\n", 
-                   i, tile_offset, w, h,
-                   g_ui_render.tile_pixels[i] ? "成功" : "失败");
-        }
+    // 使用通用解析器解析LMI1 tileset
+    fd2_lmi1_tileset_t* tileset = fd2_lmi1_parse_tileset(&res);
+    if (!tileset) {
+        fprintf(stderr, "  [WARN] LMI1 tileset解析失败\n");
+        return -1;
     }
     
-    printf("  [PARSE] Tile集解析完成 (tile_count=%d)\n", tile_count);
+    // 保存解析结果到全局变量
+    g_ui_render.tile_count = tileset->tile_count;
+    g_ui_render.tile_offsets = tileset->tile_offsets;
+    g_ui_render.tileset_data = raw_data;
+    
+    // 注意：对于运行时性能考虑，我们保留原有的结构
+    // 但可以使用通用解析器的逻辑
+    printf("  [PARSE] Tile集解析完成 (tile_count=%d)\n", tileset->tile_count);
+    
     return 0;
 }
 
