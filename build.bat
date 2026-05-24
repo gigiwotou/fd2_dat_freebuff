@@ -173,15 +173,9 @@ if "%TARGET%"=="all" (
 :build_ui_test
 call :compile %SRC_DIR%\fd2_ui_test.c %OBJ_DIR%\fd2_ui_test.o
 if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_resources.c %OBJ_DIR%\fd2_resources.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
-if errorlevel 1 goto :error
 
 echo Linking %TARGET_UI_TEST%
-%GCC% %CFLAGS% -o %TARGET_UI_TEST% %OBJ_DIR%\fd2_ui_test.o %DECODER_OBJ% %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_rle.o %LDFLAGS%
+%GCC% %CFLAGS% -o %TARGET_UI_TEST% %OBJ_DIR%\fd2_ui_test.o %LDFLAGS%
 if errorlevel 1 goto :error
 echo [OK] %TARGET_UI_TEST%
 

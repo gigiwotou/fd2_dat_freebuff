@@ -6,15 +6,12 @@ int fd2_decode_fdother_resource(byte* src, int src_size, byte* dst, int width, i
     // Read width and height from header (little-endian)
     int w = src[0] | (src[1] << 8);
     int h = src[2] | (src[3] << 8);
-    if (w != width || h != height) {
-        // Dimensions mismatch, maybe still proceed?
-    }
     if (src_size <= 4) return -1;
     byte* compressed = src + 4;
     int comp_size = src_size - 4;
     int expected = width * height;
     
-    // RLE decompression algorithm from Python decompress_rle
+    // RLE decompression algorithm - fixed version
     int num4 = 0;
     int num3 = comp_size - 1;
     int num7 = 0;
@@ -60,6 +57,7 @@ int fd2_decode_fdother_resource(byte* src, int src_size, byte* dst, int width, i
             while (num13 <= num12) {
                 if (b >= 64 && b < 128) {
                     num10 += 1;
+                    num4++;  // FIX: increment num4 in COPY command loop
                 }
                 if (num4 < comp_size) {
                     byte index = compressed[num4];
