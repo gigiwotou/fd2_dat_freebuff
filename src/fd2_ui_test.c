@@ -7,8 +7,8 @@
  * - sub_168B6: 窗口框架绘制函数
  * 
  * 资源加载：
- * - FDOTHER索引7: 窗口边框tile集（138个tile，未压缩）
- *   根据MCP分析：_FDOTHER_DAT__7 指向 FDOTHER.DAT 索引7
+ * - FDOTHER索引4: 窗口边框tile集（138个tile，LMI1格式）
+ *   根据MCP分析和扫描结果：包含3x3角部、16x3边框、3x16边框、16x16中心
  * - FDOTHER索引75: 调色板（768字节）
  * 
  * Tile数据格式（根据MCP分析）：
@@ -326,41 +326,47 @@ static void fd2_sub_168B6(int base_x, int base_y, int tile_cols, int tile_rows) 
     if (tile_cols < 2 || tile_rows < 2) return;
     
     int pitch = FD2_SCREEN_W;
-    int tile_w = 16;
-    int tile_h = 16;
     
-    // 根据MCP汇编sub_168B6代码，绘制顺序：
-    // 1. 先绘制4个角 (tile 1-4)
-    // 2. 绘制边框 (tile 5, 6, 7, 8, 14, 15, 16, 17)
-    // 3. 循环绘制边缘 (tile 9-12)
-    // 4. 双循环绘制中心区域 (tile 13)
+    // 根据MCP汇编sub_168B6代码分析，窗口布局是基于tile数量而非固定像素尺寸
+    // 位置计算基于MCP中的公式：
+    // - v28 = 16 * a6 (中心tile宽度相关)
+    // - v29 = 3 * a6 (边框高度相关)
+    // - 实际绘制使用tile的固有尺寸
     
-    // 步骤1: 绘制4个角
+    // 步骤1: 绘制4个角 (tile 1-4)
+    // 左上角
     fd2_sub_1685C(base_x, base_y, 1, pitch);
-    fd2_sub_1685C(base_x + (tile_cols - 1) * tile_w, base_y, 2, pitch);
-    fd2_sub_1685C(base_x, base_y + (tile_rows - 1) * tile_h, 3, pitch);
-    fd2_sub_1685C(base_x + (tile_cols - 1) * tile_w, base_y + (tile_rows - 1) * tile_h, 4, pitch);
+    // 右上角
+    fd2_sub_1685C(base_x + 16 * (tile_cols - 1), base_y, 2, pitch);
+    // 左下角
+    fd2_sub_1685C(base_x, base_y + 16 * (tile_rows - 1), 3, pitch);
+    // 右下角
+    fd2_sub_1685C(base_x + 16 * (tile_cols - 1), base_y + 16 * (tile_rows - 1), 4, pitch);
     
-    // 步骤2: 绘制边框
+    // 步骤2: 绘制上边框 (tile 5, 16x3) - 在第0行
     for (int i = 1; i < tile_cols - 1; i++) {
-        fd2_sub_1685C(base_x + i * tile_w, base_y, 5, pitch);
-    }
-    for (int i = 1; i < tile_cols - 1; i++) {
-        fd2_sub_1685C(base_x + i * tile_w, base_y + (tile_rows - 1) * tile_h, 8, pitch);
-    }
-    for (int i = 1; i < tile_rows - 1; i++) {
-        fd2_sub_1685C(base_x, base_y + i * tile_h, 10, pitch);
-    }
-    for (int i = 1; i < tile_rows - 1; i++) {
-        fd2_sub_1685C(base_x + (tile_cols - 1) * tile_w, base_y + i * tile_h, 11, pitch);
+        fd2_sub_1685C(base_x + 16 * i, base_y, 5, pitch);
     }
     
-    // 步骤3: 双循环绘制中心区域 (tile 13)
+    // 步骤3: 绘制下边框 (tile 8, 16x3) - 在最后一行
+    for (int i = 1; i < tile_cols - 1; i++) {
+        fd2_sub_1685C(base_x + 16 * i, base_y + 16 * (tile_rows - 1), 8, pitch);
+    }
+    
+    // 步骤4: 绘制左边框 (tile 10, 3x16) - 在第0列
+    for (int i = 1; i < tile_rows - 1; i++) {
+        fd2_sub_1685C(base_x, base_y + 16 * i, 10, pitch);
+    }
+    
+    // 步骤5: 绘制右边框 (tile 11, 3x16) - 在最后一列
+    for (int i = 1; i < tile_rows - 1; i++) {
+        fd2_sub_1685C(base_x + 16 * (tile_cols - 1), base_y + 16 * i, 11, pitch);
+    }
+    
+    // 步骤6: 双循环绘制中心区域 (tile 13, 16x16)
     for (int row = 1; row < tile_rows - 1; row++) {
         for (int col = 1; col < tile_cols - 1; col++) {
-            int x = base_x + col * tile_w;
-            int y = base_y + row * tile_h;
-            fd2_sub_1685C(x, y, 13, pitch);
+            fd2_sub_1685C(base_x + 16 * col, base_y + 16 * row, 13, pitch);
         }
     }
 }
@@ -511,9 +517,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  [WARN] 调色板加载失败，使用默认调色板\n");
     }
     
-    printf("\n[LOADING] 加载FDOTHER索引7 Tile集 (窗口边框资源)...\n");
+    printf("\n[LOADING] 加载FDOTHER索引4 Tile集 (窗口边框资源)...\n");
     u32 tileset_size;
-    const u8* tileset_data = fd2_ui_load_resource(data_dir, 7, &tileset_size);
+    const u8* tileset_data = fd2_ui_load_resource(data_dir, 4, &tileset_size);
     if (tileset_data) {
         g_ui_render.tileset_data = tileset_data;
         g_ui_render.tileset_size = tileset_size;
@@ -524,7 +530,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  [WARN] Tile集解析失败\n");
         }
     } else {
-        fprintf(stderr, "  [WARN] FDOTHER索引7 tile数据加载失败\n");
+        fprintf(stderr, "  [WARN] FDOTHER索引4 tile数据加载失败\n");
     }
 
     printf("\n控制: 按空格键切换测试，ESC/Q退出\n\n");
