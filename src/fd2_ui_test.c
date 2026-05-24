@@ -296,28 +296,47 @@ static void fd2_sub_4ED0B(u8* dst, const u8* tile_data, int pitch) {
 
 static void fd2_sub_1685C(int dst_x, int dst_y, int tile_index, int pitch) {
     if (tile_index < 0 || tile_index >= g_ui_render.tile_count) return;
-    if (!g_ui_render.tile_pixels[tile_index]) return;
     
-    u16 width = g_ui_render.tile_widths[tile_index];
-    u16 height = g_ui_render.tile_heights[tile_index];
+    // 根据MCP分析，直接调用sub_4ED0B函数逻辑
+    // tile数据格式: WORD[0]=宽度, WORD[1]=高度, 后面是像素数据
+    u32 tile_offset = g_ui_render.tile_offsets[tile_index];
+    if (tile_offset == 0) return;
     
-    if (width <= 0 || height <= 0) return;
+    // 获取tile数据指针（指向完整的tile数据块，包含宽高信息）
+    const u8* tile_data = g_ui_render.tileset_data + tile_offset;
     
-    const u8* tile_data = g_ui_render.tileset_data + g_ui_render.tile_offsets[tile_index];
+    // 提取宽度和高度
+    u16 width = *(u16*)(tile_data);
+    u16 height = *(u16*)(tile_data + 2);
     
+    if (width == 0 || height == 0) return;
+    
+    // 调用sub_4ED0B的逻辑
+    // src指向像素数据（跳过宽高2个WORD = 4字节）
+    const u8* src = tile_data + 4;
+    u8* dst = g_ui_render.screen + dst_y * FD2_SCREEN_W + dst_x;
+    
+    // 逐行复制
     for (int y = 0; y < height; y++) {
         int screen_y = dst_y + y;
         if (screen_y < 0 || screen_y >= FD2_SCREEN_H) continue;
         
-        u8* dst_row = g_ui_render.screen + screen_y * pitch;
-        const u8* src_row = tile_data + 4 + y * width;
+        u8* dst_row = g_ui_render.screen + screen_y * FD2_SCREEN_W + dst_x;
         
-        for (int x = 0; x < width; x++) {
-            int screen_x = dst_x + x;
-            if (screen_x < 0 || screen_x >= FD2_SCREEN_W) continue;
+        // 检查边界
+        if (dst_x + width > FD2_SCREEN_W || dst_x < 0) {
+            // 部分裁剪复制
+            int start_x = (dst_x < 0) ? 0 : dst_x;
+            int end_x = (dst_x + width > FD2_SCREEN_W) ? FD2_SCREEN_W : dst_x + width;
+            int copy_width = end_x - start_x;
+            int src_start = start_x - dst_x;
             
-            u8 pixel = src_row[x];
-            dst_row[screen_x] = pixel;
+            if (copy_width > 0) {
+                memcpy(dst_row, src + y * width + src_start, copy_width);
+            }
+        } else {
+            // 完整复制
+            memcpy(dst_row, src + y * width, width);
         }
     }
 }
