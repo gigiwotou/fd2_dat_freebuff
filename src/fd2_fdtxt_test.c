@@ -68,6 +68,8 @@
 #define TILE_COUNT 20
 #define PORTRAIT_W 80
 #define PORTRAIT_H 80
+#define MAX_LINE_CHARS 20  /* 每行最多字符数 */
+#define MAX_LINES 4        /* 对话框最多4行 */
 
 typedef enum {
     DIALOG_TYPE_NONE = 0,
@@ -79,8 +81,14 @@ typedef enum {
     STATE_CONTINUE = 0,
     STATE_WAIT_KEY,
     STATE_WAIT_END,
+    STATE_WAIT_PORTRAIT,  /* 切换头像时等待 */
     STATE_DONE
 } dialog_state_e;
+
+typedef struct {
+    int16_t chars[MAX_LINE_CHARS];  /* 该行的字符 */
+    int count;                       /* 字符数量 */
+} text_line_t;
 
 typedef struct {
     int16_t* ptr;
@@ -90,6 +98,12 @@ typedef struct {
     int pixel_y;
     int dado_idx;     /* 当前头像DATO索引 */
     dialog_state_e state;
+    text_line_t lines[MAX_LINES];  /* 文字历史 */
+    int visible_lines;              /* 当前可见行数 */
+    /* 头像切换延迟处理 */
+    dialog_type_t pending_dialog_type;
+    int16_t pending_portrait_id;
+    bool pending_is_char_db;
 } dialog_ctx_t;
 
 /* 全局变量 */
@@ -220,85 +234,10 @@ static void draw_dialog_box(dialog_type_t dtype)
     else if (dtype == DIALOG_TYPE_S) { dx = DIALOG_S_X; dy = DIALOG_S_Y; }
     else return;
 
-    if (!dialog_tile_loaded) {
-        for (int y = dy; y < dy + DIALOG_H; y++)
-            for (int x = dx; x < dx + DIALOG_W; x++)
-                screen_buffer[y * SCREEN_WIDTH + x] = 0xFF3848A0;
-        return;
-    }
-
-    int tiles_x = DIALOG_W / TILE_W;  /* 19 */
-    int tiles_y = DIALOG_H / TILE_H;  /* 5 */
-    int rx = DIALOG_W % TILE_W;       /* 6 */
-    int ry = DIALOG_H % TILE_H;       /* 6 */
-
-    /* 四角 */
-    render_tile(0, dx, dy);
-    render_tile(1, dx + (tiles_x - 1) * TILE_W, dy);
-    render_tile(2, dx, dy + (tiles_y - 1) * TILE_H);
-    render_tile(3, dx + (tiles_x - 1) * TILE_W, dy + (tiles_y - 1) * TILE_H);
-
-    /* 上下边 */
-    for (int tx = 1; tx < tiles_x - 1; tx++) {
-        render_tile(4, dx + tx * TILE_W, dy);
-        render_tile(6, dx + tx * TILE_W, dy + (tiles_y - 1) * TILE_H);
-    }
-
-    /* 左右边 */
-    for (int ty = 1; ty < tiles_y - 1; ty++) {
-        render_tile(7, dx, dy + ty * TILE_H);
-        render_tile(5, dx + (tiles_x - 1) * TILE_W, dy + ty * TILE_H);
-    }
-
-    /* 中间填充 */
-    for (int ty = 1; ty < tiles_y - 1; ty++)
-        for (int tx = 1; tx < tiles_x - 1; tx++)
-            render_tile(12, dx + tx * TILE_W, dy + ty * TILE_H);
-
-    /* 右边剩余 */
-    if (rx > 0) {
-        for (int ty = 0; ty < tiles_y; ty++) {
-            int ti = (ty == 0) ? 1 : ((ty == tiles_y - 1) ? 3 : 5);
-            uint8_t* tp = dialog_tile_data + ti * TILE_W * TILE_H;
-            for (int y = 0; y < TILE_H; y++)
-                for (int x = 0; x < rx; x++) {
-                    int px = dx + tiles_x * TILE_W + x, py = dy + ty * TILE_H + y;
-                    if (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) {
-                        uint8_t pal = tp[y * TILE_W + x];
-                        if (pal != 0) screen_buffer[py * SCREEN_WIDTH + px] = dato_palette[pal];
-                    }
-                }
-        }
-    }
-
-    /* 底部剩余 */
-    if (ry > 0) {
-        for (int tx = 0; tx < tiles_x; tx++) {
-            int ti = (tx == 0) ? 2 : ((tx == tiles_x - 1) ? 3 : 6);
-            uint8_t* tp = dialog_tile_data + ti * TILE_W * TILE_H;
-            for (int y = 0; y < ry; y++)
-                for (int x = 0; x < TILE_W; x++) {
-                    int px = dx + tx * TILE_W + x, py = dy + tiles_y * TILE_H + y;
-                    if (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) {
-                        uint8_t pal = tp[y * TILE_W + x];
-                        if (pal != 0) screen_buffer[py * SCREEN_WIDTH + px] = dato_palette[pal];
-                    }
-                }
-        }
-    }
-
-    /* 右下剩余 */
-    if (rx > 0 && ry > 0) {
-        uint8_t* tp = dialog_tile_data + 3 * TILE_W * TILE_H;
-        for (int y = 0; y < ry; y++)
-            for (int x = 0; x < rx; x++) {
-                int px = dx + tiles_x * TILE_W + x, py = dy + tiles_y * TILE_H + y;
-                if (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) {
-                    uint8_t pal = tp[y * TILE_W + x];
-                    if (pal != 0) screen_buffer[py * SCREEN_WIDTH + px] = dato_palette[pal];
-                }
-            }
-    }
+    /* 简单替代图形：蓝色背景 */
+    for (int y = dy; y < dy + DIALOG_H; y++)
+        for (int x = dx; x < dx + DIALOG_W; x++)
+            screen_buffer[y * SCREEN_WIDTH + x] = 0xFF3848A0;
 }
 
 static int load_portrait(int index)
@@ -422,21 +361,60 @@ static void render_char(int16_t word, int x, int y)
 }
 
 /* 1:1还原sub_16E24 - 文字滚动 */
-static void scroll_text(dialog_type_t dtype)
+static void scroll_text(dialog_ctx_t* ctx)
 {
+    dialog_type_t dtype = ctx->n1832;
     int dx, dy;
-    if (dtype == DIALOG_TYPE_F) { dx = DIALOG_F_X + 2; dy = DIALOG_F_Y + 2; }
-    else if (dtype == DIALOG_TYPE_S) { dx = DIALOG_S_X + 2; dy = DIALOG_S_Y + 2; }
+    if (dtype == DIALOG_TYPE_F) { dx = DIALOG_F_X; dy = DIALOG_F_Y; }
+    else if (dtype == DIALOG_TYPE_S) { dx = DIALOG_S_X; dy = DIALOG_S_Y; }
     else return;
 
-    int tw = 208, th = DIALOG_H - 4;
-    /* 上移一行 (16px) */
-    for (int y = dy; y < dy + th - 16; y++)
-        memcpy(&screen_buffer[y * SCREEN_WIDTH + dx], &screen_buffer[(y + 16) * SCREEN_WIDTH + dx], tw * 4);
-    /* 清空最后一行 */
-    for (int y = dy + th - 16; y < dy + th; y++)
-        for (int x = dx; x < dx + tw; x++)
+    /* 上移文字历史：丢弃第0行，1->0, 2->1, 3->2 */
+    memmove(&ctx->lines[0], &ctx->lines[1], sizeof(text_line_t) * (MAX_LINES - 1));
+    memset(&ctx->lines[MAX_LINES - 1], 0, sizeof(text_line_t));
+    ctx->visible_lines = (ctx->visible_lines < MAX_LINES) ? ctx->visible_lines : MAX_LINES;
+
+    /* 重绘整个对话框背景 */
+    for (int y = dy; y < dy + DIALOG_H; y++)
+        for (int x = dx; x < dx + DIALOG_W; x++)
             screen_buffer[y * SCREEN_WIDTH + x] = 0xFF3848A0;
+
+    /* 重绘头像 */
+    if (portrait_loaded)
+        render_portrait(dtype);
+
+    /* 重绘所有可见文字行 */
+    int start_y = (dtype == DIALOG_TYPE_F) ? TEXT_F_START_Y : TEXT_S_START_Y;
+    int start_x = (dtype == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+    
+    for (int line = 0; line < ctx->visible_lines && line < MAX_LINES; line++) {
+        int lx = start_x;
+        int ly = start_y + line * CHAR_HEIGHT;
+        for (int c = 0; c < ctx->lines[line].count; c++) {
+            render_char(ctx->lines[line].chars[c], lx, ly);
+            lx += CHAR_WIDTH;
+        }
+    }
+}
+
+/* 添加字符到当前行 */
+static void add_char_to_line(dialog_ctx_t* ctx, int16_t ch)
+{
+    if (ctx->n3 >= 0 && ctx->n3 < MAX_LINES) {
+        if (ctx->lines[ctx->n3].count < MAX_LINE_CHARS) {
+            ctx->lines[ctx->n3].chars[ctx->lines[ctx->n3].count] = ch;
+            ctx->lines[ctx->n3].count++;
+            if (ctx->visible_lines <= ctx->n3)
+                ctx->visible_lines = ctx->n3 + 1;
+        }
+    }
+}
+
+/* 重置文字历史 */
+static void reset_text_lines(dialog_ctx_t* ctx)
+{
+    memset(ctx->lines, 0, sizeof(ctx->lines));
+    ctx->visible_lines = 0;
 }
 
 static int16_t* get_sub_text(int res, int sub, int16_t** end)
@@ -588,6 +566,31 @@ int main(int argc, char* argv[])
                             need_init = true;
                             printf(">>> 切换到子项 %d\n", cur_sub);
                         }
+                    } else if (ctx.state == STATE_WAIT_PORTRAIT) {
+                    /* 1:1还原IDA: 等待返回后清除旧对话框 */
+                    clear_dialog_area(ctx.n1832);
+                    /* 加载新对话框 */
+                    ctx.n1832 = ctx.pending_dialog_type;
+                    int di;
+                    if (ctx.pending_is_char_db) {
+                        di = get_dato_from_char_db(ctx.pending_portrait_id);
+                    } else {
+                        di = get_dato_from_char_id(ctx.pending_portrait_id);
+                    }
+                    ctx.dado_idx = (di >= 0) ? di : 0;
+                    draw_dialog_box(ctx.n1832);
+                    if (di >= 0) {
+                        load_portrait(di);
+                        render_portrait(ctx.n1832);
+                        portrait_anim_counter = 0;
+                        portrait_frame_cycle = 0;
+                        portrait_current_frame = 0;
+                    }
+                    ctx.n3 = 0;
+                    ctx.pixel_x = (ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+                    ctx.pixel_y = (ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_Y : TEXT_S_START_Y;
+                    reset_text_lines(&ctx);
+                    ctx.state = STATE_CONTINUE;
                     } else if (ctx.state == STATE_DONE) {
                         int sc = 0;
                         if (fdtxt_offsets[cur_res] < fdtxt_file_size) {
@@ -615,6 +618,7 @@ int main(int argc, char* argv[])
             portrait_anim_counter = 0;
             portrait_frame_cycle = 0;
             portrait_current_frame = 0;
+            reset_text_lines(&ctx);
             int16_t* te = NULL;
             ctx.ptr = get_sub_text(cur_res, cur_sub, &te);
         }
@@ -640,8 +644,12 @@ int main(int argc, char* argv[])
             }
             else if (word == TEXT_NEWLINE) {
                 ctx.ptr++;
+                /* 记录文字历史 */
+                if (ctx.n3 >= 0 && ctx.n3 < MAX_LINES) {
+                    ctx.visible_lines = (ctx.n3 + 1 > ctx.visible_lines) ? ctx.n3 + 1 : ctx.visible_lines;
+                }
                 if ((ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) && ctx.n3 == 3) {
-                    scroll_text(ctx.n1832);
+                    scroll_text(&ctx);
                     ctx.n3--;
                 }
                 ctx.n3++;
@@ -650,13 +658,18 @@ int main(int argc, char* argv[])
             }
             else if (word == TEXT_NEWLINE2) {
                 ctx.ptr++;
+                /* 记录文字历史 */
+                if (ctx.n3 >= 0 && ctx.n3 < MAX_LINES) {
+                    ctx.visible_lines = (ctx.n3 + 1 > ctx.visible_lines) ? ctx.n3 + 1 : ctx.visible_lines;
+                }
                 if ((ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) && ctx.n3 == 3) {
-                    scroll_text(ctx.n1832);
+                    scroll_text(&ctx);
                     ctx.n3--;
                 }
                 ctx.n3++;
                 ctx.pixel_y += CHAR_HEIGHT;
                 ctx.pixel_x = (ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
+                /* 1:1还原IDA: TEXT_NEWLINE2调用sub_16C57(1) - 显示三角形+等待按键 */
                 ctx.state = STATE_WAIT_KEY;
             }
             else if (word == TEXT_RECURSE1 || word == TEXT_RECURSE2) {
@@ -668,82 +681,123 @@ int main(int argc, char* argv[])
             else if (word == TEXT_PORTRAIT_F) {
                 ctx.ptr++;
                 int16_t pid = *ctx.ptr++;
-                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) clear_dialog_area(ctx.n1832);
-                ctx.n1832 = DIALOG_TYPE_F;
-                int di = get_dato_from_char_id(pid);
-                ctx.dado_idx = (di >= 0) ? di : 0;
-                if (di >= 0) {
-                    load_portrait(di);
+                /* 1:1还原IDA: TEXT_PORTRAIT_F切换对话框前等待 (如果有旧对话框) */
+                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) {
+                    /* 1:1还原汇编: sub_16559重绘对话框tile，不清除文字 */
+                    /* 然后调用sub_16C57(0)等待用户按键 */
+                    ctx.state = STATE_WAIT_PORTRAIT;
+                    ctx.pending_dialog_type = DIALOG_TYPE_F;
+                    ctx.pending_portrait_id = pid;
+                    ctx.pending_is_char_db = false;
+                } else {
+                    ctx.n1832 = DIALOG_TYPE_F;
+                    int di = get_dato_from_char_id(pid);
+                    ctx.dado_idx = (di >= 0) ? di : 0;
+                    /* 1:1还原IDA: 总是绘制对话框，无论头像是否加载成功 */
                     draw_dialog_box(ctx.n1832);
-                    render_portrait(ctx.n1832);
-                    portrait_anim_counter = 0;
-                    portrait_frame_cycle = 0;
-                    portrait_current_frame = 0;
+                    if (di >= 0) {
+                        load_portrait(di);
+                        render_portrait(ctx.n1832);
+                        portrait_anim_counter = 0;
+                        portrait_frame_cycle = 0;
+                        portrait_current_frame = 0;
+                    }
+                    ctx.n3 = 0;
+                    ctx.pixel_x = TEXT_F_START_X;
+                    ctx.pixel_y = TEXT_F_START_Y;
+                    reset_text_lines(&ctx);
                 }
-                ctx.n3 = 0;
-                ctx.pixel_x = TEXT_F_START_X;
-                ctx.pixel_y = TEXT_F_START_Y;
             }
             else if (word == TEXT_PORTRAIT_S) {
                 ctx.ptr++;
                 int16_t pid = *ctx.ptr++;
-                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) clear_dialog_area(ctx.n1832);
-                ctx.n1832 = DIALOG_TYPE_S;
-                int di = get_dato_from_char_id(pid);
-                ctx.dado_idx = (di >= 0) ? di : 0;
-                if (di >= 0) {
-                    load_portrait(di);
+                /* 1:1还原IDA: TEXT_PORTRAIT_S切换对话框前等待 (如果有旧对话框) */
+                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) {
+                    /* 1:1还原汇编: sub_16559重绘对话框tile，不清除文字 */
+                    /* 然后调用sub_16C57(0)等待 */
+                    ctx.state = STATE_WAIT_PORTRAIT;
+                    ctx.pending_dialog_type = DIALOG_TYPE_S;
+                    ctx.pending_portrait_id = pid;
+                    ctx.pending_is_char_db = false;
+                } else {
+                    ctx.n1832 = DIALOG_TYPE_S;
+                    int di = get_dato_from_char_id(pid);
+                    ctx.dado_idx = (di >= 0) ? di : 0;
                     draw_dialog_box(ctx.n1832);
-                    render_portrait(ctx.n1832);
-                    portrait_anim_counter = 0;
-                    portrait_frame_cycle = 0;
-                    portrait_current_frame = 0;
+                    if (di >= 0) {
+                        load_portrait(di);
+                        render_portrait(ctx.n1832);
+                        portrait_anim_counter = 0;
+                        portrait_frame_cycle = 0;
+                        portrait_current_frame = 0;
+                    }
+                    ctx.n3 = 0;
+                    ctx.pixel_x = TEXT_S_START_X;
+                    ctx.pixel_y = TEXT_S_START_Y;
+                    reset_text_lines(&ctx);
                 }
-                ctx.n3 = 0;
-                ctx.pixel_x = TEXT_S_START_X;
-                ctx.pixel_y = TEXT_S_START_Y;
             }
             else if (word == TEXT_CHAR_F) {
                 ctx.ptr++;
                 int16_t cid = *ctx.ptr++;
-                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) clear_dialog_area(ctx.n1832);
-                ctx.n1832 = DIALOG_TYPE_F;
-                int di = get_dato_from_char_db(cid);
-                ctx.dado_idx = (di >= 0) ? di : 0;
-                if (di >= 0) {
-                    load_portrait(di);
+                /* 1:1还原IDA: TEXT_CHAR_F切换对话框前等待 (如果有旧对话框) */
+                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) {
+                    /* sub_16559重绘对话框tile，不清除文字 */
+                    ctx.state = STATE_WAIT_PORTRAIT;
+                    ctx.pending_dialog_type = DIALOG_TYPE_F;
+                    ctx.pending_portrait_id = cid;
+                    ctx.pending_is_char_db = true;
+                } else {
+                    ctx.n1832 = DIALOG_TYPE_F;
+                    int di = get_dato_from_char_db(cid);
+                    ctx.dado_idx = (di >= 0) ? di : 0;
                     draw_dialog_box(ctx.n1832);
-                    render_portrait(ctx.n1832);
-                    portrait_anim_counter = 0;
-                    portrait_frame_cycle = 0;
-                    portrait_current_frame = 0;
+                    if (di >= 0) {
+                        load_portrait(di);
+                        render_portrait(ctx.n1832);
+                        portrait_anim_counter = 0;
+                        portrait_frame_cycle = 0;
+                        portrait_current_frame = 0;
+                    }
+                    ctx.n3 = 0;
+                    ctx.pixel_x = TEXT_F_START_X;
+                    ctx.pixel_y = TEXT_F_START_Y;
+                    reset_text_lines(&ctx);
                 }
-                ctx.n3 = 0;
-                ctx.pixel_x = TEXT_F_START_X;
-                ctx.pixel_y = TEXT_F_START_Y;
             }
             else if (word == TEXT_CHAR_S) {
                 ctx.ptr++;
                 int16_t cid = *ctx.ptr++;
-                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) clear_dialog_area(ctx.n1832);
-                ctx.n1832 = DIALOG_TYPE_S;
-                int di = get_dato_from_char_db(cid);
-                ctx.dado_idx = (di >= 0) ? di : 0;
-                if (di >= 0) {
-                    load_portrait(di);
+                /* 1:1还原IDA: TEXT_CHAR_S切换对话框前等待 (如果有旧对话框) */
+                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) {
+                    /* sub_16559重绘对话框tile，不清除文字 */
+                    ctx.state = STATE_WAIT_PORTRAIT;
+                    ctx.pending_dialog_type = DIALOG_TYPE_S;
+                    ctx.pending_portrait_id = cid;
+                    ctx.pending_is_char_db = true;
+                } else {
+                    ctx.n1832 = DIALOG_TYPE_S;
+                    int di = get_dato_from_char_db(cid);
+                    ctx.dado_idx = (di >= 0) ? di : 0;
                     draw_dialog_box(ctx.n1832);
-                    render_portrait(ctx.n1832);
-                    portrait_anim_counter = 0;
-                    portrait_frame_cycle = 0;
-                    portrait_current_frame = 0;
+                    if (di >= 0) {
+                        load_portrait(di);
+                        render_portrait(ctx.n1832);
+                        portrait_anim_counter = 0;
+                        portrait_frame_cycle = 0;
+                        portrait_current_frame = 0;
+                    }
+                    ctx.n3 = 0;
+                    ctx.pixel_x = TEXT_S_START_X;
+                    ctx.pixel_y = TEXT_S_START_Y;
+                    reset_text_lines(&ctx);
                 }
-                ctx.n3 = 0;
-                ctx.pixel_x = TEXT_S_START_X;
-                ctx.pixel_y = TEXT_S_START_Y;
             }
             else {
                 /* 渲染字符 */
                 render_char(word, ctx.pixel_x, ctx.pixel_y);
+                /* 记录到文字历史 */
+                add_char_to_line(&ctx, word);
                 ctx.pixel_x += CHAR_WIDTH;
                 /* 1:1还原sub_164E8 - 头像动画+延迟 */
                 portrait_tick();
