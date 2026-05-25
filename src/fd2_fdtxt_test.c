@@ -78,6 +78,7 @@ typedef enum {
 typedef enum {
     STATE_CONTINUE = 0,
     STATE_WAIT_KEY,
+    STATE_WAIT_END,
     STATE_DONE
 } dialog_state_e;
 
@@ -572,6 +573,21 @@ int main(int argc, char* argv[])
                 else if (ev.key.keysym.sym == SDLK_SPACE || ev.key.keysym.sym == SDLK_RETURN) {
                     if (ctx.state == STATE_WAIT_KEY) {
                         ctx.state = STATE_CONTINUE;
+                    } else if (ctx.state == STATE_WAIT_END) {
+                        /* 1:1还原IDA: sub_16C57(0)返回后清除对话框 */
+                        clear_dialog_area(ctx.n1832);
+                        ctx.n1832 = DIALOG_TYPE_NONE;
+                        ctx.state = STATE_DONE;
+                        int sc = 0;
+                        if (fdtxt_offsets[cur_res] < fdtxt_file_size) {
+                            memcpy(&sc, fdtxt_data + fdtxt_offsets[cur_res], 2);
+                        }
+                        if (cur_sub < sc - 1) {
+                            cur_sub++;
+                            memset(screen_buffer, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 4);
+                            need_init = true;
+                            printf(">>> 切换到子项 %d\n", cur_sub);
+                        }
                     } else if (ctx.state == STATE_DONE) {
                         int sc = 0;
                         if (fdtxt_offsets[cur_res] < fdtxt_file_size) {
@@ -613,9 +629,14 @@ int main(int argc, char* argv[])
 
             if (word == TEXT_END) {
                 ctx.ptr++;
-                ctx.state = STATE_DONE;
-                ctx.n1832 = DIALOG_TYPE_NONE;
-                printf("\n>>> 对话完成\n");
+                /* 1:1还原IDA: TEXT_END时调用sub_16C57(0)等待按键 */
+                if (ctx.n1832 == DIALOG_TYPE_F || ctx.n1832 == DIALOG_TYPE_S) {
+                    ctx.state = STATE_WAIT_END;
+                } else {
+                    ctx.state = STATE_DONE;
+                    ctx.n1832 = DIALOG_TYPE_NONE;
+                }
+                printf("\n>>> 对话完成，等待输入...\n");
             }
             else if (word == TEXT_NEWLINE) {
                 ctx.ptr++;
