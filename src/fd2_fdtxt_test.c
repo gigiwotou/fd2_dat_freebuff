@@ -424,25 +424,60 @@ static void reset_text_lines(dialog_ctx_t* ctx)
     ctx->visible_lines = 0;
 }
 
+/* 计算资源中有效子项数量 */
+static int count_valid_subs(int res)
+{
+    uint32_t rs = fdtxt_offsets[res];
+    uint32_t re = (res + 1 < fdtxt_count) ? fdtxt_offsets[res + 1] : fdtxt_file_size;
+    if (rs >= fdtxt_file_size) return 0;
+    uint8_t* rd = fdtxt_data + rs;
+    int res_size = re - rs;
+    int max_possible = res_size / 2;
+    int count = 0;
+    for (int i = 0; i < max_possible; i++) {
+        int16_t offset;
+        memcpy(&offset, rd + i * 2, 2);
+        if (offset < 0 || offset >= res_size) break;
+        count++;
+    }
+    return count;
+}
+
+/* 1:1还原IDA sub_15F84中的索引逻辑:
+ * v11 = (__int16 *)(*(__int16 *)(a2 + 2 * a3) + a2);
+ * 资源开头就是偏移表，每个子项占2字节，没有子项数量字段
+ * a2 = 资源基址, a3 = 子项索引
+ */
 static int16_t* get_sub_text(int res, int sub, int16_t** end)
 {
     uint32_t rs = fdtxt_offsets[res];
     uint32_t re = (res + 1 < fdtxt_count) ? fdtxt_offsets[res + 1] : fdtxt_file_size;
     if (rs >= fdtxt_file_size) return NULL;
     uint8_t* rd = fdtxt_data + rs;
-    int16_t sc; memcpy(&sc, rd, 2);
-    if (sub < 0 || sub >= sc) return NULL;
-    int16_t* offs = (int16_t*)(rd + 2);
-    int32_t bo = offs[sub];
-    if (bo < 0 || bo >= (int32_t)(re - rs)) return NULL;
-    int16_t* ts = (int16_t*)(rd + bo);
+    int res_size = re - rs;
+    /* 计算偏移表结束位置（通过扫描直到找到第一个无效偏移或TEXT_END） */
+    int max_subs = res_size / 2;
+    if (sub < 0 || sub >= max_subs) return NULL;
+    /* 直接读取偏移: *(int16*)(rd + 2*sub) */
+    int16_t offset;
+    memcpy(&offset, rd + sub * 2, 2);
+    if (offset < 0 || offset >= res_size) return NULL;
+    int16_t* ts = (int16_t*)(rd + offset);
     if (end) {
         int16_t* p = ts;
-        int16_t* mp = (int16_t*)(rd + (re - rs));
+        int16_t* mp = (int16_t*)(rd + res_size);
         while (p < mp) { if (*p == -1) { *end = p; goto done; } p++; }
-        if (sub + 1 < sc && offs[sub + 1] >= 0 && offs[sub + 1] < (int32_t)(re - rs))
-            *end = (int16_t*)(rd + offs[sub + 1]);
-        else *end = mp;
+        /* 下一个子项的偏移作为结束边界 */
+        if (sub + 1 < max_subs) {
+            int16_t next_offset;
+            memcpy(&next_offset, rd + (sub + 1) * 2, 2);
+            if (next_offset >= 0 && next_offset < res_size)
+                *end = (int16_t*)(rd + next_offset);
+            else
+                *end = mp;
+        } else {
+            *end = mp;
+        }
     done:;
     }
     return ts;
@@ -503,8 +538,18 @@ static int get_dato_from_char_id(int char_id)
 
 int main(int argc, char* argv[])
 {
-    (void)argc; (void)argv;
     printf("=== FDTXT 对话框测试 (IDA MCP 1:1还原) ===\n\n");
+
+    /* 解析命令行参数 */
+    int cur_res = 1;  /* 默认第二关 (n17=1, 资源索引=n17+1=1) */
+    int cur_sub = 0;  /* 默认第一个对话片段 */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--res") == 0 && i + 1 < argc) {
+            cur_res = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--sub") == 0 && i + 1 < argc) {
+            cur_sub = atoi(argv[++i]);
+        }
+    }
 
     /* 加载资源 */
     printf("1. 加载字体...\n");
@@ -531,21 +576,21 @@ int main(int argc, char* argv[])
     memcpy(&fdtxt_count, fdtxt_data + 6, 4);
     for (int i = 0; i < fdtxt_count && i < 146; i++)
         memcpy(&fdtxt_offsets[i], fdtxt_data + 10 + i * 4, 4);
+    printf("   FDTXT资源总数: %d\n", fdtxt_count);
 
     printf("4. 加载对话框tile...\n");
     if (load_dialog_tiles() < 0) printf("   警告: tile加载失败\n");
 
     if (sdl_init() < 0) return 1;
 
-    /* 只加载第一关第一个对话片段 */
-    int cur_res = 1, cur_sub = 0;
+    /* 使用命令行指定的资源索引 */
     dialog_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.n1832 = DIALOG_TYPE_NONE;
     ctx.state = STATE_CONTINUE;
 
     printf("\n控制: 空格/回车=继续, ESC=退出\n");
-    printf("资源集=%d, 子项=%d\n\n", cur_res, cur_sub);
+    printf("资源集=%d (关卡%d), 子项=%d\n\n", cur_res, cur_res, cur_sub);
 
     bool running = true, need_init = true;
 
@@ -563,10 +608,7 @@ int main(int argc, char* argv[])
                         clear_dialog_area(ctx.n1832);
                         ctx.n1832 = DIALOG_TYPE_NONE;
                         ctx.state = STATE_DONE;
-                        int sc = 0;
-                        if (fdtxt_offsets[cur_res] < fdtxt_file_size) {
-                            memcpy(&sc, fdtxt_data + fdtxt_offsets[cur_res], 2);
-                        }
+                        int sc = count_valid_subs(cur_res);
                         if (cur_sub < sc - 1) {
                             cur_sub++;
                             memset(screen_buffer, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 4);
@@ -601,16 +643,8 @@ int main(int argc, char* argv[])
                     reset_text_lines(&ctx);
                     ctx.state = STATE_CONTINUE;
                     } else if (ctx.state == STATE_DONE) {
-                        int sc = 0;
-                        if (fdtxt_offsets[cur_res] < fdtxt_file_size) {
-                            memcpy(&sc, fdtxt_data + fdtxt_offsets[cur_res], 2);
-                        }
-                        if (cur_sub < sc - 1) {
-                            cur_sub++;
-                            memset(screen_buffer, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 4);
-                            need_init = true;
-                            printf(">>> 切换到子项 %d\n", cur_sub);
-                        }
+                        /* 当前子项已播放完毕，用户可以通过命令行参数切换子项 */
+                        printf(">>> 对话播放完毕，当前子项=%d\n", cur_sub);
                     }
                 }
             }
@@ -662,7 +696,8 @@ int main(int argc, char* argv[])
                     ctx.n3--;
                 }
                 ctx.n3++;
-                ctx.pixel_y += CHAR_HEIGHT;
+                /* 修复：pixel_y必须与n3保持同步，不能累加 */
+                ctx.pixel_y = ((ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_Y : TEXT_S_START_Y) + ctx.n3 * CHAR_HEIGHT;
                 ctx.pixel_x = (ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
             }
             else if (word == TEXT_NEWLINE2) {
@@ -676,7 +711,8 @@ int main(int argc, char* argv[])
                     ctx.n3--;
                 }
                 ctx.n3++;
-                ctx.pixel_y += CHAR_HEIGHT;
+                /* 修复：pixel_y必须与n3保持同步 */
+                ctx.pixel_y = ((ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_Y : TEXT_S_START_Y) + ctx.n3 * CHAR_HEIGHT;
                 ctx.pixel_x = (ctx.n1832 == DIALOG_TYPE_F) ? TEXT_F_START_X : TEXT_S_START_X;
                 /* 1:1还原IDA: TEXT_NEWLINE2调用sub_16C57(1) - 显示三角形+等待按键 */
                 ctx.state = STATE_WAIT_KEY;
