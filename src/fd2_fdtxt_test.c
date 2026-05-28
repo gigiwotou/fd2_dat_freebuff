@@ -323,7 +323,14 @@ static void clear_dialog_area(dialog_type_t dtype)
     else return;
     for (int y = dy; y < dy + DIALOG_H; y++)
         for (int x = dx; x < dx + DIALOG_W; x++)
-            screen_buffer[y * SCREEN_WIDTH + x] = 0x00000000;
+            screen_buffer[y * SCREEN_WIDTH + x] = 0xFF000000;
+}
+
+/* 清除所有对话框区域 */
+static void clear_all_dialogs(void)
+{
+    clear_dialog_area(DIALOG_TYPE_F);
+    clear_dialog_area(DIALOG_TYPE_S);
 }
 
 /* 1:1还原sub_164E8 - 头像动画帧切换 */
@@ -568,7 +575,9 @@ int main(int argc, char* argv[])
                         }
                     } else if (ctx.state == STATE_WAIT_PORTRAIT) {
                     /* 1:1还原IDA: 等待返回后清除旧对话框 */
-                    clear_dialog_area(ctx.n1832);
+                    /* 清除两个对话框区域，防止文字残留 */
+                    clear_dialog_area(DIALOG_TYPE_F);
+                    clear_dialog_area(DIALOG_TYPE_S);
                     /* 加载新对话框 */
                     ctx.n1832 = ctx.pending_dialog_type;
                     int di;
