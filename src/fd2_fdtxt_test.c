@@ -47,21 +47,21 @@
 #define DIALOG_W          310
 #define DIALOG_H          86
 
-/* 下方对话框 (DIALOG_TYPE_F=1832) */
-#define DIALOG_F_Y        114
+/* 上方对话框 (n1832=DIALOG_TYPE_F=1832) - 文字显存基址0xA0B4F, 约第9行 */
+#define DIALOG_F_Y        8
 #define DIALOG_F_X        5
-#define PORTRAIT_F_X      13
-#define PORTRAIT_F_Y      122
-#define TEXT_F_START_X    101
-#define TEXT_F_START_Y    122
+#define PORTRAIT_F_X      227
+#define PORTRAIT_F_Y      16
+#define TEXT_F_START_X    13
+#define TEXT_F_START_Y    16
 
-/* 上方对话框 (DIALOG_TYPE_S=36887) */
-#define DIALOG_S_Y        8
+/* 下方对话框 (n1832=DIALOG_TYPE_S=36887) - 文字显存基址0xA951F, 约第119行 */
+#define DIALOG_S_Y        114
 #define DIALOG_S_X        5
-#define PORTRAIT_S_X      227
-#define PORTRAIT_S_Y      16
-#define TEXT_S_START_X    13
-#define TEXT_S_START_Y    16
+#define PORTRAIT_S_X      13
+#define PORTRAIT_S_Y      122
+#define TEXT_S_START_X    101
+#define TEXT_S_START_Y    122
 
 #define TILE_W 16
 #define TILE_H 16
