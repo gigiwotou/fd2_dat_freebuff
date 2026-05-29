@@ -6,6 +6,7 @@
  */
 
 #include "fd2_resources.h"
+#include "fd2_fdother_resources.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -42,6 +43,9 @@ int fd2_resources_init(fd2_resources_t* res, const char* data_dir) {
 void fd2_resources_shutdown(fd2_resources_t* res) {
     if (!res) return;
 
+    /* 特殊处理：先关闭 FDOTHER 高级资源系统 */
+    fdother_unload();
+
     for (int i = 0; i < FD2_DAT_COUNT; i++) {
         if (res->loaded[i]) {
             fd2_dat_free(&res->dats[i]);
@@ -70,6 +74,14 @@ int fd2_resources_load_dat(fd2_resources_t* res, fd2_dat_id_t id) {
     res->loaded[id] = true;
     printf("fd2_resources: loaded %s (%u resources)\n",
            fd2_dat_filenames[id], res->dats[id].resource_count);
+
+    /* 特殊处理：加载 FDOTHER.DAT 时自动初始化高级资源系统 */
+    if (id == FD2_DAT_FDOTHER) {
+        if (fdother_load(path) != 0) {
+            fprintf(stderr, "fd2_resources: failed to init FDOTHER advanced resource system\n");
+        }
+    }
+
     return 0;
 }
 
