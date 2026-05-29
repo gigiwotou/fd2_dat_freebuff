@@ -130,6 +130,10 @@ static SDL_Texture* texture = NULL;
 static uint32_t* screen_buffer = NULL;
 static bool needs_render = true;
 
+/* 前向声明 */
+static void render_frame(void);
+static void render_portrait(dialog_type_t dtype);
+
 static void load_palette_6bit(uint8_t* pal, int size)
 {
     int count = size / 3;
@@ -366,63 +370,107 @@ static void render_tile(int tile_id, int x, int y)
     }
 }
 
-/* 1:1还原sub_168B6 - 用tile拼成对话框 */
+/* 渲染单个tile到屏幕缓冲区 */
+static void render_tile_to_buffer(int tile_id, int x, int y, uint32_t* buffer)
+{
+    if (!tile_data || tile_count <= 0) return;
+    
+    /* tile ID直接使用（从IDA看，tile_id=4,8,12,16,19）*/
+    if (tile_id < 0 || tile_id >= tile_count) return;
+    
+    uint8_t* tile_pixels = tile_data + tile_id * tile_w * tile_h;
+    
+    for (int ty = 0; ty < tile_h; ty++) {
+        for (int tx = 0; tx < tile_w; tx++) {
+            int px = x + tx, py = y + ty;
+            if (px < 0 || px >= SCREEN_WIDTH || py < 0 || py >= SCREEN_HEIGHT) continue;
+            
+            uint8_t idx = tile_pixels[ty * tile_w + tx];
+            if (idx != 0) {
+                buffer[py * SCREEN_WIDTH + px] = tile_palette[idx];
+            }
+        }
+    }
+}
+
+/* 1:1还原sub_168B6 - 对话框tile渲染逻辑
+ * 根据IDA反编译，此函数使用tile ID在目标缓冲区上渲染对话框边框
+ * 参数：tile_id起始值, 行数
+ */
+static void render_dialog_tiles(int tile_id_start, int rows, int dx, int dy, uint32_t* buffer)
+{
+    /* 根据IDA的sub_168B6分析：
+     * tile渲染是拼凑对话框边框的
+     * tile_id序列：4,8,12,16,19对应5帧动画
+     * 每行使用多个tile拼接（310/24 ≈ 13个tile）
+     */
+    int tiles_per_row = (DIALOG_W + tile_w - 1) / tile_w;
+    
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < tiles_per_row; col++) {
+            int tx = dx + col * tile_w;
+            int ty = dy + row * tile_h;
+            
+            /* 超出对话框尺寸时裁剪 */
+            if (ty + tile_h > dy + DIALOG_H) continue;
+            if (tx + tile_w > dx + DIALOG_W) {
+                /* 部分渲染 - 简单处理：跳过 */
+                continue;
+            }
+            
+            render_tile_to_buffer(tile_id_start + col, tx, ty, buffer);
+        }
+    }
+}
+
+/* 1:1还原sub_165AC - 对话框展开动画 */
 static void draw_dialog_box(dialog_type_t dtype)
 {
     int dx, dy;
     if (dtype == DIALOG_TYPE_F) { dx = DIALOG_F_X; dy = DIALOG_F_Y; }
     else if (dtype == DIALOG_TYPE_S) { dx = DIALOG_S_X; dy = DIALOG_S_Y; }
     else return;
+
+    /* 对话框动画：5帧从小到大的展开效果
+     * 1:1还原sub_165AC中的动画序列:
+     *   sub_168B6(..., tile_id=4,  rows=2);   // 第1帧：2行
+     *   sub_168B6(..., tile_id=8,  rows=3);   // 第2帧：3行
+     *   sub_168B6(..., tile_id=12, rows=4);  // 第3帧：4行
+     *   sub_168B6(..., tile_id=16, rows=5);  // 第4帧：5行
+     *   sub_168B6(..., tile_id=19, rows=5);  // 第5帧：5行（完整）
+     * 每帧之间delay(10) + sub_4E381()刷新屏幕
+     */
     
-    /* 加载tile资源 */
-    load_tiles();
-    
-    if (!tile_data) {
-        /* 降级：使用纯色填充 */
+    const int tile_ids[] = {4, 8, 12, 16, 19};
+    const int row_counts[] = {2, 3, 4, 5, 5};
+    const int frame_delay[] = {10, 10, 10, 10, 0};
+
+    for (int frame = 0; frame < 5; frame++) {
+        /* 先填充对话框背景色 */
         uint32_t bg_color = 0xFF803C2A;
-        for (int y = dy; y < dy + DIALOG_H; y++)
+        int h = row_counts[frame] * tile_h;
+        if (h > DIALOG_H) h = DIALOG_H;
+        
+        for (int y = dy; y < dy + h; y++)
             for (int x = dx; x < dx + DIALOG_W; x++)
                 screen_buffer[y * SCREEN_WIDTH + x] = bg_color;
+        
+        /* 渲染头像（如果已加载）- 在tile之前渲染，这样tile会覆盖在头像上 */
+        if (portrait_loaded)
+            render_portrait(dtype);
+        
+        /* 渲染对话框tile边框 - 1:1还原sub_168B6 */
+        render_dialog_tiles(tile_ids[frame], row_counts[frame], dx, dy, screen_buffer);
+        
+        /* 刷新屏幕 - 对应IDA中的sub_4E381() */
         needs_render = true;
-        return;
-    }
-    
-    /* 先填充背景色 */
-    uint32_t bg_color = 0xFF803C2A;
-    for (int y = dy; y < dy + DIALOG_H; y++)
-        for (int x = dx; x < dx + DIALOG_W; x++)
-            screen_buffer[y * SCREEN_WIDTH + x] = bg_color;
-    
-    /* 根据sub_168B6的逻辑放置tile */
-    int cols = DIALOG_W / tile_w;
-    int rows = DIALOG_H / tile_h;
-    
-    /* 四个角 */
-    render_tile(1, dx, dy);                           /* 左上 */
-    render_tile(2, dx + (cols-1)*tile_w, dy);         /* 右上 */
-    render_tile(3, dx, dy + (rows-1)*tile_h);         /* 左下 */
-    render_tile(4, dx + (cols-1)*tile_w, dy + (rows-1)*tile_h); /* 右下 */
-    
-    /* 上边和下边 */
-    for (int c = 1; c < cols-1; c++) {
-        render_tile(5, dx + c*tile_w, dy);             /* 上边 */
-        render_tile(6, dx + c*tile_w, dy + (rows-1)*tile_h); /* 下边 */
-    }
-    
-    /* 左边和右边 */
-    for (int r = 1; r < rows-1; r++) {
-        render_tile(7, dx, dy + r*tile_h);             /* 左边 */
-        render_tile(8, dx + (cols-1)*tile_w, dy + r*tile_h); /* 右边 */
-    }
-    
-    /* 中间填充 */
-    for (int r = 1; r < rows-1; r++) {
-        for (int c = 1; c < cols-1; c++) {
-            render_tile(13, dx + c*tile_w, dy + r*tile_h);
+        render_frame();
+        
+        /* 帧间延迟 - 对应IDA中的delay(10) */
+        if (frame_delay[frame] > 0) {
+            SDL_Delay(frame_delay[frame]);
         }
     }
-    
-    needs_render = true;
 }
 
 /* 加载字符数据库缓存 */
