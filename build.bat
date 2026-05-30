@@ -31,11 +31,11 @@ set EXE_EXT=.exe
 
 :: Object files (debug)
 set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
-set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_state_machine.o %OBJ_DIR%\fd2_scenes.o %OBJ_DIR%\fd2_globals.o %OBJ_DIR%\fd2_data_loader.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_scene_interact.o %OBJ_DIR%\fd2_input_scan.o %OBJ_DIR%\fd2_render_pipeline.o %OBJ_DIR%\fd2_rle.o %OBJ_DIR%\fd2_opening_animation.o %OBJ_DIR%\fd2_scene_manager.o %OBJ_DIR%\fd2_opening_intro.o %OBJ_DIR%\fd2_fdother_resources.o
+set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_state_machine.o %OBJ_DIR%\fd2_scenes.o %OBJ_DIR%\fd2_globals.o %OBJ_DIR%\fd2_data_loader.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_scene_interact.o %OBJ_DIR%\fd2_input_scan.o %OBJ_DIR%\fd2_render_pipeline.o %OBJ_DIR%\fd2_rle.o %OBJ_DIR%\fd2_opening_animation.o %OBJ_DIR%\fd2_scene_manager.o %OBJ_DIR%\fd2_opening_intro.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_sfx.o
 
 :: Object files (release)
 set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
-set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o %OBJ_RELEASE_DIR%\fd2_save_load.o %OBJ_RELEASE_DIR%\fd2_state_machine.o %OBJ_RELEASE_DIR%\fd2_scenes.o %OBJ_RELEASE_DIR%\fd2_globals.o %OBJ_RELEASE_DIR%\fd2_data_loader.o %OBJ_RELEASE_DIR%\fd2_dat.o %OBJ_RELEASE_DIR%\fd2_scene_interact.o %OBJ_RELEASE_DIR%\fd2_input_scan.o %OBJ_RELEASE_DIR%\fd2_render_pipeline.o %OBJ_RELEASE_DIR%\fd2_rle.o %OBJ_RELEASE_DIR%\fd2_opening_animation.o %OBJ_RELEASE_DIR%\fd2_scene_manager.o %OBJ_RELEASE_DIR%\fd2_opening_intro.o
+set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o %OBJ_RELEASE_DIR%\fd2_save_load.o %OBJ_RELEASE_DIR%\fd2_state_machine.o %OBJ_RELEASE_DIR%\fd2_scenes.o %OBJ_RELEASE_DIR%\fd2_globals.o %OBJ_RELEASE_DIR%\fd2_data_loader.o %OBJ_RELEASE_DIR%\fd2_dat.o %OBJ_RELEASE_DIR%\fd2_scene_interact.o %OBJ_RELEASE_DIR%\fd2_input_scan.o %OBJ_RELEASE_DIR%\fd2_render_pipeline.o %OBJ_RELEASE_DIR%\fd2_rle.o %OBJ_RELEASE_DIR%\fd2_opening_animation.o %OBJ_RELEASE_DIR%\fd2_scene_manager.o %OBJ_RELEASE_DIR%\fd2_opening_intro.o %OBJ_RELEASE_DIR%\fd2_sfx.o
 
 :: Targets
 set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
@@ -135,6 +135,8 @@ if "%TARGET%"=="all" (
     call :compile %SRC_DIR%\fd2_opening_intro.c %OBJ_DIR%\fd2_opening_intro.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_sfx.c %OBJ_DIR%\fd2_sfx.o
 if errorlevel 1 goto :error
 
 echo Linking %TARGET_GAME% ...
@@ -279,6 +281,8 @@ call :compile %SRC_DIR%\fd2_opening_intro.c %OBJ_DIR%\fd2_opening_intro.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
 if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_sfx.c %OBJ_DIR%\fd2_sfx.o
+if errorlevel 1 goto :error
 
 echo Linking %TARGET_GAME%
 %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
@@ -334,6 +338,8 @@ if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_opening_intro.c %OBJ_RELEASE_DIR%\fd2_opening_intro.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_fdother_resources.c %OBJ_RELEASE_DIR%\fd2_fdother_resources.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_sfx.c %OBJ_RELEASE_DIR%\fd2_sfx.o
 if errorlevel 1 goto :error
 
 echo Linking %TARGET_GAME_RELEASE% (Release Mode)

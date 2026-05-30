@@ -17,6 +17,7 @@
 #endif
 
 #include "fd2_audio.h"
+#include "fd2_sfx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -616,15 +617,26 @@ void fd2_audio_fade_music(fd2_audio_t* audio, int ms) {
 }
 
 int fd2_audio_play_sfx(fd2_audio_t* audio, int sfx_id) {
-    if (!audio) return -1;
-    (void)sfx_id;
-    printf("fd2_audio: SFX %d (not implemented)\n", sfx_id);
-    return 0;
+    if (!audio || sfx_id < 0 || sfx_id >= FD2_SFX_COUNT) return -1;
+    
+    /* Use the new SFX system */
+    if (g_sfx_mgr && g_sfx_mgr->initialized) {
+        int volume = audio->sfx_volume;
+        return fd2_sfx_play_volume(g_sfx_mgr, sfx_id, volume);
+    }
+    
+    printf("fd2_audio: SFX %d (SFX system not initialized)\n", sfx_id);
+    return -1;
 }
 
 void fd2_audio_set_sfx_volume(fd2_audio_t* audio, int volume) {
     if (!audio) return;
     audio->sfx_volume = (volume < 0) ? 0 : (volume > 128) ? 128 : volume;
+    
+    /* Update SFX system volume */
+    if (g_sfx_mgr && g_sfx_mgr->initialized) {
+        fd2_sfx_set_volume(g_sfx_mgr, audio->sfx_volume);
+    }
 }
 
 bool fd2_audio_music_playing(const fd2_audio_t* audio) {
