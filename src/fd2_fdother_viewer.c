@@ -59,6 +59,10 @@ static fd2_sfx_manager_t g_viewer_sfx_mgr;
 #define FONT_PAGE_COUNT      ((FONT_TOTAL_CHARS + FONT_CHARS_PER_PAGE - 1) / FONT_CHARS_PER_PAGE) /* 10页 */
 static int g_font_page = 0;  /* 当前字体页 (0-9) */
 
+/* 偏移表实例 (索引2) */
+static fdother_offset_table_t g_offset_table = {0};
+static bool g_offset_table_loaded = false;
+
 /* ========================================================================
  * 资源类型名称
  * ======================================================================== */
@@ -78,7 +82,7 @@ static const char* get_resource_desc(int index) {
     switch (index) {
         case 0: return "主调色板";
         case 1: return "图标 24x24";
-        case 2: return "RAW数据 (字体?)";
+        case 2: return "偏移表 (9419子资源)";
         case 3: return "LMI1 Tile集 (23 tiles)";
         case 4: return "RAW数据 (字符位图?)";
         case 5: return "LMI1 Tile集 (138 tiles)";
@@ -457,6 +461,34 @@ static void refresh_display(void) {
                 /* 索引4是字体资源 (1824字符, 16x16位图) */
                 g_max_sub_items = FONT_CHARS_PER_PAGE;
                 draw_font_view(res_data);
+            } else if (g_current_index == 2) {
+                /* 索引2是偏移表 (9419子资源) */
+                if (!g_offset_table_loaded) {
+                    if (fdother_parse_offset_table(2, &g_offset_table) == 0) {
+                        g_offset_table_loaded = true;
+                        g_max_sub_items = g_offset_table.offset_count - 1;
+                        printf("偏移表加载成功: %u个偏移, %u个子资源\n", 
+                               g_offset_table.offset_count, g_max_sub_items);
+                    }
+                }
+                
+                if (g_offset_table_loaded && g_sub_index < g_max_sub_items) {
+                    dword sub_size;
+                    const byte* sub_data = fdother_offset_table_get_resource(&g_offset_table, g_sub_index, &sub_size);
+                    
+                    if (sub_data && sub_size > 0) {
+                        /* 尝试解析为TILE */
+                        fdother_tile_t tile;
+                        if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
+                            if (tile.rle_data && tile.rle_size > 0 && tile.rle_size < sub_size) {
+                                fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, tile.palette_window);
+                                g_decode_width = tile.width;
+                                g_decode_height = tile.height;
+                                draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
+                            }
+                        }
+                    }
+                }
             } else {
                 /* 其他RAW数据显示为信息 */
                 clear_pixels();
@@ -527,6 +559,24 @@ static void print_resource_info(void) {
             if (g_current_index == 4) {
                 printf("字体: %d 字符 (16x16位图)\n", FONT_TOTAL_CHARS);
                 printf("页: %d / %d (每页%d字符)\n", g_font_page, FONT_PAGE_COUNT - 1, FONT_CHARS_PER_PAGE);
+            } else if (g_current_index == 2) {
+                if (g_offset_table_loaded) {
+                    printf("偏移表: %u个偏移\n", g_offset_table.offset_count);
+                    printf("子资源: %d / %d\n", g_sub_index, g_max_sub_items);
+                    
+                    dword sub_size;
+                    const byte* sub_data = fdother_offset_table_get_resource(&g_offset_table, g_sub_index, &sub_size);
+                    if (sub_data && sub_size > 0) {
+                        printf("当前子资源大小: %u字节\n", sub_size);
+                        fdother_tile_t tile;
+                        if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
+                            printf("子资源类型: Tile图像 %dx%d\n", tile.width, tile.height);
+                            printf("调色板窗口: %d, 头大小: %d\n", tile.palette_window, tile.header_size);
+                        }
+                    }
+                } else {
+                    printf("偏移表加载失败\n");
+                }
             }
             break;
     }
@@ -752,6 +802,12 @@ int main(int argc, char* argv[]) {
     
     fd2_sfx_shutdown(&g_viewer_sfx_mgr);
     fdother_unload();
+    
+    /* 清理偏移表 */
+    if (g_offset_table_loaded) {
+        fdother_offset_table_free(&g_offset_table);
+        g_offset_table_loaded = false;
+    }
     
     printf("\n程序退出\n");
     return 0;

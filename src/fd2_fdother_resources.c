@@ -227,9 +227,21 @@ int fdother_parse_tile(const byte* data, dword size, fdother_tile_t* out_tile) {
     
     out_tile->width = w;
     out_tile->height = h;
-    out_tile->palette_window = data[4];
-    out_tile->rle_data = data + 5;
-    out_tile->rle_size = size - 5;
+    
+    // 自动检测头格式：字节5=0使用5字节头，字节5!=0使用8字节头
+    if (size >= 8 && data[5] != 0) {
+        // 8字节头格式
+        out_tile->header_size = 8;
+        out_tile->palette_window = data[4] | (data[5] << 8);
+        out_tile->rle_data = data + 8;
+        out_tile->rle_size = size - 8;
+    } else {
+        // 5字节头格式
+        out_tile->header_size = 5;
+        out_tile->palette_window = data[4];
+        out_tile->rle_data = data + 5;
+        out_tile->rle_size = size - 5;
+    }
     
     return 0;
 }
@@ -424,4 +436,79 @@ int fdother_get_nested_dat(int nested_index, fdother_nested_dat_t* out_nested) {
     const byte* data = fdother_get_resource(nested_index, &size);
     if (!data) return -1;
     return fdother_parse_nested_dat(data, size, out_nested);
+}
+
+/* ========================================================================
+ * 索引2偏移表解析
+ * ======================================================================== */
+
+int fdother_parse_offset_table(int index, fdother_offset_table_t* out_table) {
+    if (!out_table || index != 2) {
+        return -1;
+    }
+    
+    dword size;
+    const byte* data = fdother_get_resource(index, &size);
+    if (!data || size < 8) {
+        return -1;
+    }
+    
+    // 解析偏移表
+    dword offset_count = size / 4;
+    
+    // 验证是否为有效的偏移表
+    // 第一个偏移应该指向偏移表之后
+    dword first_offset = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+    if (first_offset < offset_count * 4) {
+        return -1;
+    }
+    
+    out_table->offset_count = offset_count;
+    out_table->data = data;
+    out_table->size = size;
+    
+    // 分配并复制偏移表
+    out_table->offsets = (dword*)malloc(offset_count * sizeof(dword));
+    if (!out_table->offsets) {
+        return -1;
+    }
+    
+    for (dword i = 0; i < offset_count; i++) {
+        dword addr = i * 4;
+        if (addr + 4 > size) break;
+        out_table->offsets[i] = data[addr] | (data[addr + 1] << 8) | 
+                               (data[addr + 2] << 16) | (data[addr + 3] << 24);
+    }
+    
+    return 0;
+}
+
+const byte* fdother_offset_table_get_resource(const fdother_offset_table_t* table,
+                                               int resource_index, dword* out_size) {
+    if (!table || resource_index < 0 || resource_index >= (int)table->offset_count - 1) {
+        if (out_size) *out_size = 0;
+        return NULL;
+    }
+    
+    dword start = table->offsets[resource_index];
+    dword end = table->offsets[resource_index + 1];
+    dword size = end - start;
+    
+    if (start >= table->size || end > table->size) {
+        if (out_size) *out_size = 0;
+        return NULL;
+    }
+    
+    if (out_size) *out_size = size;
+    return table->data + start;
+}
+
+void fdother_offset_table_free(fdother_offset_table_t* table) {
+    if (table && table->offsets) {
+        free(table->offsets);
+        table->offsets = NULL;
+        table->offset_count = 0;
+        table->data = NULL;
+        table->size = 0;
+    }
 }

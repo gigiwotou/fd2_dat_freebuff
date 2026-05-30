@@ -47,12 +47,17 @@ typedef struct {
 
 /* ========================================================================
  * Tile图像资源
- * 格式: [width:2][height:2][palette_window:1][rle_data]
+ * 格式: [width:2][height:2][palette_window:1/2][rle_data]
+ * 注意：存在两种头格式：
+ *   - 5字节头：width(2) + height(2) + palette_window(1)，RLE从偏移5开始
+ *   - 8字节头：width(2) + height(2) + palette_window(2) + extra(2)，RLE从偏移8开始
+ * 区分方法：字节5=0使用5字节头，字节5!=0使用8字节头
  * ======================================================================== */
 typedef struct {
     word width;              // 宽度 (2字节，小端序)
     word height;             // 高度 (2字节，小端序)
-    byte palette_window;    // 调色板窗口偏移 (1字节)
+    word palette_window;    // 调色板窗口偏移 (1或2字节)
+    byte header_size;       // 头大小 (5或8字节)
     const byte* rle_data;   // RLE压缩数据指针
     dword rle_size;         // RLE数据大小
 } fdother_tile_t;
@@ -161,6 +166,18 @@ typedef struct {
 #define FDOTHER_RAW_4       4   // RAW数据 (58368字节) - 可能是字符位图
 
 /* ========================================================================
+ * 索引2偏移表结构
+ * 格式: offsets[9420][4] + 9419个子资源
+ * 每个子资源约480-484字节，第一个子资源是24x20 TILE图像
+ * ======================================================================== */
+typedef struct {
+    dword offset_count;     // 偏移表数量 (9420)
+    dword* offsets;         // 偏移表
+    const byte* data;       // 原始数据指针
+    dword size;             // 数据总大小
+} fdother_offset_table_t;
+
+/* ========================================================================
  * 资源加载和解析函数
  * ======================================================================== */
 
@@ -212,6 +229,16 @@ int fdother_get_tile(int tile_index, fdother_tile_t* out_tile);
 int fdother_get_lmi1(int lmi1_index, fdother_lmi1_t* out_lmi1);
 int fdother_get_nested_dat(int nested_index, fdother_nested_dat_t* out_nested);
 int fdother_decode_tile(const fdother_tile_t* tile, byte* dst);
+
+/* 解析索引2偏移表 */
+int fdother_parse_offset_table(int index, fdother_offset_table_t* out_table);
+
+/* 获取偏移表中的子资源 */
+const byte* fdother_offset_table_get_resource(const fdother_offset_table_t* table,
+                                               int resource_index, dword* out_size);
+
+/* 释放偏移表 */
+void fdother_offset_table_free(fdother_offset_table_t* table);
 
 #ifdef __cplusplus
 }
