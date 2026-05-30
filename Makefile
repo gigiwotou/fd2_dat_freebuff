@@ -93,12 +93,16 @@ GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render
 # fdother_test objects
 FDOTHER_TEST_OBJS = $(OBJ_DIR)/fd2_fdother_test.o $(OBJ_DIR)/fd2_fdother_resources.o $(OBJ_DIR)/fd2_dat.o $(OBJ_DIR)/fd2_rle.o
 
+# analyzer objects
+ANALYZER_OBJS = $(OBJ_DIR)/fd2_resource_analyzer.o $(OBJ_DIR)/fd2_fdother_resources.o $(OBJ_DIR)/fd2_dat.o $(OBJ_DIR)/fd2_rle.o
+
 # Targets
 TARGET_GAME   = $(BIN_DIR)/fd2$(EXE_EXT)
 TARGET_RELEASE = $(BIN_DIR)/fd2_release$(EXE_EXT)
 TARGET_FDOTHER_TEST = $(BIN_DIR)/fd2_fdother_test$(EXE_EXT)
+TARGET_ANALYZER = $(BIN_DIR)/fd2_resource_analyzer$(EXE_EXT)
 
-.PHONY: all clean game release fdother_test
+.PHONY: all clean game release fdother_test analyzer
 
 all: $(TARGET_GAME)
 	@echo Copying required DLLs...
@@ -110,6 +114,8 @@ all: $(TARGET_GAME)
 game: $(TARGET_GAME)
 
 fdother_test: $(TARGET_FDOTHER_TEST)
+
+analyzer: $(TARGET_ANALYZER) | output_dir
 
 release: $(TARGET_RELEASE)
 	@echo Copying required DLLs...
@@ -138,6 +144,10 @@ $(OBJ_RELEASE_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_RELEASE_DIR)
 $(TARGET_FDOTHER_TEST): $(FDOTHER_TEST_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# analyzer target
+$(TARGET_ANALYZER): $(ANALYZER_OBJS) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
+
 $(BIN_DIR):
 	$(MKDIR) -p $@
 
@@ -146,6 +156,9 @@ $(OBJ_DIR):
 
 $(OBJ_RELEASE_DIR):
 	$(MKDIR) -p $@
+
+output_dir:
+	$(MKDIR) -p output
 
 clean:
 	$(RM) -rf $(OBJ_DIR) $(OBJ_RELEASE_DIR) $(BIN_DIR)

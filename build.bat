@@ -42,6 +42,7 @@ set TARGET_GAME=%BIN_DIR%\fd2%EXE_EXT%
 set TARGET_GAME_RELEASE=%BIN_DIR%\fd2_release%EXE_EXT%
 set TARGET_UI_TEST=%BIN_DIR%\fd2_ui_test%EXE_EXT%
 set TARGET_FDOTHER_TEST=%BIN_DIR%\fd2_fdother_test%EXE_EXT%
+set TARGET_ANALYZER=%BIN_DIR%\fd2_resource_analyzer%EXE_EXT%
 
 :: Parse arguments (order-independent)
 set TARGET=all
@@ -55,6 +56,7 @@ if /I "%~1"=="clean" set TARGET=clean
 if /I "%~1"=="release" set RELEASE=1
 if /I "%~1"=="ui_test" set TARGET=ui_test
 if /I "%~1"=="fdother_test" set TARGET=fdother_test
+if /I "%~1"=="analyzer" set TARGET=analyzer
 if /I "%~1"=="mingw64" set MSYS2_PREFIX=C:\msys64\mingw64
 shift
 goto :arg_loop
@@ -149,6 +151,7 @@ if "%TARGET%"=="game" goto :build_game
 if "%TARGET%"=="release" goto :build_release
 if "%TARGET%"=="ui_test" goto :build_ui_test
 if "%TARGET%"=="fdother_test" goto :build_fdother_test
+if "%TARGET%"=="analyzer" goto :build_analyzer
 
 if "%TARGET%"=="all" (
     echo.
@@ -187,6 +190,24 @@ echo [OK] %TARGET_UI_TEST%
 echo.
 echo Copying required DLLs...
 copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+goto :end
+
+:build_analyzer
+call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_resource_analyzer.c %OBJ_DIR%\fd2_resource_analyzer.o
+if errorlevel 1 goto :error
+
+if not exist output mkdir output
+
+echo Linking %TARGET_ANALYZER%
+%GCC% %CFLAGS% -o %TARGET_ANALYZER% %OBJ_DIR%\fd2_resource_analyzer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
+if errorlevel 1 goto :error
+echo [OK] %TARGET_ANALYZER%
 goto :end
 
 :build_fdother_test
