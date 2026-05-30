@@ -373,7 +373,7 @@ static void refresh_display(void) {
     }
     
     g_current_type = fdother_get_resource_type(res_data, res_size);
-    g_sub_index = 0;
+    /* 不重置g_sub_index，保留当前子项索引 */
     g_max_sub_items = 0;
     g_decode_width = 0;
     g_decode_height = 0;
@@ -404,10 +404,14 @@ static void refresh_display(void) {
                 if (!g_multi_tile_loaded) {
                     if (fdother_parse_multi_tile(res_data, res_size, &g_multi_tile) == 0) {
                         g_multi_tile_loaded = true;
-                        g_max_sub_items = g_multi_tile.icon_count;
                         printf("多图标TILE加载成功: %dx%d, %d个图标\n",
                                g_multi_tile.width, g_multi_tile.height, g_multi_tile.icon_count);
                     }
+                }
+                
+                /* 始终更新g_max_sub_items */
+                if (g_multi_tile_loaded) {
+                    g_max_sub_items = g_multi_tile.icon_count;
                 }
                 
                 if (g_multi_tile_loaded && g_sub_index < g_multi_tile.icon_count) {
@@ -665,6 +669,7 @@ static int main_loop(void) {
                         if (g_current_index > 0) {
                             g_current_index--;
                             g_font_page = 0;  /* 重置字体页 */
+                            g_sub_index = 0;  /* 重置子项索引 */
                             print_resource_info();
                             refresh_display();
                         }
@@ -675,6 +680,7 @@ static int main_loop(void) {
                         if (g_current_index < 102) {
                             g_current_index++;
                             g_font_page = 0;  /* 重置字体页 */
+                            g_sub_index = 0;  /* 重置子项索引 */
                             print_resource_info();
                             refresh_display();
                         }
