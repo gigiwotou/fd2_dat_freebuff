@@ -62,6 +62,21 @@ typedef struct {
     dword rle_size;         // RLE数据大小
 } fdother_tile_t;
 
+/* ========================================================================
+ * 多图标TILE资源 (索引1: 24x24图标集)
+ * 格式: [width:2][height:2][palette_window:1][padding:1][icon_offsets[N]:4]
+ * 偏移6开始是4字节偏移表，每个偏移指向一个图标的RLE数据
+ * ======================================================================== */
+typedef struct {
+    word width;              // 图标宽度
+    word height;             // 图标高度
+    word palette_window;    // 调色板窗口
+    word icon_count;         // 图标数量
+    dword* icon_offsets;     // 图标偏移表 (相对于资源开始)
+    const byte* data;        // 原始数据指针
+    dword size;              // 数据总大小
+} fdother_multi_tile_t;
+
 /* Tile资源 - 小图标和UI元素 */
 #define FDOTHER_TILE_ICON_24X24    1   // 24x24 图标
 #define FDOTHER_TILE_ICON_62X26    10  // 62x26 图标
@@ -232,6 +247,10 @@ int fdother_get_tile(int tile_index, fdother_tile_t* out_tile);
 int fdother_get_lmi1(int lmi1_index, fdother_lmi1_t* out_lmi1);
 int fdother_get_nested_dat(int nested_index, fdother_nested_dat_t* out_nested);
 int fdother_decode_tile(const fdother_tile_t* tile, byte* dst);
+int fdother_parse_multi_tile(const byte* data, dword size, fdother_multi_tile_t* out_multi);
+int fdother_multi_tile_get_icon(const fdother_multi_tile_t* multi, int icon_index,
+                                 const byte** out_rle_data, dword* out_rle_size);
+void fdother_multi_tile_free(fdother_multi_tile_t* multi);
 
 /* 解析索引2偏移表 */
 int fdother_parse_offset_table(int index, fdother_offset_table_t* out_table);

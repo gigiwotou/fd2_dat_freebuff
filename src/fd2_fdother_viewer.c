@@ -66,6 +66,10 @@ static int g_font_page = 0;  /* 当前字体页 (0-9) */
 static fdother_offset_table_t g_offset_table = {0};
 static bool g_offset_table_loaded = false;
 
+/* 多图标TILE实例 (索引1) */
+static fdother_multi_tile_t g_multi_tile = {0};
+static bool g_multi_tile_loaded = false;
+
 /* ========================================================================
  * 资源类型名称
  * ======================================================================== */
@@ -395,15 +399,41 @@ static void refresh_display(void) {
         }
         
         case FDOTHER_RES_TYPE_TILE: {
-            fdother_tile_t tile;
-            if (fdother_parse_tile(res_data, res_size, &tile) == 0) {
-                /* 清零解码缓冲区，确保SKIP操作对应的位置为0 */
-                memset(g_decode_buffer, 0, tile.width * tile.height);
-                /* RLE解码时不应用调色板窗口 */
-                fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
-                g_decode_width = tile.width;
-                g_decode_height = tile.height;
-                draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
+            /* 检查是否是多图标TILE (索引1) */
+            if (g_current_index == 1) {
+                if (!g_multi_tile_loaded) {
+                    if (fdother_parse_multi_tile(res_data, res_size, &g_multi_tile) == 0) {
+                        g_multi_tile_loaded = true;
+                        g_max_sub_items = g_multi_tile.icon_count;
+                        printf("多图标TILE加载成功: %dx%d, %d个图标\n",
+                               g_multi_tile.width, g_multi_tile.height, g_multi_tile.icon_count);
+                    }
+                }
+                
+                if (g_multi_tile_loaded && g_sub_index < g_multi_tile.icon_count) {
+                    const byte* rle_data;
+                    dword rle_size;
+                    
+                    if (fdother_multi_tile_get_icon(&g_multi_tile, g_sub_index, &rle_data, &rle_size) == 0) {
+                        memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
+                        fd_decompress_rle(rle_data, rle_size, g_decode_buffer, 
+                                         g_multi_tile.width, g_multi_tile.height, g_multi_tile.palette_window);
+                        g_decode_width = g_multi_tile.width;
+                        g_decode_height = g_multi_tile.height;
+                        draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height, 
+                                   palette_rgb24, g_multi_tile.palette_window);
+                    }
+                }
+            } else {
+                /* 普通TILE */
+                fdother_tile_t tile;
+                if (fdother_parse_tile(res_data, res_size, &tile) == 0) {
+                    memset(g_decode_buffer, 0, tile.width * tile.height);
+                    fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
+                    g_decode_width = tile.width;
+                    g_decode_height = tile.height;
+                    draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
+                }
             }
             break;
         }
@@ -536,12 +566,22 @@ static void print_resource_info(void) {
             break;
             
         case FDOTHER_RES_TYPE_TILE: {
-            fdother_tile_t tile;
-            if (fdother_get_tile(g_current_index, &tile) == 0) {
-                printf("类型: Tile图像\n");
-                printf("尺寸: %dx%d\n", tile.width, tile.height);
-                printf("调色板窗口: %d\n", tile.palette_window);
-                printf("RLE数据: %u 字节\n", tile.rle_size);
+            if (g_current_index == 1) {
+                printf("类型: 多图标TILE\n");
+                if (g_multi_tile_loaded) {
+                    printf("尺寸: %dx%d\n", g_multi_tile.width, g_multi_tile.height);
+                    printf("调色板窗口: %d\n", g_multi_tile.palette_window);
+                    printf("图标数量: %d\n", g_multi_tile.icon_count);
+                    printf("当前图标: %d\n", g_sub_index);
+                }
+            } else {
+                fdother_tile_t tile;
+                if (fdother_get_tile(g_current_index, &tile) == 0) {
+                    printf("类型: Tile图像\n");
+                    printf("尺寸: %dx%d\n", tile.width, tile.height);
+                    printf("调色板窗口: %d\n", tile.palette_window);
+                    printf("RLE数据: %u 字节\n", tile.rle_size);
+                }
             }
             break;
         }
@@ -819,6 +859,12 @@ int main(int argc, char* argv[]) {
     if (g_offset_table_loaded) {
         fdother_offset_table_free(&g_offset_table);
         g_offset_table_loaded = false;
+    }
+    
+    /* 清理多图标TILE */
+    if (g_multi_tile_loaded) {
+        fdother_multi_tile_free(&g_multi_tile);
+        g_multi_tile_loaded = false;
     }
     
     printf("\n程序退出\n");

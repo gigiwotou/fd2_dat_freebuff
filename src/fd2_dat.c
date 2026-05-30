@@ -137,111 +137,59 @@ void fd_get_image_dimensions(const byte *data, int *width, int *height) {
 }
 
 int fd_decompress_rle(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
-    // 按照sub_4E98D汇编代码1:1实现
-    // value_param == -1时: 不应用调色板窗口（在渲染时应用）
-    // value_param != -1时: 应用调色板窗口 (value_param + pixel) & 0xFF
+    // 按照sub_4EC66 + sub_4EBFF汇编代码1:1实现
+    // sub_4EC66: 像素解码（运行长度编码）
+    // value_param: 调色板窗口偏移
     
     int expected = dst_width * dst_height;
     int dst_idx = 0;
     int src_idx = 0;
     
-    // 按行处理 (arg8 = height)
+    // sub_4EC66状态变量
+    byte ah = 0;        // 运行长度计数器
+    byte prev_al = 0;   // 上次读取的像素值
+    
+    // 按行处理
     for (int row = 0; row < dst_height; row++) {
-        int remaining = dst_width;  // bx = width
-        
-        while (remaining > 0 && src_idx < src_size) {
-            // 读取控制字节
-            byte ctrl = src[src_idx];
-            src_idx++;
+        for (int col = 0; col < dst_width; col++) {
+            if (dst_idx >= expected) break;
             
-            int bit7 = (ctrl >> 7) & 1;
-            int bit6 = (ctrl >> 6) & 1;
-            int count = (ctrl & 0x3F) + 1;
-            
-            if (bit7 == 0) {
-                if (bit6 == 0) {
-                    // FILL (0x4E9EE): 读取1个值，连续填充count个位置
-                    int actual_count = (count < remaining) ? count : remaining;
-                    
-                    if (src_idx < src_size) {
-                        byte fill_val = src[src_idx];
-                        src_idx++;
-                        
-                        if (value_param != -1) {
-                            fill_val = (value_param + fill_val) & 0xFF;
-                        }
-                        
-                        for (int i = 0; i < actual_count && dst_idx < expected; i++) {
-                            dst[dst_idx] = fill_val;
-                            dst_idx++;
-                        }
-                    }
-                    
-                    remaining -= actual_count;
-                    
-                } else {
-                    // COPY_SPEC (0x4EA00): 读取1个值，间隔写入
-                    // 关键: sub bx, cx 执行两次 = 消耗2*count个位置
-                    // 但每次循环只写入1个值，dst前进2 (inc edi + stosb)
-                    
-                    int total_consume = count * 2;
-                    int actual_count = count;
-                    
-                    if (total_consume > remaining) {
-                        actual_count = remaining / 2;
-                        total_consume = actual_count * 2;
-                    }
-                    
-                    if (src_idx < src_size) {
-                        byte val = src[src_idx];
-                        src_idx++;
-                        
-                        if (value_param != -1) {
-                            val = (value_param + val) & 0xFF;
-                        }
-                        
-                        // loop: inc edi; stosb
-                        // 每次循环: dst前进2
-                        for (int i = 0; i < actual_count && dst_idx < expected; i++) {
-                            dst[dst_idx] = val;
-                            dst_idx += 2;  // inc edi + stosb
-                        }
-                    }
-                    
-                    remaining -= total_consume;
-                }
+            // sub_4EC66逻辑开始
+            if (ah > 0) {
+                // AH > 0: 重复之前的像素值
+                ah--;
             } else {
-                if (bit6 == 0) {
-                    // COPY_STD (0x4EA17): 从src复制count个字节
-                    int actual_count = (count < remaining) ? count : remaining;
-                    actual_count = (actual_count < (src_size - src_idx)) ? actual_count : (src_size - src_idx);
-                    
-                    for (int i = 0; i < actual_count && dst_idx < expected && src_idx < src_size; i++) {
-                        byte val = src[src_idx];
+                // AH == 0: 读取新字节
+                if (src_idx >= src_size) break;
+                
+                byte al = src[src_idx];
+                src_idx++;
+                
+                if (al > 0xC0) {
+                    // AL > 0xC0: 运行长度编码
+                    ah = al - 0xC1;
+                    if (src_idx < src_size) {
+                        al = src[src_idx];
                         src_idx++;
-                        
-                        if (value_param != -1) {
-                            val = (value_param + val) & 0xFF;
-                        }
-                        
-                        dst[dst_idx] = val;
-                        dst_idx++;
                     }
-                    
-                    remaining -= actual_count;
-                    
+                    prev_al = al;
                 } else {
-                    // SKIP (0x4EA2C): 跳过count个位置
-                    int actual_count = (count < remaining) ? count : remaining;
-                    
-                    dst_idx += actual_count;
-                    remaining -= actual_count;
+                    // AL <= 0xC0: 直接像素值
+                    ah = 0;
+                    prev_al = al;
                 }
             }
+            // sub_4EC66逻辑结束，此时prev_al就是解码后的像素值
+            
+            // 应用调色板窗口
+            byte pixel = prev_al;
+            if (value_param != -1) {
+                pixel = (value_param + prev_al) & 0xFF;
+            }
+            
+            dst[dst_idx] = pixel;
+            dst_idx++;
         }
-        
-        // 行结束: add edi, edx (edx = stride - width)
-        // 这里假设stride = width，所以不需要额外前进
     }
     
     return 0;

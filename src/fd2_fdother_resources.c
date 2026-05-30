@@ -234,15 +234,12 @@ int fdother_parse_tile(const byte* data, dword size, fdother_tile_t* out_tile) {
     out_tile->width = w;
     out_tile->height = h;
     
-    // 自动检测头格式：字节5=0使用5字节头，字节5!=0使用8字节头
     if (size >= 8 && data[5] != 0) {
-        // 8字节头格式
         out_tile->header_size = 8;
         out_tile->palette_window = data[4] | (data[5] << 8);
         out_tile->rle_data = data + 8;
         out_tile->rle_size = size - 8;
     } else {
-        // 5字节头格式
         out_tile->header_size = 5;
         out_tile->palette_window = data[4];
         out_tile->rle_data = data + 5;
@@ -250,6 +247,102 @@ int fdother_parse_tile(const byte* data, dword size, fdother_tile_t* out_tile) {
     }
     
     return 0;
+}
+
+/* ========================================================================
+ * 多图标TILE解析 (索引1)
+ * ======================================================================== */
+
+int fdother_parse_multi_tile(const byte* data, dword size, fdother_multi_tile_t* out_multi) {
+    if (!data || !out_multi || size < 10) {
+        return -1;
+    }
+    
+    word w = data[0] | (data[1] << 8);
+    word h = data[2] | (data[3] << 8);
+    
+    if (w == 0 || w > 640 || h == 0 || h > 480) {
+        return -1;
+    }
+    
+    out_multi->width = w;
+    out_multi->height = h;
+    out_multi->palette_window = data[4];
+    out_multi->data = data;
+    out_multi->size = size;
+    
+    // 从偏移6开始解析4字节偏移表
+    dword offset_table_start = 6;
+    dword* offsets = NULL;
+    dword count = 0;
+    dword pos = offset_table_start;
+    
+    // 第一次遍历：计算偏移数量
+    while (pos + 4 <= size) {
+        dword off = data[pos] | (data[pos + 1] << 8) | 
+                   (data[pos + 2] << 16) | (data[pos + 3] << 24);
+        
+        if (off > size) {
+            break;
+        }
+        
+        count++;
+        pos += 4;
+        
+        if (count > 200) {
+            break;
+        }
+    }
+    
+    if (count == 0) {
+        return -1;
+    }
+    
+    // 分配并复制偏移表
+    offsets = (dword*)malloc(count * sizeof(dword));
+    if (!offsets) {
+        return -1;
+    }
+    
+    pos = offset_table_start;
+    for (dword i = 0; i < count; i++) {
+        offsets[i] = data[pos] | (data[pos + 1] << 8) | 
+                    (data[pos + 2] << 16) | (data[pos + 3] << 24);
+        pos += 4;
+    }
+    
+    out_multi->icon_count = (word)count;
+    out_multi->icon_offsets = offsets;
+    
+    return 0;
+}
+
+int fdother_multi_tile_get_icon(const fdother_multi_tile_t* multi, int icon_index,
+                                 const byte** out_rle_data, dword* out_rle_size) {
+    if (!multi || icon_index < 0 || icon_index >= multi->icon_count) {
+        return -1;
+    }
+    
+    dword start = multi->icon_offsets[icon_index];
+    dword end = (icon_index + 1 < multi->icon_count) ? 
+                multi->icon_offsets[icon_index + 1] : multi->size;
+    
+    if (start >= multi->size || end > multi->size) {
+        return -1;
+    }
+    
+    if (out_rle_data) *out_rle_data = multi->data + start;
+    if (out_rle_size) *out_rle_size = end - start;
+    
+    return 0;
+}
+
+void fdother_multi_tile_free(fdother_multi_tile_t* multi) {
+    if (multi && multi->icon_offsets) {
+        free(multi->icon_offsets);
+        multi->icon_offsets = NULL;
+        multi->icon_count = 0;
+    }
 }
 
 int fdother_decode_tile(const fdother_tile_t* tile, byte* dst) {
