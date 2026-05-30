@@ -137,80 +137,52 @@ void fd_get_image_dimensions(const byte *data, int *width, int *height) {
 }
 
 int fd_decompress_rle(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
-    // Implementation based on Python decompress_rle
-    int width = dst_width;
-    int height = dst_height;
-    int expected = width * height;
+    int expected = dst_width * dst_height;
+    int dst_idx = 0;
+    int src_idx = 0;
     
-    int num4 = 0;
-    int num3 = src_size - 1;
-    int num7 = 0;
-    int num8 = 0;
-    int num9 = 0;
-    byte b = 0;
-    int num10 = 0; // x coordinate
-    int num11 = 0; // y coordinate
-    
-    int pixel_idx = 0;
-    
-    while (num4 <= num3 && pixel_idx < expected) {
-        int flag = num8 != 0;
+    while (dst_idx < expected && src_idx < src_size) {
+        byte ctrl = src[src_idx];
+        src_idx++;
         
-        if (!flag) {
-            num7 = 0;
-            num8 = 0;
-            num9 = 0;
-            
-            if (num4 < src_size) {
-                b = src[num4];
-                if (b >= 192) {
-                    num7 = b - 192 + 1;
-                } else if (b >= 128) {
-                    num8 = b - 128 + 1;
-                } else if (b >= 64) {
-                    num9 = b - 64;
-                    num8 = 1;
-                } else {
-                    num8 = 1;
-                    num9 = b;
-                }
-            }
-            
-            num10 += num7;
-            if (num10 >= width) {
-                num10 = 0;
-                num11 += 1;
-            }
-        } else {
-            int num12 = num9;
-            int num13 = 0;
-            while (num13 <= num12) {
-                if (b >= 64 && b < 128) {
-                    num10 += 1;
-                }
-                if (num4 < src_size) {
-                    byte index = src[num4];
-                    if (num10 >= 0 && num10 < width && num11 >= 0 && num11 < height) {
-                        if (pixel_idx < expected) {
-                            dst[pixel_idx] = index;
-                            pixel_idx++;
-                        }
+        int bit7 = (ctrl >> 7) & 1;
+        int bit6 = (ctrl >> 6) & 1;
+        int count = (ctrl & 0x3F) + 1;
+        
+        if (bit7 == 0) {
+            if (bit6 == 0) {
+                // FILL: 填充count个像素，值为下一个字节
+                if (src_idx < src_size) {
+                    byte fill_val = src[src_idx];
+                    src_idx++;
+                    if (value_param != -1) {
+                        fill_val = (value_param + fill_val) & 0xFF;
+                    }
+                    for (int i = 0; i < count && dst_idx < expected; i++) {
+                        dst[dst_idx] = fill_val;
+                        dst_idx++;
                     }
                 }
-                num10 += 1;
-                if (num10 >= width) {
-                    num10 = 0;
-                    num11 += 1;
-                }
-                num13++;
+            } else {
+                // SKIP: 跳过count个像素（填充0）
+                dst_idx += count;
             }
-            num8--;
-        }
-        
-        num4++;
-        
-        if (num11 >= height) {
-            break;
+        } else {
+            if (bit6 == 0) {
+                // COPY: 复制count个字节
+                for (int i = 0; i < count && dst_idx < expected && src_idx < src_size; i++) {
+                    byte val = src[src_idx];
+                    src_idx++;
+                    if (value_param != -1) {
+                        val = (value_param + val) & 0xFF;
+                    }
+                    dst[dst_idx] = val;
+                    dst_idx++;
+                }
+            } else {
+                // SKIP: 跳过count个像素
+                dst_idx += count;
+            }
         }
     }
     

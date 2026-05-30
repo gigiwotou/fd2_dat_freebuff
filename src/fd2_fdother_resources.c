@@ -453,13 +453,12 @@ int fdother_parse_offset_table(int index, fdother_offset_table_t* out_table) {
         return -1;
     }
     
-    // 解析偏移表
-    dword offset_count = size / 4;
+    // 索引2的结构：前312字节是偏移表（78个dword偏移值）
+    // 数据区从偏移312开始
+    const dword offset_table_size = 312;  // 偏移表固定大小
+    const dword offset_count = 78;        // 78个偏移值
     
-    // 验证是否为有效的偏移表
-    // 第一个偏移应该指向偏移表之后
-    dword first_offset = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
-    if (first_offset < offset_count * 4) {
+    if (size < offset_table_size) {
         return -1;
     }
     
@@ -475,7 +474,6 @@ int fdother_parse_offset_table(int index, fdother_offset_table_t* out_table) {
     
     for (dword i = 0; i < offset_count; i++) {
         dword addr = i * 4;
-        if (addr + 4 > size) break;
         out_table->offsets[i] = data[addr] | (data[addr + 1] << 8) | 
                                (data[addr + 2] << 16) | (data[addr + 3] << 24);
     }
