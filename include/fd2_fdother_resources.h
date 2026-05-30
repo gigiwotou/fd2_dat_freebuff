@@ -120,10 +120,14 @@ typedef struct {
 /* ========================================================================
  * LMI1 Tile集资源
  * 格式: "LMI1"[4] + tile_count[2] + tile_offsets[tile_count][4] + tile_data
+ * 注意：LMI1中的tile没有宽高头，直接是RLE数据
+ * 每个tile固定大小（通过相邻偏移差计算），通常是256字节对应16x16像素
  * ======================================================================== */
 typedef struct {
     char magic[4];           // "LMI1"
     word tile_count;         // tile数量
+    word tile_width;         // tile宽度 (固定，通常16)
+    word tile_height;        // tile高度 (固定，通常16)
     const byte* data;        // 原始数据指针
     dword size;              // 数据总大小
 } fdother_lmi1_t;
@@ -202,7 +206,6 @@ int fdother_parse_lmi1(const byte* data, dword size, fdother_lmi1_t* out_lmi1);
 
 /* 获取LMI1中的特定tile */
 int fdother_lmi1_get_tile(const fdother_lmi1_t* lmi1, int tile_index, 
-                          word* out_width, word* out_height, 
                           const byte** out_rle_data, dword* out_rle_size);
 
 /* 解析嵌套DAT */

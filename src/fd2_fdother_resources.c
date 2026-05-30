@@ -290,11 +290,38 @@ int fdother_parse_lmi1(const byte* data, dword size, fdother_lmi1_t* out_lmi1) {
     out_lmi1->data = data;
     out_lmi1->size = size;
     
+    /* 计算tile尺寸：通过前两个tile的偏移差 */
+    if (out_lmi1->tile_count >= 2) {
+        dword first_offset = data[6] | (data[7] << 8) | (data[8] << 16) | (data[9] << 24);
+        dword second_offset = data[10] | (data[11] << 8) | (data[12] << 16) | (data[13] << 24);
+        dword tile_size = second_offset - first_offset;
+        
+        /* 假设tile_size = width * height，取最接近的平方根作为宽高 */
+        /* 对于256字节，通常是16x16 */
+        out_lmi1->tile_width = 16;
+        out_lmi1->tile_height = 16;
+        
+        /* 尝试找到合理的宽高组合 */
+        for (int w = 1; w <= 256; w++) {
+            if (tile_size % w == 0) {
+                int h = tile_size / w;
+                if (w <= 256 && h <= 256) {
+                    out_lmi1->tile_width = w;
+                    out_lmi1->tile_height = h;
+                    break;
+                }
+            }
+        }
+    } else {
+        /* 默认16x16 */
+        out_lmi1->tile_width = 16;
+        out_lmi1->tile_height = 16;
+    }
+    
     return 0;
 }
 
 int fdother_lmi1_get_tile(const fdother_lmi1_t* lmi1, int tile_index,
-                          word* out_width, word* out_height,
                           const byte** out_rle_data, dword* out_rle_size) {
     if (!lmi1 || tile_index < 0 || tile_index >= lmi1->tile_count) {
         return -1;
@@ -313,16 +340,8 @@ int fdother_lmi1_get_tile(const fdother_lmi1_t* lmi1, int tile_index,
                       (data[offset_addr + 2] << 16) |
                       (data[offset_addr + 3] << 24);
     
-    if (tile_offset + 4 > data_size) {
-        return -1;
-    }
-    
-    word w = data[tile_offset] | (data[tile_offset + 1] << 8);
-    word h = data[tile_offset + 2] | (data[tile_offset + 3] << 8);
-    
-    if (out_width) *out_width = w;
-    if (out_height) *out_height = h;
-    if (out_rle_data) *out_rle_data = data + tile_offset + 4;
+    /* LMI1 tile没有宽高头，直接是RLE数据 */
+    if (out_rle_data) *out_rle_data = data + tile_offset;
     
     if (out_rle_size) {
         dword next_offset_addr = 6 + (tile_index + 1) * 4;
@@ -331,9 +350,9 @@ int fdother_lmi1_get_tile(const fdother_lmi1_t* lmi1, int tile_index,
                                    (data[next_offset_addr + 1] << 8) |
                                    (data[next_offset_addr + 2] << 16) |
                                    (data[next_offset_addr + 3] << 24);
-            *out_rle_size = next_tile_offset - tile_offset - 4;
+            *out_rle_size = next_tile_offset - tile_offset;
         } else {
-            *out_rle_size = data_size - tile_offset - 4;
+            *out_rle_size = data_size - tile_offset;
         }
     }
     

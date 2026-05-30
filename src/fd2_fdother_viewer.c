@@ -418,17 +418,16 @@ static void refresh_display(void) {
                 
                 /* 显示第一个tile */
                 if (g_sub_index < lmi1.tile_count) {
-                    word w, h;
                     const byte* rle_data;
                     dword rle_size;
                     
-                    if (fdother_lmi1_get_tile(&lmi1, g_sub_index, &w, &h, &rle_data, &rle_size) == 0) {
-                        memset(g_decode_buffer, 0, w * h);
-                        /* LMI1 tile没有palette_window头，直接使用RLE数据 */
-                        fd_decompress_rle(rle_data, rle_size, g_decode_buffer, w, h, -1);
-                        g_decode_width = w;
-                        g_decode_height = h;
-                        draw_pixels(g_decode_buffer, w, h, palette_rgb24, 0);
+                    if (fdother_lmi1_get_tile(&lmi1, g_sub_index, &rle_data, &rle_size) == 0) {
+                        /* LMI1 tile没有宽高头，使用lmi1结构体中的宽高 */
+                        memset(g_decode_buffer, 0, lmi1.tile_width * lmi1.tile_height);
+                        fd_decompress_rle(rle_data, rle_size, g_decode_buffer, lmi1.tile_width, lmi1.tile_height, -1);
+                        g_decode_width = lmi1.tile_width;
+                        g_decode_height = lmi1.tile_height;
+                        draw_pixels(g_decode_buffer, lmi1.tile_width, lmi1.tile_height, palette_rgb24, 0);
                     }
                 }
             }
