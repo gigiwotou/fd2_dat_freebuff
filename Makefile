@@ -86,15 +86,19 @@ DECODER_SRCS = $(SRC_DIR)/fd2_decoder.c
 DECODER_OBJS = $(OBJ_DIR)/fd2_decoder.o
 DECODER_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_decoder.o
 
-GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_map_loader.c $(SRC_DIR)/fd2_icon_b24.c $(SRC_DIR)/fd2_sprite.c $(SRC_DIR)/main.c $(SRC_DIR)/fd2_save_load.c $(SRC_DIR)/fd2_state_machine.c $(SRC_DIR)/fd2_scenes.c $(SRC_DIR)/fd2_globals.c $(SRC_DIR)/fd2_data_loader.c $(SRC_DIR)/fd2_scene_interact.c $(SRC_DIR)/fd2_input_scan.c $(SRC_DIR)/fd2_render_pipeline.c $(SRC_DIR)/fd2_rle.c $(SRC_DIR)/fd2_opening_animation.c $(SRC_DIR)/fd2_scene_manager.c $(SRC_DIR)/fd2_opening_intro.c
-GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_map_loader.o $(OBJ_DIR)/fd2_icon_b24.o $(OBJ_DIR)/fd2_sprite.o $(OBJ_DIR)/main.o $(OBJ_DIR)/fd2_save_load.o $(OBJ_DIR)/fd2_state_machine.o $(OBJ_DIR)/fd2_scenes.o $(OBJ_DIR)/fd2_globals.o $(OBJ_DIR)/fd2_data_loader.o $(OBJ_DIR)/fd2_scene_interact.o $(OBJ_DIR)/fd2_input_scan.o $(OBJ_DIR)/fd2_render_pipeline.o $(OBJ_DIR)/fd2_rle.o $(OBJ_DIR)/fd2_opening_animation.o $(OBJ_DIR)/fd2_scene_manager.o $(OBJ_DIR)/fd2_opening_intro.o
-GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_map_loader.o $(OBJ_RELEASE_DIR)/fd2_icon_b24.o $(OBJ_RELEASE_DIR)/fd2_sprite.o $(OBJ_RELEASE_DIR)/main.o $(OBJ_RELEASE_DIR)/fd2_save_load.o $(OBJ_RELEASE_DIR)/fd2_state_machine.o $(OBJ_RELEASE_DIR)/fd2_scenes.o $(OBJ_RELEASE_DIR)/fd2_globals.o $(OBJ_RELEASE_DIR)/fd2_data_loader.o $(OBJ_RELEASE_DIR)/fd2_scene_interact.o $(OBJ_RELEASE_DIR)/fd2_input_scan.o $(OBJ_RELEASE_DIR)/fd2_render_pipeline.o $(OBJ_RELEASE_DIR)/fd2_rle.o $(OBJ_RELEASE_DIR)/fd2_opening_animation.o $(OBJ_RELEASE_DIR)/fd2_scene_manager.o $(OBJ_RELEASE_DIR)/fd2_opening_intro.o
+GAME_SRCS = $(SRC_DIR)/fd2_input.c $(SRC_DIR)/fd2_render.c $(SRC_DIR)/fd2_audio.c $(SRC_DIR)/fd2_resources.c $(SRC_DIR)/fd2_afm.c $(SRC_DIR)/fd2_map_loader.c $(SRC_DIR)/fd2_icon_b24.c $(SRC_DIR)/fd2_sprite.c $(SRC_DIR)/main.c $(SRC_DIR)/fd2_save_load.c $(SRC_DIR)/fd2_state_machine.c $(SRC_DIR)/fd2_scenes.c $(SRC_DIR)/fd2_globals.c $(SRC_DIR)/fd2_data_loader.c $(SRC_DIR)/fd2_scene_interact.c $(SRC_DIR)/fd2_input_scan.c $(SRC_DIR)/fd2_render_pipeline.c $(SRC_DIR)/fd2_rle.c $(SRC_DIR)/fd2_opening_animation.c $(SRC_DIR)/fd2_scene_manager.c $(SRC_DIR)/fd2_opening_intro.c $(SRC_DIR)/fd2_fdother_resources.c
+GAME_OBJS = $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_map_loader.o $(OBJ_DIR)/fd2_icon_b24.o $(OBJ_DIR)/fd2_sprite.o $(OBJ_DIR)/main.o $(OBJ_DIR)/fd2_save_load.o $(OBJ_DIR)/fd2_state_machine.o $(OBJ_DIR)/fd2_scenes.o $(OBJ_DIR)/fd2_globals.o $(OBJ_DIR)/fd2_data_loader.o $(OBJ_DIR)/fd2_scene_interact.o $(OBJ_DIR)/fd2_input_scan.o $(OBJ_DIR)/fd2_render_pipeline.o $(OBJ_DIR)/fd2_rle.o $(OBJ_DIR)/fd2_opening_animation.o $(OBJ_DIR)/fd2_scene_manager.o $(OBJ_DIR)/fd2_opening_intro.o $(OBJ_DIR)/fd2_fdother_resources.o
+GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_map_loader.o $(OBJ_RELEASE_DIR)/fd2_icon_b24.o $(OBJ_RELEASE_DIR)/fd2_sprite.o $(OBJ_RELEASE_DIR)/main.o $(OBJ_RELEASE_DIR)/fd2_save_load.o $(OBJ_RELEASE_DIR)/fd2_state_machine.o $(OBJ_RELEASE_DIR)/fd2_scenes.o $(OBJ_RELEASE_DIR)/fd2_globals.o $(OBJ_RELEASE_DIR)/fd2_data_loader.o $(OBJ_RELEASE_DIR)/fd2_scene_interact.o $(OBJ_RELEASE_DIR)/fd2_input_scan.o $(OBJ_RELEASE_DIR)/fd2_render_pipeline.o $(OBJ_RELEASE_DIR)/fd2_rle.o $(OBJ_RELEASE_DIR)/fd2_opening_animation.o $(OBJ_RELEASE_DIR)/fd2_scene_manager.o $(OBJ_RELEASE_DIR)/fd2_opening_intro.o $(OBJ_RELEASE_DIR)/fd2_fdother_resources.o
+
+# fdother_test objects
+FDOTHER_TEST_OBJS = $(OBJ_DIR)/fd2_fdother_test.o $(OBJ_DIR)/fd2_fdother_resources.o $(OBJ_DIR)/fd2_dat.o $(OBJ_DIR)/fd2_rle.o
 
 # Targets
 TARGET_GAME   = $(BIN_DIR)/fd2$(EXE_EXT)
 TARGET_RELEASE = $(BIN_DIR)/fd2_release$(EXE_EXT)
+TARGET_FDOTHER_TEST = $(BIN_DIR)/fd2_fdother_test$(EXE_EXT)
 
-.PHONY: all clean game release
+.PHONY: all clean game release fdother_test
 
 all: $(TARGET_GAME)
 	@echo Copying required DLLs...
@@ -104,6 +108,8 @@ all: $(TARGET_GAME)
 	@echo Build complete!
 
 game: $(TARGET_GAME)
+
+fdother_test: $(TARGET_FDOTHER_TEST)
 
 release: $(TARGET_RELEASE)
 	@echo Copying required DLLs...
@@ -127,6 +133,10 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 $(OBJ_RELEASE_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_RELEASE_DIR)
 	@echo Compiling $< (release)
 	$(CC) $(RELEASE_CFLAGS) -c $< -o $@
+
+# fdother_test target
+$(TARGET_FDOTHER_TEST): $(FDOTHER_TEST_OBJS) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(BIN_DIR):
 	$(MKDIR) -p $@

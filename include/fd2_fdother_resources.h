@@ -206,6 +206,13 @@ void fdother_palette_to_rgb24(const fdother_palette_t* pal, byte* out_rgb24);
 /* 转换调色板为RGB32格式 */
 void fdother_palette_to_rgb32(const fdother_palette_t* pal, dword* out_rgb32);
 
+/* 便捷函数：直接通过索引获取资源 */
+int fdother_get_palette(int palette_index, fdother_palette_t* out_palette);
+int fdother_get_tile(int tile_index, fdother_tile_t* out_tile);
+int fdother_get_lmi1(int lmi1_index, fdother_lmi1_t* out_lmi1);
+int fdother_get_nested_dat(int nested_index, fdother_nested_dat_t* out_nested);
+int fdother_decode_tile(const fdother_tile_t* tile, byte* dst);
+
 #ifdef __cplusplus
 }
 #endif
