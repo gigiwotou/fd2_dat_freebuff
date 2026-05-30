@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-检查嵌套DAT是否包含调色板数据
-分析嵌套DAT的结构，看是否在tile数据之前有调色板
+检查嵌套DAT是否包含调色板资源
+分析嵌套DAT的完整结构
 """
 import struct
 
@@ -43,6 +43,7 @@ if res0_size >= 4:
     w = struct.unpack_from('<H', res0_data, 0)[0]
     h = struct.unpack_from('<H', res0_data, 2)[0]
     print(f"  尺寸: {w}x{h}")
+    print(f"  前20字节: {' '.join(f'{b:02X}' for b in res0_data[:20])}")
 
 # 检查嵌套资源1-6
 for i in range(1, 7):
@@ -51,20 +52,4 @@ for i in range(1, 7):
         w = struct.unpack_from('<H', res_data, 0)[0]
         h = struct.unpack_from('<H', res_data, 2)[0]
         print(f"  嵌套资源{i}: {w}x{h}, 大小 {res_size}")
-
-# 检查嵌套DAT 12
-idx12_data, _, _ = read_dat_resource(data, 0, 12)
-print(f"\n嵌套DAT 索引12:")
-print(f"  总大小: {len(idx12_data)}")
-print(f"  Magic: {idx12_data[:6]}")
-
-nested_count = struct.unpack_from('<I', idx12_data, 6)[0]
-print(f"  嵌套资源数量: {nested_count}")
-
-# 检查嵌套资源0-3
-for i in range(4):
-    res_data, res_offset, res_size = read_dat_resource(idx12_data, 0, i)
-    if res_data:
-        w = struct.unpack_from('<H', res_data, 0)[0]
-        h = struct.unpack_from('<H', res_data, 2)[0]
-        print(f"  嵌套资源{i}: {w}x{h}, 大小 {res_size}")
+        print(f"    前12字节: {' '.join(f'{b:02X}' for b in res_data[:12])}")
