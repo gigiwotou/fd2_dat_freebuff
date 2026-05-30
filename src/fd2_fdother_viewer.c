@@ -85,7 +85,7 @@ static const char* get_resource_desc(int index) {
     switch (index) {
         case 0: return "主调色板";
         case 1: return "图标 24x24";
-        case 2: return "偏移表 (9419子资源)";
+        case 2: return "偏移表 (77个子资源: 24x20图标)";
         case 3: return "LMI1 Tile集 (23 tiles)";
         case 4: return "RAW数据 (字符位图?)";
         case 5: return "LMI1 Tile集 (138 tiles)";
@@ -475,7 +475,7 @@ static void refresh_display(void) {
                 g_max_sub_items = FONT_CHARS_PER_PAGE;
                 draw_font_view(res_data);
             } else if (g_current_index == 2) {
-                /* 索引2是偏移表 (9419子资源) */
+                /* 索引2是偏移表 (77个子资源) */
                 if (!g_offset_table_loaded) {
                     if (fdother_parse_offset_table(2, &g_offset_table) == 0) {
                         g_offset_table_loaded = true;
