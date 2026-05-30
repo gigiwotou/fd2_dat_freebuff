@@ -655,14 +655,14 @@ int main(int argc, char* argv[])
     
     printf("=== FDTXT 对话框测试 (完整游戏逻辑) ===\n\n");
     
-    /* 加载字体 */
+    /* 加载字体 (索引4: 1824字符, 16x16位图) */
     printf("1. 加载字体...\n");
     size_t osz;
     uint8_t* od = load_file(FONT_DAT_PATH, &osz);
     if (!od) return 1;
     
     int fsz = 0;
-    font_data = load_dat_resource(od, osz, 3, &fsz);
+    font_data = load_dat_resource(od, osz, 4, &fsz);
     
     /* 使用索引98的调色板 (暖色调, 53个肤色色调, 适合对话场景) */
     int psz;

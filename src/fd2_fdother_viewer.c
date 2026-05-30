@@ -49,6 +49,16 @@ static dword           g_decode_height = 0;
 /* 音效管理器实例 */
 static fd2_sfx_manager_t g_viewer_sfx_mgr;
 
+/* 字体配置 */
+#define FONT_CHARS_PER_LINE  16
+#define FONT_LINES_PER_PAGE  12
+#define FONT_CHARS_PER_PAGE  (FONT_CHARS_PER_LINE * FONT_LINES_PER_PAGE) /* 192 */
+#define FONT_CHAR_WIDTH      16
+#define FONT_CHAR_HEIGHT     16
+#define FONT_TOTAL_CHARS     1824
+#define FONT_PAGE_COUNT      ((FONT_TOTAL_CHARS + FONT_CHARS_PER_PAGE - 1) / FONT_CHARS_PER_PAGE) /* 10页 */
+static int g_font_page = 0;  /* 当前字体页 (0-9) */
+
 /* ========================================================================
  * 资源类型名称
  * ======================================================================== */
@@ -234,6 +244,84 @@ static void draw_palette_view(const byte* palette_rgb24) {
     }
 }
 
+/* 绘制字体 (索引4: 1824字符, 16x16位图) */
+static void draw_font_view(const byte* font_data) {
+    clear_pixels();
+    
+    int chars_per_page = FONT_CHARS_PER_PAGE;
+    int start_char = g_font_page * chars_per_page;
+    int end_char = start_char + chars_per_page;
+    if (end_char > FONT_TOTAL_CHARS) end_char = FONT_TOTAL_CHARS;
+    
+    /* 计算居中偏移 */
+    int total_w = FONT_CHARS_PER_LINE * FONT_CHAR_WIDTH;
+    int start_x = (VIEWER_WIDTH - total_w) / 2;
+    int start_y = 20;
+    
+    /* 白色前景，黑色背景 */
+    Uint32 fg_color = (0xFF << 24) | (0xFF << 16) | (0xFF << 8) | 0xFF;
+    Uint32 bg_color = (0xFF << 24) | (0 << 16) | (0 << 8) | 0;
+    
+    for (int i = start_char; i < end_char; i++) {
+        int local_idx = i - start_char;
+        int col = local_idx % FONT_CHARS_PER_LINE;
+        int row = local_idx / FONT_CHARS_PER_LINE;
+        
+        int char_x = start_x + col * FONT_CHAR_WIDTH;
+        int char_y = start_y + row * FONT_CHAR_HEIGHT;
+        
+        /* 每个字符32字节 (16行 x 2字节) */
+        const byte* cdata = font_data + i * 32;
+        
+        for (int cy = 0; cy < FONT_CHAR_HEIGHT; cy++) {
+            /* 大端字节序 */
+            word bits = (cdata[cy * 2] << 8) | cdata[cy * 2 + 1];
+            
+            for (int cx = 0; cx < FONT_CHAR_WIDTH; cx++) {
+                int px = char_x + cx;
+                int py = char_y + cy;
+                
+                if (px >= 0 && px < VIEWER_WIDTH && py >= 0 && py < VIEWER_HEIGHT) {
+                    if (bits & (1 << (15 - cx))) {
+                        g_pixels[py * VIEWER_WIDTH + px] = fg_color;
+                    } else {
+                        g_pixels[py * VIEWER_WIDTH + px] = bg_color;
+                    }
+                }
+            }
+        }
+    }
+    
+    /* 高亮选中字符 */
+    if (g_sub_index >= 0 && g_sub_index < FONT_CHARS_PER_PAGE) {
+        int global_idx = start_char + g_sub_index;
+        if (global_idx < FONT_TOTAL_CHARS) {
+            int local_idx = g_sub_index;
+            int col = local_idx % FONT_CHARS_PER_LINE;
+            int row = local_idx / FONT_CHARS_PER_LINE;
+            
+            int x = start_x + col * FONT_CHAR_WIDTH;
+            int y = start_y + row * FONT_CHAR_HEIGHT;
+            
+            Uint32 yellow = (0xFF << 24) | (0xFF << 16) | (0xFF << 8) | 0x00;
+            
+            /* 黄色边框 */
+            for (int i = 0; i < FONT_CHAR_WIDTH; i++) {
+                if (x + i >= 0 && x + i < VIEWER_WIDTH && y >= 0 && y < VIEWER_HEIGHT)
+                    g_pixels[y * VIEWER_WIDTH + x + i] = yellow;
+                if (x + i >= 0 && x + i < VIEWER_WIDTH && y + FONT_CHAR_HEIGHT - 1 < VIEWER_HEIGHT)
+                    g_pixels[(y + FONT_CHAR_HEIGHT - 1) * VIEWER_WIDTH + x + i] = yellow;
+            }
+            for (int i = 0; i < FONT_CHAR_HEIGHT; i++) {
+                if (x >= 0 && x < VIEWER_WIDTH && y + i >= 0 && y + i < VIEWER_HEIGHT)
+                    g_pixels[(y + i) * VIEWER_WIDTH + x] = yellow;
+                if (x + FONT_CHAR_WIDTH - 1 < VIEWER_WIDTH && y + i >= 0 && y + i < VIEWER_HEIGHT)
+                    g_pixels[(y + i) * VIEWER_WIDTH + x + FONT_CHAR_WIDTH - 1] = yellow;
+            }
+        }
+    }
+}
+
 /* 更新纹理 */
 static void update_texture(void) {
     SDL_UpdateTexture(g_texture, NULL, g_pixels, VIEWER_WIDTH * sizeof(Uint32));
@@ -364,9 +452,16 @@ static void refresh_display(void) {
         }
         
         case FDOTHER_RES_TYPE_RAW: {
-            /* RAW数据显示为信息 */
-            clear_pixels();
-            g_max_sub_items = 0;
+            /* RAW数据 - 检查是否为字体资源 (索引4) */
+            if (g_current_index == 4) {
+                /* 索引4是字体资源 (1824字符, 16x16位图) */
+                g_max_sub_items = FONT_CHARS_PER_PAGE;
+                draw_font_view(res_data);
+            } else {
+                /* 其他RAW数据显示为信息 */
+                clear_pixels();
+                g_max_sub_items = 0;
+            }
             break;
         }
     }
@@ -429,6 +524,10 @@ static void print_resource_info(void) {
             
         case FDOTHER_RES_TYPE_RAW:
             printf("类型: RAW数据\n");
+            if (g_current_index == 4) {
+                printf("字体: %d 字符 (16x16位图)\n", FONT_TOTAL_CHARS);
+                printf("页: %d / %d (每页%d字符)\n", g_font_page, FONT_PAGE_COUNT - 1, FONT_CHARS_PER_PAGE);
+            }
             break;
     }
     
@@ -460,40 +559,62 @@ static int main_loop(void) {
                             break;
                             
                         case SDLK_UP:
-                            /* 切换到上一个主资源 */
-                            if (g_current_index > 0) {
-                                g_current_index--;
+                        /* 切换到上一个主资源 */
+                        if (g_current_index > 0) {
+                            g_current_index--;
+                            g_font_page = 0;  /* 重置字体页 */
+                            print_resource_info();
+                            refresh_display();
+                        }
+                        break;
+                        
+                    case SDLK_DOWN:
+                        /* 切换到下一个主资源 */
+                        if (g_current_index < 102) {
+                            g_current_index++;
+                            g_font_page = 0;  /* 重置字体页 */
+                            print_resource_info();
+                            refresh_display();
+                        }
+                        break;
+                        
+                    case SDLK_LEFT:
+                        /* 切换到上一个子项 */
+                        if (g_current_index == 4) {
+                            /* 字体资源：切换到上一页 */
+                            if (g_font_page > 0) {
+                                g_font_page--;
+                                g_sub_index = 0;
                                 print_resource_info();
                                 refresh_display();
                             }
-                            break;
-                            
-                        case SDLK_DOWN:
-                            /* 切换到下一个主资源 */
-                            if (g_current_index < 102) {
-                                g_current_index++;
-                                print_resource_info();
-                                refresh_display();
-                            }
-                            break;
-                            
-                        case SDLK_LEFT:
-                            /* 切换到上一个子项 */
+                        } else {
                             if (g_sub_index > 0) {
                                 g_sub_index--;
                                 print_resource_info();
                                 refresh_display();
                             }
-                            break;
-                            
-                        case SDLK_RIGHT:
-                            /* 切换到下一个子项 */
+                        }
+                        break;
+                        
+                    case SDLK_RIGHT:
+                        /* 切换到下一个子项 */
+                        if (g_current_index == 4) {
+                            /* 字体资源：切换到下一页 */
+                            if (g_font_page < FONT_PAGE_COUNT - 1) {
+                                g_font_page++;
+                                g_sub_index = 0;
+                                print_resource_info();
+                                refresh_display();
+                            }
+                        } else {
                             if (g_sub_index < g_max_sub_items - 1) {
                                 g_sub_index++;
                                 print_resource_info();
                                 refresh_display();
                             }
-                            break;
+                        }
+                        break;
                             
                         case SDLK_SPACE:
                             /* 播放音效 (仅索引31) */
@@ -612,7 +733,7 @@ int main(int argc, char* argv[]) {
     /* 显示操作说明 */
     printf("\n=== 操作说明 ===\n");
     printf("↑/↓ : 切换资源索引 (0-102)\n");
-    printf("←/→ : 切换子项\n");
+    printf("←/→ : 切换子项 (或字体页)\n");
     printf("空格 : 播放音效 (索引31)\n");
     printf("P   : 静音/恢复\n");
     printf("Q/ESC: 退出\n\n");
