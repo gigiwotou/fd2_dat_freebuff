@@ -156,17 +156,14 @@ static void draw_pixels(const byte* pixels, int width, int height,
         start_y = ((GAME_HEIGHT - height) * scale) / 2;
     }
     
-    /* 渲染像素（应用调色板窗口作为颜色偏移） */
+    /* 渲染像素（直接使用解码后的像素值作为调色板索引，不应用palette_window） */
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             byte pal_idx = pixels[y * width + x];
             
-            /* 应用调色板窗口偏移 */
-            int adjusted_idx = (palette_window + pal_idx) & 0xFF;
-            
-            int r = palette_rgb24[adjusted_idx * 3 + 0];
-            int g = palette_rgb24[adjusted_idx * 3 + 1];
-            int b = palette_rgb24[adjusted_idx * 3 + 2];
+            int r = palette_rgb24[pal_idx * 3 + 0];
+            int g = palette_rgb24[pal_idx * 3 + 1];
+            int b = palette_rgb24[pal_idx * 3 + 2];
             
             Uint32 color = (0xFF << 24) | (r << 16) | (g << 8) | b;
             
