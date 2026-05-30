@@ -25,9 +25,12 @@
 /* ========================================================================
  * 窗口和渲染配置
  * ======================================================================== */
-#define VIEWER_WIDTH     800
-#define VIEWER_HEIGHT    600
-#define VIEWER_TITLE     "FDOTHER.DAT Resource Viewer"
+#define GAME_WIDTH     320
+#define GAME_HEIGHT    200
+#define SCALE_FACTOR   3
+#define VIEWER_WIDTH   (GAME_WIDTH * SCALE_FACTOR)   /* 960 */
+#define VIEWER_HEIGHT  (GAME_HEIGHT * SCALE_FACTOR)  /* 600 */
+#define VIEWER_TITLE   "FDOTHER.DAT Resource Viewer (320x200 x3)"
 
 /* ========================================================================
  * 全局状态
@@ -139,32 +142,26 @@ static void clear_pixels(void) {
     memset(g_pixels, 0, sizeof(g_pixels));
 }
 
-/* 绘制像素到屏幕 */
+/* 绘制像素到屏幕 (固定3倍缩放，基于320x200游戏画布) */
 static void draw_pixels(const byte* pixels, int width, int height, 
                         const byte* palette_rgb24, int palette_window) {
     clear_pixels();
     
-    int scale = 1;
+    int scale = SCALE_FACTOR;
     int start_x = 0, start_y = 0;
     
-    /* 计算缩放比例和居中位置 */
+    /* 计算居中位置 (基于320x200游戏画布) */
     if (width > 0 && height > 0) {
-        int scale_x = VIEWER_WIDTH / width;
-        int scale_y = (VIEWER_HEIGHT - 100) / height;
-        scale = (scale_x < scale_y) ? scale_x : scale_y;
-        if (scale < 1) scale = 1;
-        if (scale > 4) scale = 4;
-        
-        start_x = (VIEWER_WIDTH - width * scale) / 2;
-        start_y = 100 + ((VIEWER_HEIGHT - 100) - height * scale) / 2;
+        start_x = ((GAME_WIDTH - width) * scale) / 2;
+        start_y = ((GAME_HEIGHT - height) * scale) / 2;
     }
     
-    /* 渲染像素 */
+    /* 渲染像素（应用调色板窗口作为颜色偏移） */
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             byte pal_idx = pixels[y * width + x];
             
-            /* 应用调色板窗口 */
+            /* 应用调色板窗口偏移 */
             int adjusted_idx = (palette_window + pal_idx) & 0xFF;
             
             int r = palette_rgb24[adjusted_idx * 3 + 0];
@@ -187,22 +184,23 @@ static void draw_pixels(const byte* pixels, int width, int height,
     }
 }
 
-/* 绘制调色板 */
+/* 绘制调色板 (基于320x200游戏画布) */
 static void draw_palette_view(const byte* palette_rgb24) {
     clear_pixels();
     
     /* 256色，每行16个，共16行 */
-    int cell_w = 32;
-    int cell_h = 24;
+    int cell_w = 20;  /* 320/16 = 20 */
+    int cell_h = 12;  /* 200/16 ≈ 12 */
     int cols = 16;
-    int start_x = (VIEWER_WIDTH - cols * cell_w) / 2;
+    int start_x = 0;
+    int start_y = 0;
     
     for (int i = 0; i < 256; i++) {
         int col = i % cols;
         int row = i / cols;
         
         int x = start_x + col * cell_w;
-        int y = 40 + row * cell_h;
+        int y = start_y + row * cell_h;
         
         int r = palette_rgb24[i * 3 + 0];
         int g = palette_rgb24[i * 3 + 1];
@@ -228,7 +226,7 @@ static void draw_palette_view(const byte* palette_rgb24) {
         int row = g_sub_index / cols;
         
         int x = start_x + col * cell_w;
-        int y = 40 + row * cell_h;
+        int y = start_y + row * cell_h;
         
         Uint32 white = (0xFF << 24) | (0xFF << 16) | (0xFF << 8) | 0xFF;
         
@@ -341,7 +339,8 @@ static void update_texture(void) {
 /* 加载主调色板为RGB24 */
 static int load_main_palette_rgb24(byte* out_rgb24) {
     fdother_palette_t pal;
-    int ret = fdother_get_palette(g_current_index, &pal);
+    /* 修正：始终使用索引0的主调色板 */
+    int ret = fdother_get_palette(0, &pal);
     if (ret != 0) return -1;
     
     fdother_palette_to_rgb24(&pal, out_rgb24);
@@ -379,7 +378,15 @@ static void refresh_display(void) {
     g_decode_height = 0;
     
     byte palette_rgb24[768];
-    int pal_ret = load_main_palette_rgb24(palette_rgb24);
+    
+    /* 统一使用索引0的主调色板 */
+    int pal_ret = fdother_get_palette(0, (fdother_palette_t*)palette_rgb24);
+    if (pal_ret == 0) {
+        fdother_palette_t pal;
+        if (fdother_get_palette(0, &pal) == 0) {
+            fdother_palette_to_rgb24(&pal, palette_rgb24);
+        }
+    }
     
     switch (g_current_type) {
         case FDOTHER_RES_TYPE_PALETTE: {
@@ -391,14 +398,15 @@ static void refresh_display(void) {
         }
         
         case FDOTHER_RES_TYPE_TILE: {
-            word w, h;
-            if (load_and_decode_tile_image(g_current_index, g_decode_buffer, &w, &h) == 0) {
-                g_decode_width = w;
-                g_decode_height = h;
-                
-                fdother_tile_t tile;
-                fdother_get_tile(g_current_index, &tile);
-                draw_pixels(g_decode_buffer, w, h, palette_rgb24, tile.palette_window);
+            fdother_tile_t tile;
+            if (fdother_parse_tile(res_data, res_size, &tile) == 0) {
+                /* 清零解码缓冲区，确保SKIP操作对应的位置为0 */
+                memset(g_decode_buffer, 0, tile.width * tile.height);
+                /* RLE解码时不应用调色板窗口 */
+                fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
+                g_decode_width = tile.width;
+                g_decode_height = tile.height;
+                draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
             }
             break;
         }
@@ -415,6 +423,8 @@ static void refresh_display(void) {
                     dword rle_size;
                     
                     if (fdother_lmi1_get_tile(&lmi1, g_sub_index, &w, &h, &rle_data, &rle_size) == 0) {
+                        memset(g_decode_buffer, 0, w * h);
+                        /* LMI1 tile没有palette_window头，直接使用RLE数据 */
                         fd_decompress_rle(rle_data, rle_size, g_decode_buffer, w, h, -1);
                         g_decode_width = w;
                         g_decode_height = h;
@@ -442,7 +452,10 @@ static void refresh_display(void) {
                             fdother_tile_t tile;
                             if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
                                 if (tile.rle_data && tile.rle_size > 0 && tile.rle_size < sub_size) {
-                                    fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, tile.palette_window);
+                                    /* 清零解码缓冲区 */
+                                    memset(g_decode_buffer, 0, tile.width * tile.height);
+                                    /* RLE解码时不应用调色板窗口 */
+                                    fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
                                     g_decode_width = tile.width;
                                     g_decode_height = tile.height;
                                     draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
@@ -481,7 +494,10 @@ static void refresh_display(void) {
                         fdother_tile_t tile;
                         if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
                             if (tile.rle_data && tile.rle_size > 0 && tile.rle_size < sub_size) {
-                                fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, tile.palette_window);
+                                /* 清零解码缓冲区 */
+                                memset(g_decode_buffer, 0, tile.width * tile.height);
+                                /* RLE解码时不应用调色板窗口 */
+                                fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
                                 g_decode_width = tile.width;
                                 g_decode_height = tile.height;
                                 draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);

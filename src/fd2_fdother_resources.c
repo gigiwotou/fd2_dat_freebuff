@@ -1,10 +1,11 @@
 /**
  * FDOTHER.DAT 资源加载和解析实现
- * 严格按照MCP汇编代码实现，从索引0开始逐一解析所有资源
+ * 严格按照MCP汇编代码实现
  * 
  * 根据sub_111BA函数逻辑：
- * - 索引表从偏移6开始，每项4字节
+ * - 索引表从偏移6开始，每项4字节（1个dword = 资源起始偏移）
  * - 资源大小 = offsets[index+1] - offsets[index]
+ * - fseek: 4 * index + 6, 然后读取8字节（当前索引偏移 + 下一个索引偏移）
  */
 
 #include "fd2_fdother_resources.h"
@@ -21,7 +22,7 @@ typedef struct {
     byte* data;          
     dword file_size;     
     dword resource_count; 
-    dword* offsets;      
+    dword* offsets;      /* 每个索引4字节，存储资源起始偏移 */
     bool loaded;         
 } fdother_global_t;
 
@@ -67,12 +68,14 @@ int fdother_load(const char* filepath) {
         return -1;
     }
     
+    // 根据sub_111BA: 索引表从偏移6开始，每项4字节
     dword max_resources = 0;
     dword table_offset = 6;
     
     while (table_offset + 4 <= (dword)file_size) {
         dword res_offset = *(dword*)(data + table_offset);
-        if (res_offset > (dword)file_size || res_offset == 0) {
+        // 检查偏移是否有效
+        if (res_offset == 0 || res_offset > (dword)file_size) {
             break;
         }
         max_resources++;
@@ -85,6 +88,7 @@ int fdother_load(const char* filepath) {
         return -1;
     }
     
+    // 存储每个资源的起始偏移
     dword* offsets = (dword*)malloc((max_resources + 1) * sizeof(dword));
     if (!offsets) {
         free(data);
@@ -93,8 +97,10 @@ int fdother_load(const char* filepath) {
     }
     
     for (dword i = 0; i < max_resources; i++) {
+        // 读取起始偏移（每个索引4字节）
         offsets[i] = *(dword*)(data + 6 + i * 4);
     }
+    // 最后一个资源的结束偏移（文件末尾）
     offsets[max_resources] = (dword)file_size;
     
     g_fdother.data = data;
