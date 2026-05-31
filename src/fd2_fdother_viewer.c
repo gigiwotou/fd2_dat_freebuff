@@ -419,16 +419,14 @@ static void refresh_display(void) {
                     dword rle_size;
                     
                     if (fdother_multi_tile_get_icon(&g_multi_tile, g_sub_index, &rle_data, &rle_size) == 0) {
-                        /* 跳过4字节宽高头,从偏移4开始是EC66编码的像素数据 */
-                        if (rle_size > 4) {
-                            memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
-                            fd_decompress_rle(rle_data + 4, rle_size - 4, g_decode_buffer, 
-                                             g_multi_tile.width, g_multi_tile.height, g_multi_tile.palette_window);
-                            g_decode_width = g_multi_tile.width;
-                            g_decode_height = g_multi_tile.height;
-                            draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height, 
-                                       palette_rgb24, g_multi_tile.palette_window);
-                        }
+                        /* 图标数据没有4字节宽高头，直接解码 */
+                        memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
+                        fd_decompress_rle(rle_data, rle_size, g_decode_buffer, 
+                                         g_multi_tile.width, g_multi_tile.height, g_multi_tile.palette_window);
+                        g_decode_width = g_multi_tile.width;
+                        g_decode_height = g_multi_tile.height;
+                        draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height, 
+                                   palette_rgb24, g_multi_tile.palette_window);
                     }
                 }
             } else {
