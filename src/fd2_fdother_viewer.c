@@ -160,10 +160,15 @@ static void draw_pixels(const byte* pixels, int width, int height,
         start_y = ((GAME_HEIGHT - height) * scale) / 2;
     }
     
-    /* 渲染像素（直接使用解码后的像素值作为调色板索引，不应用palette_window） */
+    /* 渲染像素（应用palette_window到调色板索引） */
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             byte pal_idx = pixels[y * width + x];
+            
+            /* 应用调色板窗口偏移 */
+            if (palette_window != -1) {
+                pal_idx = (pal_idx + palette_window) & 0xFF;
+            }
             
             int r = palette_rgb24[pal_idx * 3 + 0];
             int g = palette_rgb24[pal_idx * 3 + 1];
@@ -420,11 +425,14 @@ static void refresh_display(void) {
                     
                     if (fdother_multi_tile_get_icon(&g_multi_tile, g_sub_index, &rle_data, &rle_size) == 0) {
                         /* 图标数据不包含4字节宽高头，直接就是RLE像素数据 */
+                        /* sub_4EBFF不调用fd_decompress_rle，而是1:1复制汇编逻辑 */
+                        /* 但为了简化，我们使用fd_decompress_rle，不应用palette_window */
                         memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
                         fd_decompress_rle(rle_data, rle_size, g_decode_buffer, 
-                                         g_multi_tile.width, g_multi_tile.height, g_multi_tile.palette_window);
+                                         g_multi_tile.width, g_multi_tile.height, -1);
                         g_decode_width = g_multi_tile.width;
                         g_decode_height = g_multi_tile.height;
+                        /* draw_pixels中应用palette_window */
                         draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height, 
                                    palette_rgb24, g_multi_tile.palette_window);
                     }
