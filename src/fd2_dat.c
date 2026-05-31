@@ -210,17 +210,49 @@ void sub_4EBFF(byte* dst, byte* src, int pitch) {
     
     /* 像素数据从偏移4开始 */
     byte* pixel_data = src + 4;
+    int pixel_data_size = (width * height * 2); /* 估算大小 */
+    
+    /* sub_4EC66状态变量 */
+    byte ah = 0;        /* 运行长度计数器 */
+    byte prev_al = 0;   /* 上次读取的像素值 */
+    int src_idx = 0;
     
     /* 外层循环: 遍历每一行 */
     for (int y = 0; y < height; y++) {
-        byte* row_start = dst;  /* 记录当前行起始位置 */
+        byte* row_start = dst;  /* push edi - 记录当前行起始位置 */
         
         /* 内层循环: 遍历当前行的每个像素 */
         for (int x = 0; x < width; x++) {
-            *dst++ = *pixel_data++;  /* 将像素值写入目标缓冲区 */
+            /* call sub_4EC66 - 获取解码后的像素值 */
+            if (ah > 0) {
+                /* AH > 0: 重复之前的像素值 */
+                ah--;
+            } else {
+                /* AH == 0: 读取新字节 */
+                if (src_idx < pixel_data_size) {
+                    byte al = pixel_data[src_idx];
+                    src_idx++;
+                    
+                    if (al > 0xC0) {
+                        /* AL > 0xC0: 运行长度编码 */
+                        ah = al - 0xC1;
+                        if (src_idx < pixel_data_size) {
+                            al = pixel_data[src_idx];
+                            src_idx++;
+                        }
+                        prev_al = al;
+                    } else {
+                        /* AL <= 0xC0: 直接像素值 */
+                        ah = 0;
+                        prev_al = al;
+                    }
+                }
+            }
+            /* stosb: 存储像素值到目标缓冲区 */
+            *dst++ = prev_al;
         }
         
-        /* 移动到下一行 (根据目标缓冲区的pitch) */
+        /* pop edi + add edi, ebx - 恢复到行起始，然后移动到下一行 */
         dst = row_start + pitch;
     }
 }
