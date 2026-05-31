@@ -251,6 +251,128 @@ int fd_analyze_resource(const byte *data, int size) {
     return 0;
 }
 
+/* sub_4E22A: 24x24图标专用RLE解码（与sub_4EC66完全不同）
+ * 根据IDA Pro MCP反编译代码1:1实现
+ * 编码格式（2位控制）：
+ * - 00xxxxxx: 填充模式 - memset(dst, color, count)
+ * - 01xxxxxx: 交替模式 - 间隔写入像素（dst+=2）
+ * - 10xxxxxx: 复制模式 - qmemcpy(dst, src, count)
+ * - 11xxxxxx: 跳过模式 - dst += count（透明像素）
+ * count = (value & 0x3F) + 1
+ */
+int fd_decompress_sub_4E22A(const byte *src, int src_size, byte *dst, int width, int height, int pitch) {
+    if (!src || !dst || width <= 0 || height <= 0 || src_size <= 0) {
+        return -1;
+    }
+    
+    int dst_idx = 0;
+    int src_idx = 0;
+    
+    // n24 = height (行数)
+    for (int row = 0; row < height; row++) {
+        // n24_1 = width (每行像素数)
+        int pixels_in_row = width;
+        
+        while (pixels_in_row > 0) {
+            if (src_idx >= src_size) {
+                return -1;  // 数据不足
+            }
+            
+            // lodsb - 读取控制字节
+            byte value = src[src_idx];
+            src_idx++;
+            
+            // v9 = 2 * value (shl cl, 1)
+            byte v9 = value << 1;
+            
+            // 检查bit7 (CF标志 = __CFSHL__(value, 1))
+            if (value & 0x80) {
+                // bit7=1: 检查bit6
+                byte v10 = v9 << 1;  // 再次左移检查bit6
+                int count = (value << 2) & 0xFF;  // 4 * value
+                
+                if (v10 & 0x100) {
+                    // bit6=1: 11xxxxxx - 跳过模式（透明）
+                    count = (count >> 2) + 1;
+                    dst_idx += count;
+                    pixels_in_row -= count;
+                } else {
+                    // bit6=0: 10xxxxxx - 复制模式
+                    count = (count >> 2) + 1;
+                    pixels_in_row -= count;
+                    
+                    // qmemcpy(dst, src, count)
+                    if (src_idx + count <= src_size && dst_idx + count <= width * height) {
+                        memcpy(dst + dst_idx, src + src_idx, count);
+                        src_idx += count;
+                        dst_idx += count;
+                    } else {
+                        return -1;
+                    }
+                }
+            } else {
+                // bit7=0: 检查bit6
+                byte v10 = v9 << 1;  // 检查bit6
+                
+                if (v10 & 0x100) {
+                    // bit6=1: 01xxxxxx - 交替模式
+                    int count = ((value << 2) & 0xFF);
+                    count = (count >> 2) + 1;
+                    pixels_in_row -= count;
+                    pixels_in_row -= count;  // 注意：减了两次
+                    
+                    if (src_idx < src_size) {
+                        byte pixel_value = src[src_idx];
+                        src_idx++;
+                        
+                        // 4e267-4e269: loop循环
+                        // do {
+                        //   4e267: inc edi -> dst++
+                        //   4e268: stosb -> *dst++ = value
+                        //   4e269: loop -> --count
+                        // } while(count)
+                        for (int i = 0; i < count; i++) {
+                            dst_idx += 1;  // inc edi
+                            if (dst_idx < width * height) {
+                                dst[dst_idx] = pixel_value;
+                            }
+                            dst_idx += 1;  // stosb
+                        }
+                    } else {
+                        return -1;
+                    }
+                } else {
+                    // bit6=0: 00xxxxxx - 填充模式
+                    int count = ((value << 2) & 0xFF);
+                    count = (count >> 2) + 1;
+                    pixels_in_row -= count;
+                    
+                    if (src_idx < src_size) {
+                        byte pixel_value = src[src_idx];
+                        src_idx++;
+                        
+                        // memset(dst, value, count)
+                        for (int i = 0; i < count; i++) {
+                            if (dst_idx < width * height) {
+                                dst[dst_idx] = pixel_value;
+                                dst_idx++;
+                            }
+                        }
+                    } else {
+                        return -1;
+                    }
+                }
+            }
+        }
+        
+        // 行结束：dst += pitch - width
+        // 对于24x24图标，通常pitch=width，所以dst_idx直接设置为下一行起始
+        dst_idx = (row + 1) * width;
+    }
+    
+    return 0;
+}
+
 /* sub_4EBFF: 渲染像素数据到屏幕缓冲区 */
 /* 根据IDA Pro MCP反编译代码1:1实现 */
 /* 参数: dst=目标缓冲区, src=源数据(包含4字节宽高头), pitch=行间距 */

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""重新分析索引1的偏移表结构"""
+"""详细分析索引1的图标数据偏移"""
 import struct
 
 def main():
-    filepath = 'game/FDOTHER.DAT'
-    with open(filepath, 'rb') as f:
+    with open('game/FDOTHER.DAT', 'rb') as f:
         data = f.read()
     
-    # 主偏移表
+    # 解析索引表
     offsets = []
     offset = 6
     while offset + 4 <= len(data):
@@ -18,58 +17,56 @@ def main():
         offset += 4
     offsets.append(len(data))
     
-    # 索引1资源
+    print(f"总索引数: {len(offsets)-1}")
+    
+    # 索引1的资源数据
     res_start = offsets[1]
     res_end = offsets[2]
     res_data = data[res_start:res_end]
     
-    print(f"索引1资源: 绝对偏移={res_start}, 大小={len(res_data)}字节")
+    print(f"\n=== 索引1 资源 ===")
+    print(f"偏移: {res_start} - {res_end}")
+    print(f"大小: {len(res_data)}")
     print(f"前20字节: {' '.join(f'{b:02X}' for b in res_data[:20])}")
     
+    # 解析头部
     outer_w = struct.unpack_from('<H', res_data, 0)[0]
     outer_h = struct.unpack_from('<H', res_data, 2)[0]
     pal_win = res_data[4]
-    print(f"\n外层头: {outer_w}x{outer_h}, pal_window={pal_win}")
     
-    # 尝试两种偏移解析方式
-    print("\n=== 方式1: 从偏移6开始解析相对偏移表 ===")
-    rel_offsets_v1 = []
+    print(f"\n外头: {outer_w}x{outer_h}, pal_window={pal_win}")
+    
+    # 解析偏移表
+    icon_offsets = []
     pos = 6
     while pos + 4 <= len(res_data):
         rel_off = struct.unpack_from('<I', res_data, pos)[0]
-        rel_offsets_v1.append(rel_off)
-        pos += 4
-        if len(rel_offsets_v1) >= 22:  # 多读几个看看
+        if rel_off >= len(res_data):
             break
+        icon_offsets.append(rel_off)
+        pos += 4
     
-    print(f"读取了{len(rel_offsets_v1)}个偏移")
-    for i, off in enumerate(rel_offsets_v1[:5]):
-        abs_pos = res_start + off if off < len(res_data) else off
-        print(f"  偏移{i}: 相对=0x{off:X}, 绝对位置=0x{abs_pos:X}")
-        if off < len(res_data):
-            chunk = res_data[off:off+8]
-            print(f"    数据: {' '.join(f'{b:02X}' for b in chunk)}")
+    print(f"\n图标数量: {len(icon_offsets)}")
+    print(f"偏移表位置: 6 - {6 + len(icon_offsets)*4}")
     
-    # 检查：如果第一个偏移是0x56，从那里开始的数据是否合理？
-    print("\n=== 检查偏移0x56处的数据 ===")
-    pos_56 = 0x56
-    if pos_56 < len(res_data):
-        chunk = res_data[pos_56:pos_56+20]
-        print(f"数据: {' '.join(f'{b:02X}' for b in chunk)}")
+    # 检查每个图标的偏移和大小
+    print(f"\n=== 图标数据详情 ===")
+    for i in range(len(icon_offsets)):
+        rel_off = icon_offsets[i]
+        next_rel = icon_offsets[i+1] if i+1 < len(icon_offsets) else len(res_data)
+        icon_data = res_data[rel_off:next_rel]
         
-        # 尝试解析为宽高
-        w = struct.unpack_from('<H', chunk, 0)[0]
-        h = struct.unpack_from('<H', chunk, 2)[0]
-        print(f"作为宽高: {w}x{h}")
-    
-    print("\n=== 方式2: 检查是否是嵌套DAT结构 ===")
-    # 看看偏移6开始的是否是嵌套DAT（有资源数量+偏移表+资源数据）
-    print(f"偏移6处4字节: {' '.join(f'{b:02X}' for b in res_data[6:10])}")
-    
-    # 尝试解析为资源数量
-    if len(res_data) >= 10:
-        count = struct.unpack_from('<I', res_data, 6)[0]
-        print(f"作为DWORD: {count}")
+        # 检查前4字节
+        if len(icon_data) >= 4:
+            w = struct.unpack_from('<H', icon_data, 0)[0]
+            h = struct.unpack_from('<H', icon_data, 2)[0]
+            print(f"图标{i}: 偏移={rel_off}, 大小={len(icon_data)}, 前4字节={w}x{h}")
+            if w <= 320 and h <= 200:
+                print(f"  -> 宽高合理")
+            else:
+                print(f"  -> 宽高异常")
+        else:
+            print(f"图标{i}: 偏移={rel_off}, 大小={len(icon_data)}, 数据不足")
 
 if __name__ == '__main__':
     main()

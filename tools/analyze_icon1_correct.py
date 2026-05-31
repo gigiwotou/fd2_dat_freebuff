@@ -1,82 +1,75 @@
 #!/usr/bin/env python3
-"""正确解析索引1的偏移表"""
+"""正确分析索引1的数据结构"""
+
 import struct
 
-def load_fdother(filepath):
-    with open(filepath, 'rb') as f:
-        data = f.read()
-    
-    offsets = []
-    offset = 6
-    while offset + 4 <= len(data):
-        off = struct.unpack_from('<I', data, offset)[0]
-        if off == 0 or off >= len(data):
-            break
-        offsets.append(off)
-        offset += 4
-    
-    offsets.append(len(data))
-    return data, offsets
-
 def main():
-    filepath = 'game/FDOTHER.DAT'
-    data, offsets = load_fdother(filepath)
+    filepath = "game/FDOTHER.DAT"
     
-    print("=== 索引1 偏移表解析 ===")
-    start = offsets[1]
-    end = offsets[2]
-    res_data = data[start:end]
-    
-    print(f"总大小: {len(res_data)} 字节")
-    
-    # 头5字节
-    w = struct.unpack_from('<H', res_data, 0)[0]
-    h = struct.unpack_from('<H', res_data, 2)[0]
-    pal_window = res_data[4]
-    print(f"头: {w}x{h}, 调色板窗口={pal_window}")
-    
-    # 从偏移5开始解析4字节偏移
-    data_start = 5
-    print(f"\n从偏移{data_start}开始解析4字节偏移:")
-    
-    icon_offsets = []
-    pos = data_start
-    max_count = 100
-    
-    while pos + 4 <= len(res_data) and len(icon_offsets) < max_count:
-        off = struct.unpack_from('<I', res_data, pos)[0]
+    with open(filepath, "rb") as f:
+        # Read header
+        magic = f.read(6)
+        resource_count = struct.unpack("<I", f.read(4))[0]
         
-        # 第一个偏移应该是0
-        if len(icon_offsets) == 0 and off != 0:
-            print(f"第一个偏移不是0: {off}")
-            # 尝试另一种解析：也许偏移是相对于数据区开始
-            if off < len(res_data) - data_start:
-                print(f"  偏移 {off} 在数据区内，继续...")
-            else:
-                print(f"  停止解析")
+        # Read offset table
+        f.seek(10)
+        offsets = []
+        for i in range(resource_count):
+            offset = struct.unpack("<I", f.read(4))[0]
+            offsets.append(offset)
+        
+        # Get resource 1
+        start = offsets[1]
+        end = offsets[2] if 2 < resource_count else -1
+        
+        if end == -1:
+            f.seek(0, 2)
+            end = f.tell()
+        
+        size = end - start
+        f.seek(start)
+        data = f.read(size)
+        
+        print(f"Resource 1 size: {size} bytes")
+        print(f"\n尝试不同解析方式:\n")
+        
+        # 方式1: 第一个DWORD是偏移数量
+        count_v1 = struct.unpack("<I", data[0:4])[0]
+        print(f"方式1: 第一个DWORD = {count_v1}")
+        if count_v1 < 1000:
+            print(f"  如果是偏移数量，则占用 {count_v1 * 4} 字节")
+        
+        # 方式2: 第一个DWORD是总大小或其他
+        print(f"\n方式2: 检查前20个DWORD值")
+        for i in range(min(20, len(data)//4)):
+            val = struct.unpack("<I", data[i*4:i*4+4])[0]
+            print(f"  [{i}] @ {i*4:#06x}: {val:#010x} ({val})")
+            
+            # 如果值看起来像偏移（在资源范围内）
+            if val < size and val > 0:
+                tile_data = data[val:val+4]
+                if len(tile_data) == 4:
+                    w = tile_data[0] | (tile_data[1] << 8)
+                    h = tile_data[2] | (tile_data[3] << 8)
+                    if w > 0 and w < 100 and h > 0 and h < 100:
+                        print(f"       -> 可能的宽高: {w}x{h}")
+        
+        # 方式3: 查找合理的偏移表大小
+        print(f"\n方式3: 从偏移值推断结构")
+        print(f"  数据大小: {size}")
+        
+        # 检查第一个合理的偏移值
+        for i in range(1, len(data)//4):
+            val = struct.unpack("<I", data[i*4:i*4+4])[0]
+            # 如果值在合理范围内且是递增的
+            if val > 0 and val < size and val > i*4:
+                print(f"  第一个合理偏移 @ [{i}]: {val:#x}")
+                # 检查这个位置的数据
+                if val + 4 <= size:
+                    w = data[val] | (data[val+1] << 8)
+                    h = data[val+2] | (data[val+3] << 8)
+                    print(f"    该位置数据: {w}x{h}")
                 break
-        
-        # 检查偏移是否合理
-        if off > len(res_data):
-            print(f"偏移 {off} (0x{off:X}) 超出范围，停止")
-            break
-        
-        icon_offsets.append(off)
-        pos += 4
-    
-    print(f"\n找到 {len(icon_offsets)} 个偏移")
-    print(f"前20个偏移:")
-    for i, off in enumerate(icon_offsets[:20]):
-        if i + 1 < len(icon_offsets):
-            size = icon_offsets[i + 1] - off
-            print(f"  图标{i}: 偏移 0x{off:X} ({off}), 大小 {size} 字节")
-        else:
-            print(f"  图标{i}: 偏移 0x{off:X} ({off})")
-    
-    if len(icon_offsets) > 1:
-        print(f"\n最后偏移: 0x{icon_offsets[-1]:X} = {icon_offsets[-1]}")
-        remaining = len(res_data) - icon_offsets[-1]
-        print(f"剩余数据: {remaining} 字节")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

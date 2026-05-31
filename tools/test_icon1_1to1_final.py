@@ -1,59 +1,63 @@
 #!/usr/bin/env python3
-"""1:1复制sub_4EC66 + sub_4EBFF解码逻辑"""
+"""1:1复制sub_4EC66 + sub_4EBFF解码逻辑 - 使用FDOTHER索引0的调色板"""
 import struct
 import os
 from PIL import Image
 
-def load_palette():
-    """加载游戏调色板"""
-    pal_path = 'game/FD2.PAL'
-    with open(pal_path, 'rb') as f:
-        pal_data = f.read()
+def load_palette_from_fdother():
+    """从FDOTHER.DAT索引0加载调色板"""
+    dat_path = 'game/FDOTHER.DAT'
+    with open(dat_path, 'rb') as f:
+        data = f.read()
     
+    # 解析索引表
+    offsets = []
+    offset = 6
+    while offset + 4 <= len(data):
+        off = struct.unpack_from('<I', data, offset)[0]
+        if off == 0 or off >= len(data):
+            break
+        offsets.append(off)
+        offset += 4
+    offsets.append(len(data))
+    
+    # 索引0是调色板（256字节 * 3通道？或者256字节直接是索引？）
+    pal_data = data[offsets[0]:offsets[1]]
+    print(f"索引0大小: {len(pal_data)}")
+    print(f"前32字节: {' '.join(f'{b:02X}' for b in pal_data[:32])}")
+    
+    # 假设是256色调色板，每个颜色3字节（RGB）
     palette_rgb24 = []
-    for i in range(256):
-        r = (pal_data[i] << 2) | (pal_data[i] >> 4)
-        g = (pal_data[i+256] << 2) | (pal_data[i+256] >> 4)
-        b = (pal_data[i+512] << 2) | (pal_data[i+512] >> 4)
-        palette_rgb24.append((r, g, b))
-    return palette_rgb24
-
-def sub_4ec66(src_data, src_pos, ah):
-    """
-    sub_4EC66: 每次调用返回一个像素值
-    返回: (pixel_value, new_src_pos, new_ah)
-    """
-    if ah > 0:
-        # AH > 0: 重复之前的像素值，但需要重新读取
-        ah -= 1
-        # 这里需要保持上次的al值，简化处理
-        return None, src_pos, ah
-    
-    # AH == 0: 读取新字节
-    if src_pos >= len(src_data):
-        return None, src_pos, 0
-    
-    al = src_data[src_pos]
-    src_pos += 1
-    
-    if al > 0xC0:
-        # AL > 0xC0: 运行长度编码
-        ah = al - 0xC1
-        if src_pos < len(src_data):
-            al = src_data[src_pos]
-            src_pos += 1
-        return al, src_pos, ah
+    if len(pal_data) == 768:
+        # 256 * 3 = 768
+        for i in range(256):
+            r = (pal_data[i*3] << 2) | (pal_data[i*3] >> 4)
+            g = (pal_data[i*3+1] << 2) | (pal_data[i*3+1] >> 4)
+            b = (pal_data[i*3+2] << 2) | (pal_data[i*3+2] >> 4)
+            palette_rgb24.append((r, g, b))
+    elif len(pal_data) == 256:
+        # 256字节，需要转换
+        for i in range(256):
+            val = pal_data[i]
+            r = (val << 2) | (val >> 4)
+            g = (val << 2) | (val >> 4)
+            b = (val << 2) | (val >> 4)
+            palette_rgb24.append((r, g, b))
     else:
-        # AL <= 0xC0: 直接像素值
-        ah = 0
-        return al, src_pos, ah
+        print(f"警告：调色板大小异常: {len(pal_data)}")
+        return None
+    
+    return palette_rgb24
 
 def main():
     dat_path = 'game/FDOTHER.DAT'
     with open(dat_path, 'rb') as f:
         data = f.read()
     
-    palette_rgb24 = load_palette()
+    palette_rgb24 = load_palette_from_fdother()
+    if not palette_rgb24:
+        print("调色板加载失败")
+        return
     
     # 解析索引表
     offsets = []
@@ -99,44 +103,48 @@ def main():
         icon_data = res_data[start:end]
         
         print(f"\n图标0: 偏移={start}, 大小={end-start}")
-        print(f"前16字节: {' '.join(f'{b:02X}' for b in icon_data[:16])}")
+        print(f"前32字节: {' '.join(f'{b:02X}' for b in icon_data[:32])}")
         
-        # 方法1：直接解码（不跳过头）
+        # 使用外层宽高
         width, height = outer_w, outer_h
         pixel_data = icon_data
         print(f"使用外层宽高: {width}x{height}")
         
-        # 解码像素
+        # 1:1复制sub_4EC66逻辑
         dst = []
         src_idx = 0
         ah = 0
-        last_al = 0
+        al = 0  # 像素值
         
         for i in range(width * height):
+            # sub_4EC66逻辑
             if ah > 0:
+                # AH > 0: 重复之前的像素值
                 ah -= 1
-                # 使用上次的al值
-                pixel = last_al
+                # AL保持不变
             else:
+                # AH == 0: 读取新字节
                 if src_idx >= len(pixel_data):
                     break
+                
                 al = pixel_data[src_idx]
                 src_idx += 1
                 
                 if al > 0xC0:
+                    # AL > 0xC0: 运行长度编码
                     ah = al - 0xC1
                     if src_idx < len(pixel_data):
                         al = pixel_data[src_idx]
                         src_idx += 1
-                    last_al = al
-                    pixel = al
+                    # AL现在是像素值
                 else:
+                    # AL <= 0xC0: 直接像素值
                     ah = 0
-                    last_al = al
-                    pixel = al
+                    # AL已经是像素值
             
+            # sub_4EC66结束，AL是像素值
             # 应用调色板窗口
-            pixel = (pal_window + pixel) & 0xFF
+            pixel = (pal_window + al) & 0xFF
             dst.append(pixel)
         
         print(f"解码像素数: {len(dst)}, 源数据消耗: {src_idx}/{len(pixel_data)}")
@@ -152,7 +160,7 @@ def main():
                         pal_idx = dst[idx]
                         pixels[x, y] = palette_rgb24[pal_idx]
             
-            out_path = 'output/test_icon0_direct.png'
+            out_path = 'output/test_icon0_final.png'
             img.save(out_path)
             print(f"已保存到: {out_path}")
         else:

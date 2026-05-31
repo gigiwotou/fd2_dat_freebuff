@@ -114,11 +114,11 @@ def main():
     print(f"图标内部宽高: {tile_w}x{tile_h}")
     
     if tile_w > 1000 or tile_h > 1000:
-        print("⚠️ 宽高异常，图标数据可能不包含宽高头")
-        # 使用外层宽高，跳过4字节
+        print("[WARN] 宽高异常，图标数据可能不包含宽高头")
+        # 使用外层宽高，不跳过任何字节
         width = outer_w
         height = outer_h
-        pixel_data = icon_data[4:]
+        pixel_data = icon_data  # 直接使用全部数据
     else:
         width = tile_w
         height = tile_h

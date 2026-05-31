@@ -1,87 +1,49 @@
-#!/usr/bin/env python3
-"""Debug index 1 resource structure"""
-import sys
+"""调试索引1原始数据"""
+import struct
 
-def read_dword(data, offset):
-    return data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24)
+fdother_path = 'game/FDOTHER.DAT'
+with open(fdother_path, 'rb') as f:
+    data = f.read()
 
-def read_word(data, offset):
-    return data[offset] | (data[offset + 1] << 8)
+# 解析索引表
+count = struct.unpack_from('<I', data, 6)[0]
+print(f"总资源数: {count}")
 
-def main():
-    filepath = "game/FDOTHER.DAT"
-    with open(filepath, "rb") as f:
-        data = f.read()
-    
-    # Parse index 1 resource
-    # Read offset table from FDOTHER.DAT
-    magic = data[0:6]
-    print(f"Magic: {magic}")
-    
-    # Count resources
-    count = 0
-    pos = 6
-    while pos + 4 <= len(data):
-        off = read_dword(data, pos)
-        if off == 0 or off > len(data):
-            break
-        count += 1
-        pos += 4
-    
-    print(f"Total resources: {count}")
-    
-    # Get index 1 resource
-    res1_start = read_dword(data, 6 + 0 * 4)
-    res1_end = read_dword(data, 6 + 1 * 4)
-    res1_size = res1_end - res1_start
-    
-    print(f"\nIndex 1 resource:")
-    print(f"  Start offset: 0x{res1_start:X}")
-    print(f"  End offset: 0x{res1_end:X}")
-    print(f"  Size: {res1_size} bytes")
-    
-    # Read index 1 data
-    res1 = data[res1_start:res1_end]
-    
-    # Parse header
-    w = read_word(res1, 0)
-    h = read_word(res1, 2)
-    print(f"\n  Width: {w}")
-    print(f"  Height: {h}")
-    print(f"  Byte[4]: {res1[4]} (0x{res1[4]:02X})")
-    print(f"  Byte[5]: {res1[5]} (0x{res1[5]:02X})")
-    print(f"  Byte[6]: {res1[6]} (0x{res1[6]:02X})")
-    print(f"  Byte[7]: {res1[7]} (0x{res1[7]:02X})")
-    
-    # Check if header is 8 bytes (2-byte palette window) or 6 bytes (1-byte)
-    if res1[5] != 0:
-        pw = read_word(res1, 4)
-        offset_table_start = 8
-        print(f"\n  Palette window (2-byte): {pw} (0x{pw:04X})")
-        print(f"  Offset table starts at: {offset_table_start}")
-    else:
-        pw = res1[4]
-        offset_table_start = 6
-        print(f"\n  Palette window (1-byte): {pw} (0x{pw:02X})")
-        print(f"  Offset table starts at: {offset_table_start}")
-    
-    # Parse offset table
-    offsets = []
-    pos = offset_table_start
-    while pos + 4 <= len(res1):
-        off = read_dword(res1, pos)
-        if off > res1_size:
-            break
-        offsets.append(off)
-        pos += 4
-        if len(offsets) > 100:
-            break
-    
-    print(f"\n  Offset count: {len(offsets)}")
-    print(f"  First 10 offsets:")
-    for i in range(min(10, len(offsets))):
-        size = offsets[i+1] - offsets[i] if i+1 < len(offsets) else res1_size - offsets[i]
-        print(f"    [{i}] offset={offsets[i]}, size={size}")
+# 打印前10个资源的偏移
+for i in range(min(10, count)):
+    off = struct.unpack_from('<I', data, 10 + i * 4)[0]
+    print(f"  索引{i}: 偏移 {off}")
 
-if __name__ == "__main__":
-    main()
+# 索引1
+idx = 1
+start = struct.unpack_from('<I', data, 10 + idx * 4)[0]
+end = struct.unpack_from('<I', data, 10 + (idx + 1) * 4)[0]
+print(f"\n索引1: 偏移 {start} - {end}, 大小 {end - start}")
+
+# 读取索引1的前20字节
+res_data = data[start:end]
+print(f"索引1前20字节: {res_data[:20].hex(' ')}")
+
+# 尝试不同的解析方式
+print(f"\n解析尝试:")
+print(f"  作为[width:2][height:2]: w={struct.unpack_from('<H', res_data, 0)[0]}, h={struct.unpack_from('<H', res_data, 2)[0]}")
+print(f"  作为[width:2][height:2][pal:1]: w={struct.unpack_from('<H', res_data, 0)[0]}, h={struct.unpack_from('<H', res_data, 2)[0]}, pal={res_data[4]}")
+
+# 检查是否有LLLLLL头
+print(f"\n前6字节: {res_data[:6]}")
+if res_data[:6] == b'LLLLLL':
+    print("  有LLLLLL头!")
+else:
+    print("  无LLLLLL头")
+
+# 直接从FDOTHER.DAT读取索引1的原始位置
+print(f"\n直接从文件读取索引1位置 {start}:")
+raw = data[start:start+20]
+print(f"  前20字节: {raw.hex(' ')}")
+
+# 索引0
+idx0_start = struct.unpack_from('<I', data, 10 + 0 * 4)[0]
+idx0_end = struct.unpack_from('<I', data, 10 + 1 * 4)[0]
+print(f"\n索引0: 偏移 {idx0_start} - {idx0_end}, 大小 {idx0_end - idx0_start}")
+pal_data = data[idx0_start:idx0_end]
+print(f"  前20字节: {pal_data[:20].hex(' ')}")

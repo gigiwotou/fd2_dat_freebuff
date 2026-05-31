@@ -258,15 +258,18 @@ int fdother_parse_multi_tile(const byte* data, dword size, fdother_multi_tile_t*
         return -1;
     }
     
-    word w = data[0] | (data[1] << 8);
-    word h = data[2] | (data[3] << 8);
+    /* 索引1格式分析（根据实际数据）：
+     * [0-1]: width=312 (总宽度，所有图标排成一行)
+     * [2-3]: height=0 (未使用)
+     * [4]: palette_window=28
+     * [5]: padding=3
+     * [6+]: 4字节相对偏移表
+     * 
+     * 每个图标是24x24，使用sub_4E22A编码
+     */
     
-    if (w == 0 || w > 640 || h == 0 || h > 480) {
-        return -1;
-    }
-    
-    out_multi->width = w;
-    out_multi->height = h;
+    out_multi->width = 24;   // 固定24x24图标
+    out_multi->height = 24;
     out_multi->palette_window = data[4];
     out_multi->data = data;
     out_multi->size = size;
@@ -282,7 +285,7 @@ int fdother_parse_multi_tile(const byte* data, dword size, fdother_multi_tile_t*
         dword off = data[pos] | (data[pos + 1] << 8) | 
                    (data[pos + 2] << 16) | (data[pos + 3] << 24);
         
-        if (off > size) {
+        if (off == 0 || off > size) {
             break;
         }
         
