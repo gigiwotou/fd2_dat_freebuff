@@ -425,9 +425,8 @@ static void refresh_display(void) {
                     
                     if (fdother_multi_tile_get_icon(&g_multi_tile, g_sub_index, &rle_data, &rle_size) == 0) {
                         /* 图标数据不包含4字节宽高头，直接就是RLE像素数据 */
-                        /* sub_4EBFF不调用fd_decompress_rle，而是1:1复制汇编逻辑 */
-                        /* 但为了简化，我们使用fd_decompress_rle，不应用palette_window */
                         memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
+                        /* RLE解码不应用palette_window（传-1） */
                         fd_decompress_rle(rle_data, rle_size, g_decode_buffer, 
                                          g_multi_tile.width, g_multi_tile.height, -1);
                         g_decode_width = g_multi_tile.width;

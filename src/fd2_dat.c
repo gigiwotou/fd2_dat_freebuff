@@ -139,57 +139,108 @@ void fd_get_image_dimensions(const byte *data, int *width, int *height) {
 int fd_decompress_rle(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
     // 按照sub_4EC66 + sub_4EBFF汇编代码1:1实现
     // sub_4EC66: 像素解码（运行长度编码）
-    // value_param: 调色板窗口偏移
+    // value_param: 保留参数，当前不使用（palette_window在draw_pixels中应用）
+    // 假设src已经跳过了4字节宽高头（由调用者负责）
+    
+    const byte *pixel_data = src;
+    int pixel_data_size = src_size;
+    
+    if (pixel_data_size <= 0) return -1;
     
     int expected = dst_width * dst_height;
     int dst_idx = 0;
     int src_idx = 0;
     
     // sub_4EC66状态变量
-    byte ah = 0;        // 运行长度计数器
-    byte prev_al = 0;   // 上次读取的像素值
+    byte ah = 0;
+    byte al = 0;
     
-    // 按行处理
-    for (int row = 0; row < dst_height; row++) {
-        for (int col = 0; col < dst_width; col++) {
-            if (dst_idx >= expected) break;
+    for (int i = 0; i < expected; i++) {
+        // sub_4EC66逻辑开始
+        if (ah > 0) {
+            // AH > 0: 重复之前的像素值
+            // 4ec6a: dec ah
+            ah--;
+            // 4ec6c: retn - AL保持不变，直接返回
+            // AL已经是正确的像素值
+        } else {
+            // AH == 0: 读取新字节
+            // 4ec6d: lodsb
+            if (src_idx >= pixel_data_size) break;
             
-            // sub_4EC66逻辑开始
-            if (ah > 0) {
-                // AH > 0: 重复之前的像素值
-                ah--;
-            } else {
-                // AH == 0: 读取新字节
-                if (src_idx >= src_size) break;
-                
-                byte al = src[src_idx];
-                src_idx++;
-                
-                if (al > 0xC0) {
-                    // AL > 0xC0: 运行长度编码
-                    ah = al - 0xC1;
-                    if (src_idx < src_size) {
-                        al = src[src_idx];
-                        src_idx++;
-                    }
-                    prev_al = al;
-                } else {
-                    // AL <= 0xC0: 直接像素值
-                    ah = 0;
-                    prev_al = al;
+            al = pixel_data[src_idx];
+            src_idx++;
+            
+            // 4ec6e: cmp al, 0C0h
+            if (al > 0xC0) {
+                // AL > 0xC0: 运行长度编码
+                // 4ec75: mov ah, al; sub ah, 0C1h
+                ah = al - 0xC1;
+                // 4ec7a: lodsb - 再读取一个字节（像素值）
+                if (src_idx < pixel_data_size) {
+                    al = pixel_data[src_idx];
+                    src_idx++;
                 }
+                // AL现在是像素值
+            } else {
+                // AL <= 0xC0: 直接像素值
+                // 4ec72: xor ah, ah
+                ah = 0;
+                // AL已经是像素值
             }
-            // sub_4EC66逻辑结束，此时prev_al就是解码后的像素值
-            
-            // 应用调色板窗口
-            byte pixel = prev_al;
-            if (value_param != -1) {
-                pixel = (value_param + prev_al) & 0xFF;
-            }
-            
-            dst[dst_idx] = pixel;
-            dst_idx++;
         }
+        // sub_4EC66逻辑结束，AL就是解码后的像素值
+        
+        // 注意：不在这里应用palette_window，由draw_pixels负责
+        dst[dst_idx] = al;
+        dst_idx++;
+    }
+    
+    return 0;
+}
+
+/* 无头RLE解码：直接解码EC66编码的像素数据 */
+int fd_decompress_rle_no_header(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
+    // 与fd_decompress_rle相同，但不跳过4字节头
+    // 用于索引1的图标数据（无宽高头）
+    // value_param: 保留参数，当前不使用（palette_window在draw_pixels中应用）
+    
+    const byte *pixel_data = src;  // 不跳过任何字节
+    int pixel_data_size = src_size;
+    
+    if (pixel_data_size <= 0) return -1;
+    
+    int expected = dst_width * dst_height;
+    int dst_idx = 0;
+    int src_idx = 0;
+    
+    // sub_4EC66状态变量
+    byte ah = 0;
+    byte al = 0;
+    
+    for (int i = 0; i < expected; i++) {
+        if (ah > 0) {
+            ah--;
+        } else {
+            if (src_idx >= pixel_data_size) break;
+            
+            al = pixel_data[src_idx];
+            src_idx++;
+            
+            if (al > 0xC0) {
+                ah = al - 0xC1;
+                if (src_idx < pixel_data_size) {
+                    al = pixel_data[src_idx];
+                    src_idx++;
+                }
+            } else {
+                ah = 0;
+            }
+        }
+        
+        // 注意：不在这里应用palette_window，由draw_pixels负责
+        dst[dst_idx] = al;
+        dst_idx++;
     }
     
     return 0;
