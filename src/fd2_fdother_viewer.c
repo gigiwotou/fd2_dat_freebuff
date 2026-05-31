@@ -419,7 +419,7 @@ static void refresh_display(void) {
                     dword rle_size;
                     
                     if (fdother_multi_tile_get_icon(&g_multi_tile, g_sub_index, &rle_data, &rle_size) == 0) {
-                        /* 图标数据没有4字节宽高头，直接解码 */
+                        /* 图标数据不包含4字节宽高头，直接就是RLE像素数据 */
                         memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
                         fd_decompress_rle(rle_data, rle_size, g_decode_buffer, 
                                          g_multi_tile.width, g_multi_tile.height, g_multi_tile.palette_window);
