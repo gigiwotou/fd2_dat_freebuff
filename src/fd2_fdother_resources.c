@@ -234,17 +234,14 @@ int fdother_parse_tile(const byte* data, dword size, fdother_tile_t* out_tile) {
     out_tile->width = w;
     out_tile->height = h;
     
-    if (size >= 8 && data[5] != 0) {
-        out_tile->header_size = 8;
-        out_tile->palette_window = data[4] | (data[5] << 8);
-        out_tile->rle_data = data + 8;
-        out_tile->rle_size = size - 8;
-    } else {
-        out_tile->header_size = 5;
-        out_tile->palette_window = data[4];
-        out_tile->rle_data = data + 5;
-        out_tile->rle_size = size - 5;
-    }
+    /* 根据Python测试验证，tile格式固定为：
+     * [width:2][height:2][window_offset:1][rle_data...]
+     * RLE数据总是从offset 5开始
+     */
+    out_tile->header_size = 5;
+    out_tile->palette_window = data[4];  // 单字节调色板窗口偏移
+    out_tile->rle_data = data + 5;
+    out_tile->rle_size = size - 5;
     
     return 0;
 }
@@ -392,22 +389,28 @@ int fdother_parse_lmi1(const byte* data, dword size, fdother_lmi1_t* out_lmi1) {
         dword second_offset = data[10] | (data[11] << 8) | (data[12] << 16) | (data[13] << 24);
         dword tile_size = second_offset - first_offset;
         
-        /* 假设tile_size = width * height，取最接近的平方根作为宽高 */
-        /* 对于256字节，通常是16x16 */
-        out_lmi1->tile_width = 16;
-        out_lmi1->tile_height = 16;
+        /* 寻找最接近正方形的宽高组合 (优先16的倍数) */
+        int best_w = 16;
+        int best_h = tile_size / 16;
+        int best_diff = abs(16 - tile_size / 16);
         
-        /* 尝试找到合理的宽高组合 */
-        for (int w = 1; w <= 256; w++) {
+        for (int w = 1; w <= 64; w++) {
             if (tile_size % w == 0) {
                 int h = tile_size / w;
-                if (w <= 256 && h <= 256) {
-                    out_lmi1->tile_width = w;
-                    out_lmi1->tile_height = h;
-                    break;
+                if (w <= 64 && h <= 64) {
+                    int diff = abs(w - h);
+                    /* 优先选择接近正方形且宽高比例合理的 */
+                    if (diff < best_diff || (diff == best_diff && w % 16 == 0)) {
+                        best_w = w;
+                        best_h = h;
+                        best_diff = diff;
+                    }
                 }
             }
         }
+        
+        out_lmi1->tile_width = best_w;
+        out_lmi1->tile_height = best_h;
     } else {
         /* 默认16x16 */
         out_lmi1->tile_width = 16;

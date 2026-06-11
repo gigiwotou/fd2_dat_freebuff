@@ -1,3 +1,14 @@
+/**
+ * FD2游戏RLE解码函数
+ * 
+ * 根据IDA Pro MCP分析，FD2使用两种RLE格式：
+ * 1. sub_4E98D: 通用RLE解码（索引11等Tile图像）
+ *    - 控制字节格式: bit7=1为压缩命令，bit6区分跳过/复制
+ *    - count = (ctrl & 0x3F) + 1
+ * 2. sub_4E22A: 24x24图标专用RLE解码（索引1）
+ *    - 4种模式：填充、交替、复制、跳过
+ */
+
 #include "../include/fd2_dat.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,111 +147,104 @@ void fd_get_image_dimensions(const byte *data, int *width, int *height) {
     *height = data[2] | (data[3] << 8);
 }
 
-int fd_decompress_rle(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
-    // 按照sub_4EC66 + sub_4EBFF汇编代码1:1实现
-    // sub_4EC66: 像素解码（运行长度编码）
-    // value_param: 保留参数，当前不使用（palette_window在draw_pixels中应用）
-    // 假设src已经跳过了4字节宽高头（由调用者负责）
-    
-    const byte *pixel_data = src;
-    int pixel_data_size = src_size;
-    
-    if (pixel_data_size <= 0) return -1;
-    
-    int expected = dst_width * dst_height;
-    int dst_idx = 0;
-    int src_idx = 0;
-    
-    // sub_4EC66状态变量
-    byte ah = 0;
-    byte al = 0;
-    
-    for (int i = 0; i < expected; i++) {
-        // sub_4EC66逻辑开始
-        if (ah > 0) {
-            // AH > 0: 重复之前的像素值
-            // 4ec6a: dec ah
-            ah--;
-            // 4ec6c: retn - AL保持不变，直接返回
-            // AL已经是正确的像素值
-        } else {
-            // AH == 0: 读取新字节
-            // 4ec6d: lodsb
-            if (src_idx >= pixel_data_size) break;
-            
-            al = pixel_data[src_idx];
-            src_idx++;
-            
-            // 4ec6e: cmp al, 0C0h
-            if (al > 0xC0) {
-                // AL > 0xC0: 运行长度编码
-                // 4ec75: mov ah, al; sub ah, 0C1h
-                ah = al - 0xC1;
-                // 4ec7a: lodsb - 再读取一个字节（像素值）
-                if (src_idx < pixel_data_size) {
-                    al = pixel_data[src_idx];
-                    src_idx++;
-                }
-                // AL现在是像素值
-            } else {
-                // AL <= 0xC0: 直接像素值
-                // 4ec72: xor ah, ah
-                ah = 0;
-                // AL已经是像素值
-            }
-        }
-        // sub_4EC66逻辑结束，AL就是解码后的像素值
-        
-        // 注意：不在这里应用palette_window，由draw_pixels负责
-        dst[dst_idx] = al;
-        dst_idx++;
+/**
+ * sub_4E98D: 通用RLE解码函数
+ * 
+ * 根据IDA Pro MCP反编译代码1:1实现
+ * 
+ * RLE控制字节格式:
+ * - Bit 7 (0x80): 判断是否为压缩命令
+ * - Bit 6 (0x40): 区分跳过/复制操作
+ * - 低6位: count = (value & 0x3F) + 1
+ * 
+ * 模式:
+ * - bit7=0, bit6=0: FILL - 用指定颜色填充count个像素
+ * - bit7=0, bit6=1: 特殊填充模式
+ * - bit7=1, bit6=0: COPY - 从源数据复制count个字节
+ * - bit7=1, bit6=1: SKIP - 跳过count个像素（透明）
+ * 
+ * value_1参数:
+ * - value_1 == -1: 直接模式，直接使用原始像素值
+ * - value_1 > 0xFF: 调色板偏移模式，使用变换公式
+ * - value_1 <= 0xFF: 单色模式，使用固定颜色
+ */
+int fd_decompress_rle(const byte *src, int src_size, byte *dst, int width, int height, int value_1) {
+    if (!src || !dst || width <= 0 || height <= 0 || src_size <= 0) {
+        return -1;
     }
     
-    return 0;
-}
-
-/* 无头RLE解码：直接解码EC66编码的像素数据 */
-int fd_decompress_rle_no_header(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
-    // 与fd_decompress_rle相同，但不跳过4字节头
-    // 用于索引1的图标数据（无宽高头）
-    // value_param: 保留参数，当前不使用（palette_window在draw_pixels中应用）
-    
-    const byte *pixel_data = src;  // 不跳过任何字节
-    int pixel_data_size = src_size;
-    
-    if (pixel_data_size <= 0) return -1;
-    
-    int expected = dst_width * dst_height;
+    int dst_size = width * height;
     int dst_idx = 0;
     int src_idx = 0;
     
-    // sub_4EC66状态变量
-    byte ah = 0;
-    byte al = 0;
+    int row_start = 0;
+    int col_pos = 0;
+    int current_row = 0;
     
-    for (int i = 0; i < expected; i++) {
-        if (ah > 0) {
-            ah--;
-        } else {
-            if (src_idx >= pixel_data_size) break;
-            
-            al = pixel_data[src_idx];
-            src_idx++;
-            
-            if (al > 0xC0) {
-                ah = al - 0xC1;
-                if (src_idx < pixel_data_size) {
-                    al = pixel_data[src_idx];
-                    src_idx++;
-                }
+    while (current_row < height && src_idx < src_size) {
+        byte ctrl = src[src_idx];
+        src_idx++;
+        
+        int count = (ctrl & 0x3F) + 1;
+        
+        if (ctrl & 0x80) {
+            // Bit 7 = 1: 压缩命令
+            if (ctrl & 0x40) {
+                // Bit 6 = 1: SKIP模式 - 跳过count个像素
+                col_pos += count;
             } else {
-                ah = 0;
+                // Bit 6 = 0: COPY模式 - 从源复制count个字节
+                for (int i = 0; i < count; i++) {
+                    if (src_idx < src_size && col_pos < width) {
+                        byte pixel = src[src_idx];
+                        src_idx++;
+                        
+                        int out_pos = row_start + col_pos;
+                        
+                        if (value_1 == -1) {
+                            dst[out_pos] = pixel;
+                        } else if (value_1 > 0xFF) {
+                            int modified = value_1 + (((value_1 >> 8) + pixel) & 7);
+                            dst[out_pos] = modified & 0xFF;
+                        } else {
+                            dst[out_pos] = value_1 & 0xFF;
+                        }
+                        
+                        col_pos++;
+                    }
+                }
+            }
+        } else {
+            // Bit 7 = 0: FILL模式 - 用指定颜色填充
+            if (src_idx < src_size) {
+                byte fill_value = src[src_idx];
+                src_idx++;
+                
+                byte fill_byte;
+                if (value_1 == -1) {
+                    fill_byte = fill_value;
+                } else if (value_1 > 0xFF) {
+                    fill_byte = (value_1 + (((value_1 >> 8) + fill_value) & 7)) & 0xFF;
+                } else {
+                    fill_byte = value_1 & 0xFF;
+                }
+                
+                for (int i = 0; i < count; i++) {
+                    if (col_pos < width) {
+                        int out_pos = row_start + col_pos;
+                        dst[out_pos] = fill_byte;
+                        col_pos++;
+                    }
+                }
             }
         }
         
-        // 注意：不在这里应用palette_window，由draw_pixels负责
-        dst[dst_idx] = al;
-        dst_idx++;
+        // 检查是否需要换行
+        if (col_pos >= width) {
+            current_row++;
+            row_start += width;
+            col_pos = 0;
+        }
     }
     
     return 0;
@@ -288,10 +292,11 @@ int fd_decompress_sub_4E22A(const byte *src, int src_size, byte *dst, int width,
             // 检查bit7 (CF标志 = __CFSHL__(value, 1))
             if (value & 0x80) {
                 // bit7=1: 检查bit6
-                byte v10 = v9 << 1;  // 再次左移检查bit6
+                // v9 = value << 1 (8-bit shift, bit6 shifts to bit7 position)
+                // 所以 v9 & 0x80 == value & 0x40
                 int count = (value << 2) & 0xFF;  // 4 * value
                 
-                if (v10 & 0x100) {
+                if (v9 & 0x80) {
                     // bit6=1: 11xxxxxx - 跳过模式（透明）
                     count = (count >> 2) + 1;
                     dst_idx += count;
@@ -301,8 +306,8 @@ int fd_decompress_sub_4E22A(const byte *src, int src_size, byte *dst, int width,
                     count = (count >> 2) + 1;
                     pixels_in_row -= count;
                     
-                    // qmemcpy(dst, src, count)
-                    if (src_idx + count <= src_size && dst_idx + count <= width * height) {
+                    // qmemcpy(dst, src, count) - 汇编没有边界检查
+                    if (src_idx + count <= src_size) {
                         memcpy(dst + dst_idx, src + src_idx, count);
                         src_idx += count;
                         dst_idx += count;
@@ -312,9 +317,8 @@ int fd_decompress_sub_4E22A(const byte *src, int src_size, byte *dst, int width,
                 }
             } else {
                 // bit7=0: 检查bit6
-                byte v10 = v9 << 1;  // 检查bit6
-                
-                if (v10 & 0x100) {
+                // v9 = value << 1, v9 & 0x80 == value & 0x40
+                if (v9 & 0x80) {
                     // bit6=1: 01xxxxxx - 交替模式
                     int count = ((value << 2) & 0xFF);
                     count = (count >> 2) + 1;
@@ -351,7 +355,7 @@ int fd_decompress_sub_4E22A(const byte *src, int src_size, byte *dst, int width,
                         byte pixel_value = src[src_idx];
                         src_idx++;
                         
-                        // memset(dst, value, count)
+                        // rep stosb
                         for (int i = 0; i < count; i++) {
                             if (dst_idx < width * height) {
                                 dst[dst_idx] = pixel_value;

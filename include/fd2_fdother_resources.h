@@ -47,17 +47,14 @@ typedef struct {
 
 /* ========================================================================
  * Tile图像资源
- * 格式: [width:2][height:2][palette_window:1/2][rle_data]
- * 注意：存在两种头格式：
- *   - 5字节头：width(2) + height(2) + palette_window(1)，RLE从偏移5开始
- *   - 8字节头：width(2) + height(2) + palette_window(2) + extra(2)，RLE从偏移8开始
- * 区分方法：字节5=0使用5字节头，字节5!=0使用8字节头
+ * 格式: [width:2][height:2][window_offset:1][rle_data]
+ * RLE数据从offset 5开始
  * ======================================================================== */
 typedef struct {
     word width;              // 宽度 (2字节，小端序)
     word height;             // 高度 (2字节，小端序)
-    word palette_window;    // 调色板窗口偏移 (1或2字节)
-    byte header_size;       // 头大小 (5或8字节)
+    word palette_window;    // 调色板窗口偏移 (1字节)
+    byte header_size;       // 头大小 (固定5字节)
     const byte* rle_data;   // RLE压缩数据指针
     dword rle_size;         // RLE数据大小
 } fdother_tile_t;
