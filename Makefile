@@ -90,18 +90,13 @@ GAME_SRCS = $(SRC_DIR)/fd2_rle.c $(SRC_DIR)/fd2_dat_loader.c $(SRC_DIR)/fd2_inpu
 GAME_OBJS = $(OBJ_DIR)/fd2_rle.o $(OBJ_DIR)/fd2_dat_loader.o $(OBJ_DIR)/fd2_input.o $(OBJ_DIR)/fd2_render.o $(OBJ_DIR)/fd2_audio.o $(OBJ_DIR)/fd2_resources.o $(OBJ_DIR)/fd2_afm.o $(OBJ_DIR)/fd2_scene.o $(OBJ_DIR)/fd2_game_core.o $(OBJ_DIR)/fd2_map_loader.o $(OBJ_DIR)/fd2_icon_b24.o $(OBJ_DIR)/fd2_sprite.o $(OBJ_DIR)/main.o $(OBJ_DIR)/fd2_states.o $(OBJ_DIR)/fd2_states_intro.o $(OBJ_DIR)/fd2_menu.o $(OBJ_DIR)/fd2_battle.o $(OBJ_DIR)/fd2_battle_sprite.o $(OBJ_DIR)/fd2_battle_cursor.o $(OBJ_DIR)/fd2_battle_menu.o $(OBJ_DIR)/fd2_battle_terrain_info.o $(OBJ_DIR)/fd2_battle_core.o $(OBJ_DIR)/fd2_battle_info.o $(OBJ_DIR)/fd2_battle_turn.o $(OBJ_DIR)/fd2_save_load.o $(OBJ_DIR)/fd2_continue.o $(OBJ_DIR)/fd2_cutscene.o
 GAME_RELEASE_OBJS = $(OBJ_RELEASE_DIR)/fd2_rle.o $(OBJ_RELEASE_DIR)/fd2_dat_loader.o $(OBJ_RELEASE_DIR)/fd2_input.o $(OBJ_RELEASE_DIR)/fd2_render.o $(OBJ_RELEASE_DIR)/fd2_audio.o $(OBJ_RELEASE_DIR)/fd2_resources.o $(OBJ_RELEASE_DIR)/fd2_afm.o $(OBJ_RELEASE_DIR)/fd2_scene.o $(OBJ_RELEASE_DIR)/fd2_game_core.o $(OBJ_RELEASE_DIR)/fd2_map_loader.o $(OBJ_RELEASE_DIR)/fd2_icon_b24.o $(OBJ_RELEASE_DIR)/fd2_sprite.o $(OBJ_RELEASE_DIR)/main.o $(OBJ_RELEASE_DIR)/fd2_states.o $(OBJ_RELEASE_DIR)/fd2_states_intro.o $(OBJ_RELEASE_DIR)/fd2_menu.o $(OBJ_RELEASE_DIR)/fd2_battle.o $(OBJ_RELEASE_DIR)/fd2_battle_sprite.o $(OBJ_RELEASE_DIR)/fd2_battle_cursor.o $(OBJ_RELEASE_DIR)/fd2_battle_menu.o $(OBJ_RELEASE_DIR)/fd2_battle_terrain_info.o $(OBJ_RELEASE_DIR)/fd2_battle_core.o $(OBJ_RELEASE_DIR)/fd2_battle_info.o $(OBJ_RELEASE_DIR)/fd2_battle_turn.o $(OBJ_RELEASE_DIR)/fd2_save_load.o $(OBJ_RELEASE_DIR)/fd2_continue.o $(OBJ_RELEASE_DIR)/fd2_cutscene.o
 
-TEST_OBJS = $(OBJ_DIR)/fd2_decoder_test.o
-INTRO_OBJS = $(OBJ_DIR)/fd2_intro.o $(DECODER_OBJS)
-
 # Targets
 TARGET_GAME   = $(BIN_DIR)/fd2$(EXE_EXT)
-TARGET_TEST   = $(BIN_DIR)/fd2_decoder_test$(EXE_EXT)
-TARGET_INTRO  = $(BIN_DIR)/fd2_intro$(EXE_EXT)
 TARGET_RELEASE = $(BIN_DIR)/fd2_release$(EXE_EXT)
 
-.PHONY: all clean test decoder intro game release
+.PHONY: all clean game release
 
-all: $(TARGET_GAME) $(TARGET_TEST) $(TARGET_INTRO)
+all: $(TARGET_GAME)
 	@echo Copying required DLLs...
 	-$(COPY_DLLS)
 	@echo Copying game data files...
@@ -116,27 +111,12 @@ release: $(TARGET_RELEASE)
 	-$(COPY_DLLS) || true
 	@echo Release build complete: $(TARGET_RELEASE)
 
-decoder: $(TARGET_TEST)
-
-test: $(TARGET_TEST)
-	./$(TARGET_TEST)
-
-intro: $(TARGET_INTRO)
-
 # Release build (no console, no debug output) - separate obj dir
 $(TARGET_RELEASE): $(GAME_RELEASE_OBJS) $(DECODER_RELEASE_OBJS) | $(BIN_DIR)
 	$(CC) $(RELEASE_CFLAGS) -o $@ $^ $(RELEASE_LDFLAGS)
 
 # Main game
 $(TARGET_GAME): $(GAME_OBJS) $(DECODER_OBJS) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-# Decoder test (no SDL)
-$(TARGET_TEST): $(DECODER_OBJS) $(TEST_OBJS) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $@ $^ -lm
-
-# Legacy intro player
-$(TARGET_INTRO): $(INTRO_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Compilation rules (debug)
