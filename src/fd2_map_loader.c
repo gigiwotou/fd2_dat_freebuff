@@ -14,159 +14,19 @@
 
 #include "../include/fd2_map_loader.h"
 #include "../include/fd2_rle.h"
+#include "../include/fd2_dat_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- DAT File Format 2: No count, offset table from byte 6 ---- */
+/* ---- DAT File Format 2: No count, offset table from byte 6 ----
+ * 解析函数已统一到 fd2_dat_loader_parse_entries_format2()
+ * 原本地 parse_dat_entries() 和 get_resource() 已删除,统一使用 fd2_dat_loader_* 接口
+ */
 
-/* Parse DAT file entries - Format 1: has count at byte 6, offsets from byte 10 */
-static int parse_dat_entries(const u8* data, u32 data_size, u32** out_offsets, int* out_count) {
-    if (data_size < 14) {
-        fprintf(stderr, "parse_dat_entries: data too small (%u bytes)\n", data_size);
-        return -1;
-    }
-
-    /* Check magic "LLLLLL" */
-    if (data[0] != 'L' || data[1] != 'L' || data[2] != 'L' ||
-        data[3] != 'L' || data[4] != 'L' || data[5] != 'L') {
-        fprintf(stderr, "parse_dat_entries: invalid magic\n");
-        return -1;
-    }
-
-    /* Read resource count at byte 6 */
-    u32 resource_count = data[6] | (data[7] << 8) | (data[8] << 16) | (data[9] << 24);
-    
-    if (resource_count == 0 || resource_count > 5000) {
-        fprintf(stderr, "parse_dat_entries: invalid resource count (%u)\n", resource_count);
-        return -1;
-    }
-
-    /* Check if we have enough data for the offset table */
-    if (10 + resource_count * 4 > data_size) {
-        fprintf(stderr, "parse_dat_entries: not enough data for %u resources\n", resource_count);
-        return -1;
-    }
-
-    u32* offsets = (u32*)malloc(resource_count * sizeof(u32));
-    if (!offsets) return -1;
-
-    /* Read offsets from byte 10 onwards */
-    for (u32 i = 0; i < resource_count; i++) {
-        u32 pos = 10 + i * 4;
-        offsets[i] = data[pos] | (data[pos+1] << 8) | (data[pos+2] << 16) | (data[pos+3] << 24);
-    }
-
-    *out_offsets = offsets;
-    *out_count = (int)resource_count;
-    return 0;
-}
-
-/* Get resource data from parsed DAT entries */
-static const u8* get_resource(const u8* data, u32 data_size, 
-                              const u32* offsets, int count, int index, u32* out_size) {
-    if (index < 0 || index >= count - 1) {
-        return NULL;
-    }
-
-    u32 start = offsets[index];
-    u32 end = offsets[index + 1];
-
-    if (start >= data_size || end > data_size || end <= start) {
-        return NULL;
-    }
-
-    *out_size = end - start;
-    return data + start;
-}
-
-/* RLE decompression (matches sub_4E22A) */
-static int rle_decompress(const u8* src, int src_size, u8* dst, int width, int height) {
-    if (!src || !dst || width <= 0 || height <= 0) return -1;
-
-    int dst_pos = 0;
-    int src_pos = 0;
-    int total_pixels = width * height;
-
-    while (src_pos < src_size && dst_pos < total_pixels) {
-        u8 op_byte = src[src_pos++];
-        
-        /* Extract operation from high 2 bits */
-        int bit7 = (op_byte >> 7) & 1;
-        int bit6 = (op_byte >> 6) & 1;
-        
-        /* Count from low 6 bits */
-        int count = (op_byte & 0x3F) + 1;
-
-        if (bit7 && bit6) {
-            /* SKIP: skip count pixels */
-            dst_pos += count;
-        } else if (bit7 && !bit6) {
-            /* COPY: copy count bytes from source */
-            if (src_pos + count > src_size) {
-                break;
-            }
-            for (int i = 0; i < count && dst_pos < total_pixels; i++) {
-                dst[dst_pos++] = src[src_pos++];
-            }
-        } else if (!bit7 && bit6) {
-            /* ALTERNATE: fill every other pixel */
-            if (src_pos >= src_size) break;
-            u8 fill = src[src_pos++];
-            for (int i = 0; i < count && dst_pos < total_pixels; i++) {
-                dst[dst_pos] = fill;
-                dst_pos += 2;  /* Skip one pixel each time */
-            }
-            /* Adjust if we went past the end of line */
-            if (dst_pos >= total_pixels) {
-                dst_pos = total_pixels;
-            }
-        } else {
-            /* FILL: fill count pixels with next byte */
-            if (src_pos >= src_size) break;
-            u8 fill = src[src_pos++];
-            for (int i = 0; i < count && dst_pos < total_pixels; i++) {
-                dst[dst_pos++] = fill;
-            }
-        }
-    }
-
-    return 0;
-}
-
-/* Load file into memory */
-static u8* load_file(const char* path, u32* out_size) {
-    FILE* f = fopen(path, "rb");
-    if (!f) {
-        fprintf(stderr, "load_file: cannot open %s\n", path);
-        return NULL;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    if (size <= 0) {
-        fclose(f);
-        return NULL;
-    }
-
-    u8* data = (u8*)malloc(size);
-    if (!data) {
-        fclose(f);
-        return NULL;
-    }
-
-    if (fread(data, 1, size, f) != (size_t)size) {
-        free(data);
-        fclose(f);
-        return NULL;
-    }
-
-    fclose(f);
-    *out_size = (u32)size;
-    return data;
-}
+/* Load file & RLE 已统一到 fd2_dat_loader / fd2_rle 中
+ * 原本地的 rle_decompress() 和 load_file() 已删除,统一使用 fd2_dat_loader_load_file() 接口
+ */
 
 /* ---- Public API ---- */
 
@@ -189,11 +49,11 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
 
     printf("fd2_map_load_from_dat: loading map %d\n", map_id);
 
-    /* Load DAT files */
+    /* Load DAT files - 使用统一加载器 */
     u32 fdfield_size, fdshap_size, fdother_size;
-    u8* fdfield_data = load_file(fdfield_path, &fdfield_size);
-    u8* fdshap_data = load_file(fdshap_path, &fdshap_size);
-    u8* fdother_data = load_file(fdother_path, &fdother_size);
+    u8* fdfield_data = fd2_dat_loader_load_file(fdfield_path, &fdfield_size);
+    u8* fdshap_data = fd2_dat_loader_load_file(fdshap_path, &fdshap_size);
+    u8* fdother_data = fd2_dat_loader_load_file(fdother_path, &fdother_size);
 
     if (!fdfield_data || !fdshap_data || !fdother_data) {
         fprintf(stderr, "fd2_map_load_from_dat: failed to load DAT files\n");
@@ -206,91 +66,41 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     /* Parse FDFIELD.DAT entries (format 2: no count, offsets from byte 6)
      * Note: byte 6-9 contains a count value (406), but format 2 treats it as offset[0].
      * This means offset[0] = 406, which points to actual layout data.
+     * 使用统一 DAT 加载器解析
      */
     u32* fdfield_offsets = NULL;
     int fdfield_count = 0;
-    {
-        int capacity = 512;
-        fdfield_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!fdfield_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdfield_offsets\n");
-            goto cleanup;
-        }
-
-        u32 pos = 6;
-        while (pos + 4 <= fdfield_size && fdfield_count < capacity) {
-            u32 offset = fdfield_data[pos] | (fdfield_data[pos+1] << 8) |
-                         (fdfield_data[pos+2] << 16) | (fdfield_data[pos+3] << 24);
-            
-            if (offset > fdfield_size) {
-                break;
-            }
-
-            fdfield_offsets[fdfield_count] = offset;
-            fdfield_count++;
-            pos += 4;
-        }
+    if (fd2_dat_loader_parse_entries_format2(fdfield_data, fdfield_size, 512,
+                                              &fdfield_offsets, &fdfield_count) != 0) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot parse FDFIELD.DAT\n");
+        goto cleanup;
     }
     printf("fd2_map_load_from_dat: FDFIELD.DAT parsed %d resources (format 2)\n", fdfield_count);
 
-    /* Parse FDSHAP.DAT entries (format 2: no count, offsets from byte 6) */
+    /* Parse FDSHAP.DAT entries (format 2) */
     u32* fdshap_offsets = NULL;
     int fdshap_count = 0;
-    {
-        int capacity = 128;
-        fdshap_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!fdshap_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdshap_offsets\n");
-            goto cleanup;
-        }
-
-        u32 pos = 6;
-        while (pos + 4 <= fdshap_size && fdshap_count < capacity) {
-            u32 offset = fdshap_data[pos] | (fdshap_data[pos+1] << 8) |
-                         (fdshap_data[pos+2] << 16) | (fdshap_data[pos+3] << 24);
-            
-            if (offset > fdshap_size) {
-                break;
-            }
-
-            fdshap_offsets[fdshap_count] = offset;
-            fdshap_count++;
-            pos += 4;
-        }
+    if (fd2_dat_loader_parse_entries_format2(fdshap_data, fdshap_size, 128,
+                                              &fdshap_offsets, &fdshap_count) != 0) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot parse FDSHAP.DAT\n");
+        goto cleanup;
     }
     printf("fd2_map_load_from_dat: FDSHAP.DAT parsed %d resources (format 2)\n", fdshap_count);
 
-    /* Parse FDOTHER.DAT entries (format 2: no count, offsets from byte 6) */
+    /* Parse FDOTHER.DAT entries (format 2) */
     u32* fdother_offsets = NULL;
     int fdother_count = 0;
-    {
-        int capacity = 512;
-        fdother_offsets = (u32*)malloc(capacity * sizeof(u32));
-        if (!fdother_offsets) {
-            fprintf(stderr, "fd2_map_load_from_dat: cannot allocate fdother_offsets\n");
-            goto cleanup;
-        }
-
-        u32 pos = 6;
-        while (pos + 4 <= fdother_size && fdother_count < capacity) {
-            u32 offset = fdother_data[pos] | (fdother_data[pos+1] << 8) |
-                         (fdother_data[pos+2] << 16) | (fdother_data[pos+3] << 24);
-            
-            if (offset > fdother_size) {
-                break;
-            }
-
-            fdother_offsets[fdother_count] = offset;
-            fdother_count++;
-            pos += 4;
-        }
+    if (fd2_dat_loader_parse_entries_format2(fdother_data, fdother_size, 512,
+                                              &fdother_offsets, &fdother_count) != 0) {
+        fprintf(stderr, "fd2_map_load_from_dat: cannot parse FDOTHER.DAT\n");
+        goto cleanup;
     }
     printf("fd2_map_load_from_dat: FDOTHER.DAT parsed %d resources (format 2)\n", fdother_count);
 
     /* Load global palette from FDOTHER.DAT resource 0 */
     {
         u32 pal_size;
-        const u8* pal_data = get_resource(fdother_data, fdother_size, fdother_offsets, fdother_count, 0, &pal_size);
+        const u8* pal_data = fd2_dat_loader_get_resource(fdother_data, fdother_size, fdother_offsets, fdother_count, 0, &pal_size);
         if (pal_data && pal_size >= FD2_PALETTE_BYTES) {
             memcpy(map->palette, pal_data, FD2_PALETTE_BYTES);
             map->palette_loaded = true;
@@ -323,7 +133,7 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     }
 
     u32 layout_size;
-    const u8* layout_data = get_resource(fdfield_data, fdfield_size, fdfield_offsets, fdfield_count, layout_idx, &layout_size);
+    const u8* layout_data = fd2_dat_loader_get_resource(fdfield_data, fdfield_size, fdfield_offsets, fdfield_count, layout_idx, &layout_size);
     if (!layout_data || layout_size < 4) {
         fprintf(stderr, "fd2_map_load_from_dat: failed to load layout for map %d\n", map_id);
         goto cleanup;
@@ -333,7 +143,7 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
 
     /* Load control data to get terrain_set_id and map parameters (IDA sub_1088D lines 1098b-10995) */
     u32 control_size;
-    const u8* control_data = get_resource(fdfield_data, fdfield_size, fdfield_offsets, fdfield_count, control_idx, &control_size);
+    const u8* control_data = fd2_dat_loader_get_resource(fdfield_data, fdfield_size, fdfield_offsets, fdfield_count, control_idx, &control_size);
     if (!control_data || control_size < 3) {
         fprintf(stderr, "fd2_map_load_from_dat: failed to load control for map %d\n", map_id);
         goto cleanup;
@@ -367,7 +177,7 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     }
 
     u32 tileset_size;
-    const u8* tileset_data = get_resource(fdshap_data, fdshap_size, fdshap_offsets, fdshap_count, tileset_idx, &tileset_size);
+    const u8* tileset_data = fd2_dat_loader_get_resource(fdshap_data, fdshap_size, fdshap_offsets, fdshap_count, tileset_idx, &tileset_size);
     if (!tileset_data || tileset_size < 6) {
         fprintf(stderr, "fd2_map_load_from_dat: failed to load tileset %d\n", tileset_idx);
         goto cleanup;
@@ -442,8 +252,10 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
             continue;
         }
 
-        /* Decompress tile */
-        if (rle_decompress(tile_rle_data, tile_rle_size, tile_pixels, tile_width, tile_height) == 0) {
+        /* Decompress tile - 使用统一 fd2_rle.c 中的 fd2_rle_decompress 接口
+         * 注: FDSHAP瓦块数据不包含4字节头,直接调用通用解码器
+         */
+        if (fd2_rle_decompress(tile_rle_data, tile_rle_size, tile_pixels, tile_width, tile_height) == 0) {
             map->tile_images[i].width = tile_width;
             map->tile_images[i].height = tile_height;
             map->tile_images[i].pixels = tile_pixels;
@@ -594,7 +406,7 @@ int fd2_map_load_from_dat(fd2_map_t* map, int map_id,
     
     if (char_pos_idx < fdfield_count) {
         u32 char_pos_size;
-        const u8* char_pos_data = get_resource(fdfield_data, fdfield_size,
+        const u8* char_pos_data = fd2_dat_loader_get_resource(fdfield_data, fdfield_size,
                                                fdfield_offsets, fdfield_count,
                                                char_pos_idx, &char_pos_size);
         

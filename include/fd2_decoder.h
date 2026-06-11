@@ -91,6 +91,8 @@ const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size);
  *
  * Returns: pointer to loaded resource data, or NULL on error.
  *          The caller is responsible for freeing the returned pointer.
+ *
+ * @deprecated Use fd2_dat_loader_load_resource() from fd2_dat_loader.h
  */
 u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
 

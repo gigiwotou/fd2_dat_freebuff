@@ -1,20 +1,27 @@
 /**
- * FD2 Decoder - DAT文件加载和资源分类
+ * FD2 Decoder - 资源解码库
  *
  * 基于IDA Pro汇编代码1:1还原
  *
- * 注意: 所有RLE解码函数已移至fd2_rle.c
- * 请包含fd2_decoder.h或fd2_rle.h使用RLE功能
+ * 模块结构:
+ *   fd2_dat_loader.c - DAT文件加载 (sub_111BA)
+ *   fd2_rle.c        - RLE解码 (sub_4E98D, sub_4E22A, sub_36E65, sub_36F24)
+ *   fd2_decoder.c    - 资源分类、图像解码、调色板操作
+ *
+ * 请使用 fd2_dat_loader.h 中的接口加载DAT资源
  */
 
 #include "fd2_decoder.h"
 #include "../include/fd2_rle.h"
+#include "../include/fd2_dat_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ============================================================================
- * DAT File System
+ * DAT File System (高层封装)
+ *
+ * 底层加载逻辑在 fd2_dat_loader.c,这里提供带元数据的封装
  * ============================================================================ */
 
 int fd2_dat_load(fd2_dat_t* dat, const char* path) {
@@ -23,35 +30,16 @@ int fd2_dat_load(fd2_dat_t* dat, const char* path) {
     memset(dat, 0, sizeof(*dat));
     strncpy(dat->filename, path, sizeof(dat->filename) - 1);
 
-    FILE* f = fopen(path, "rb");
-    if (!f) {
-        fprintf(stderr, "fd2_dat_load: cannot open '%s'\n", path);
-        return -1;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long file_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    /* 使用统一DAT加载器读取文件 */
+    u32 file_size = 0;
+    u8* data = fd2_dat_loader_load_file(path, &file_size);
+    if (!data) return -1;
 
     if (file_size < 10) {
-        fprintf(stderr, "fd2_dat_load: file too small (%ld bytes)\n", file_size);
-        fclose(f);
-        return -1;
-    }
-
-    u8* data = (u8*)malloc((size_t)file_size);
-    if (!data) {
-        fclose(f);
-        return -1;
-    }
-
-    if ((size_t)fread(data, 1, (size_t)file_size, f) != (size_t)file_size) {
-        fprintf(stderr, "fd2_dat_load: read error\n");
+        fprintf(stderr, "fd2_dat_load: file too small (%u bytes)\n", file_size);
         free(data);
-        fclose(f);
         return -1;
     }
-    fclose(f);
 
     if (memcmp(data, FD2_DAT_MAGIC, FD2_DAT_MAGIC_LEN) != 0) {
         fprintf(stderr, "fd2_dat_load: invalid magic\n");
@@ -112,79 +100,14 @@ const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size) {
 /* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
 u32 fd2_last_loaded_size = 0;
 
-/* ============================================================================
- * sub_111BA: Single Resource Loader (IDA 0x111BA)
- *
- * Original assembly behavior (1:1 replication):
- *   1. Free old_ptr if non-NULL
- *   2. fopen(filename, "rb")
- *   3. fseek(fp, 4 * index + 6, SEEK_SET)
- *   4. fread 8 bytes: offset(4) + next_offset(4)
- *   5. size = next_offset - offset
- *   6. malloc(size)
- *   7. fseek(fp, offset, SEEK_SET)
- *   8. fread resource data
- *   9. fclose(fp)
- *   10. return pointer
- * ============================================================================ */
-
+/* sub_111BA 包装 - 调用统一接口 */
 u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index) {
-    FILE* fp;
-    u8* buffer;
-    u32 offset, next_offset, size;
-    u32 offsets[2];
-
-    /* Free old resource pointer if provided (IDA: if (a6) free(a6)) */
-    if (old_ptr) {
-        free(old_ptr);
-    }
-
-    /* Open DAT file */
-    fp = fopen(filename, "rb");
-    if (!fp) {
-        fprintf(stderr, "\n\n File not found %s!!! \n\n", filename);
-        return NULL;
-    }
-
-    /* Seek to offset table entry: 4 * index + 6 */
-    fseek(fp, 4 * index + 6, SEEK_SET);
-
-    /* Read 8 bytes: offset (4 bytes) + next_offset (4 bytes) */
-    if (fread(offsets, 1, 8, fp) != 8) {
-        fprintf(stderr, "fd2_dat_load_resource: failed to read offset table for index %d\n", index);
-        fclose(fp);
-        return NULL;
-    }
-
-    offset = offsets[0];
-    next_offset = offsets[1];
-    size = next_offset - offset;
-
-    /* Store size in global (matches dword_53BFF) */
-    fd2_last_loaded_size = size;
-
-    /* Allocate memory for the resource */
-    buffer = (u8*)malloc(size);
-    if (!buffer) {
-        fprintf(stderr, "Out of Memory at Load %s Number:%d!!\n", filename, index);
-        fclose(fp);
-        return NULL;
-    }
-
-    /* Seek to resource data */
-    fseek(fp, offset, SEEK_SET);
-
-    /* Read resource data */
-    if (fread(buffer, 1, size, fp) != size) {
-        fprintf(stderr, "fd2_dat_load_resource: failed to read resource %d (size=%u)\n", index, size);
-        free(buffer);
-        fclose(fp);
-        return NULL;
-    }
-
-    fclose(fp);
-
-    return buffer;
+    /* 使用统一加载器,兼容void*类型 */
+    byte* result = fd2_dat_loader_load_resource(filename,
+                                                (byte*)old_ptr,
+                                                index,
+                                                &fd2_last_loaded_size);
+    return (u8*)result;
 }
 
 /* ============================================================================
@@ -322,7 +245,6 @@ void fd2_resource_classify(const u8* data, u32 size, fd2_resource_info_t* info) 
 
 /* ============================================================================
  * BG.DAT Background Decoding
- * (使用fd2_rle_decompress_from_resource)
  * ============================================================================ */
 
 int fd2_bg_decode(const u8* res_data, u32 res_size,
