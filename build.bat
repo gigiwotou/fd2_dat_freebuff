@@ -32,7 +32,7 @@ set BIN_DIR=bin
 set EXE_EXT=.exe
 
 :: Object files (debug)
-set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o
+set DECODER_OBJ=%OBJ_DIR%\fd2_decoder.o %OBJ_DIR%\fd2_rle.o
 set GAME_OBJS=%OBJ_DIR%\fd2_input.o %OBJ_DIR%\fd2_render.o %OBJ_DIR%\fd2_audio.o %OBJ_DIR%\fd2_resources.o %OBJ_DIR%\fd2_afm.o %OBJ_DIR%\fd2_scene.o %OBJ_DIR%\fd2_game_core.o %OBJ_DIR%\fd2_map_loader.o %OBJ_DIR%\fd2_icon_b24.o %OBJ_DIR%\fd2_sprite.o %OBJ_DIR%\main.o %OBJ_DIR%\fd2_states.o %OBJ_DIR%\fd2_states_intro.o %OBJ_DIR%\fd2_menu.o %OBJ_DIR%\fd2_battle.o %OBJ_DIR%\fd2_battle_sprite.o %OBJ_DIR%\fd2_battle_cursor.o %OBJ_DIR%\fd2_battle_menu.o %OBJ_DIR%\fd2_battle_terrain_info.o %OBJ_DIR%\fd2_battle_core.o %OBJ_DIR%\fd2_battle_info.o %OBJ_DIR%\fd2_battle_turn.o %OBJ_DIR%\fd2_save_load.o %OBJ_DIR%\fd2_continue.o %OBJ_DIR%\fd2_cutscene.o
 set TEST_OBJ=%OBJ_DIR%\fd2_decoder_test.o
 set SUB_111BA_TEST_OBJ=%OBJ_DIR%\fd2_sub_111ba_test.o
@@ -40,7 +40,7 @@ set FDTXT_TEST_OBJ=%OBJ_DIR%\fd2_fdtxt_test.o
 set INTRO_OBJ=%OBJ_DIR%\fd2_intro.o
 
 :: Object files (release)
-set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o
+set DECODER_RELEASE_OBJ=%OBJ_RELEASE_DIR%\fd2_decoder.o %OBJ_RELEASE_DIR%\fd2_rle.o
 set GAME_RELEASE_OBJS=%OBJ_RELEASE_DIR%\fd2_input.o %OBJ_RELEASE_DIR%\fd2_render.o %OBJ_RELEASE_DIR%\fd2_audio.o %OBJ_RELEASE_DIR%\fd2_resources.o %OBJ_RELEASE_DIR%\fd2_afm.o %OBJ_RELEASE_DIR%\fd2_scene.o %OBJ_RELEASE_DIR%\fd2_game_core.o %OBJ_RELEASE_DIR%\fd2_map_loader.o %OBJ_RELEASE_DIR%\fd2_icon_b24.o %OBJ_RELEASE_DIR%\fd2_sprite.o %OBJ_RELEASE_DIR%\main.o %OBJ_RELEASE_DIR%\fd2_states.o %OBJ_RELEASE_DIR%\fd2_states_intro.o %OBJ_RELEASE_DIR%\fd2_menu.o %OBJ_RELEASE_DIR%\fd2_battle.o %OBJ_RELEASE_DIR%\fd2_battle_sprite.o %OBJ_RELEASE_DIR%\fd2_battle_cursor.o %OBJ_RELEASE_DIR%\fd2_battle_menu.o %OBJ_RELEASE_DIR%\fd2_battle_terrain_info.o %OBJ_RELEASE_DIR%\fd2_battle_core.o %OBJ_RELEASE_DIR%\fd2_battle_info.o %OBJ_RELEASE_DIR%\fd2_battle_turn.o %OBJ_RELEASE_DIR%\fd2_save_load.o %OBJ_RELEASE_DIR%\fd2_continue.o %OBJ_RELEASE_DIR%\fd2_cutscene.o
 
 :: Targets
@@ -95,7 +95,9 @@ if not exist %BIN_DIR% mkdir %BIN_DIR%
 
 :: Compile all source files
 if "%TARGET%"=="all" (
-    call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+    call :compile %SRC_DIR%\fd2_decoder.c %OBJ_DIR%\fd2_decoder.o
+    if errorlevel 1 goto :error
+    call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
     if errorlevel 1 goto :error
     call :compile %SRC_DIR%\fd2_input.c %OBJ_DIR%\fd2_input.o
     if errorlevel 1 goto :error
@@ -211,7 +213,9 @@ if "%TARGET%"=="all" (
 )
 
 :build_game
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+call :compile %SRC_DIR%\fd2_decoder.c %OBJ_DIR%\fd2_decoder.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_input.c %OBJ_DIR%\fd2_input.o
 if errorlevel 1 goto :error
@@ -274,7 +278,9 @@ echo Usage: build.bat [all^|game^|test^|intro^|clean^|release] [mingw64]
 goto :end
 
 :build_release
-call :compile_release %SRC_DIR%\fd2_decoder.c %DECODER_RELEASE_OBJ%
+call :compile_release %SRC_DIR%\fd2_decoder.c %OBJ_RELEASE_DIR%\fd2_decoder.o
+if errorlevel 1 goto :error
+call :compile_release %SRC_DIR%\fd2_rle.c %OBJ_RELEASE_DIR%\fd2_rle.o
 if errorlevel 1 goto :error
 call :compile_release %SRC_DIR%\fd2_input.c %OBJ_RELEASE_DIR%\fd2_input.o
 if errorlevel 1 goto :error
@@ -334,7 +340,9 @@ echo [OK] %TARGET_GAME_RELEASE%
 goto :end
 
 :build_test
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+call :compile %SRC_DIR%\fd2_decoder.c %OBJ_DIR%\fd2_decoder.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_decoder_test.c %TEST_OBJ%
 if errorlevel 1 goto :error
@@ -354,7 +362,9 @@ echo [OK] %TARGET_FDTXT_TEST%
 goto :end
 
 :build_intro
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+call :compile %SRC_DIR%\fd2_decoder.c %OBJ_DIR%\fd2_decoder.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_intro.c %INTRO_OBJ%
 if errorlevel 1 goto :error

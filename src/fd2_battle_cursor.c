@@ -3,11 +3,13 @@
  *
  * Map cursor movement, rendering, and RLE decoding.
  * Based on IDA sub_11B48, sub_11B9B, sub_11C59, sub_11BFA, sub_4E98D, sub_1ACF3.
+ * RLE解码函数已移至fd2_rle.c
  */
 
 #define _GNU_SOURCE
 #include "fd2_game.h"
 #include "fd2_battle.h"
+#include "../include/fd2_rle.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,55 +78,10 @@ void update_camera_from_cursor(state_battle_data_t* data) {
     if (data->camera_y > max_cam_y) data->camera_y = max_cam_y;
 }
 
-int decode_rle_image(
-    const u8* src,
-    u8* dst,
-    int dst_stride,
-    int width,
-    int height
-) {
-    const u8* p = src;
-    u8* dst_row = dst;
-
-    for (int row = 0; row < height; row++) {
-        int col = 0;
-        while (col < width) {
-            u8 opcode = *p++;
-            int count = (opcode & 0x3F) + 1;
-
-            int bit7 = (opcode >> 7) & 1;
-            int bit6 = (opcode >> 6) & 1;
-
-            if (bit7 && bit6) {
-                col += count;
-            } else if (bit7 && !bit6) {
-                int i;
-                for (i = 0; i < count && col < width; i++) {
-                    dst_row[col++] = *p++;
-                }
-            } else if (!bit7 && bit6) {
-                u8 color = *p++;
-                int i;
-                for (i = 0; i < count && col < width; i++) {
-                    col++;
-                    if (col < width) {
-                        dst_row[col] = color;
-                    }
-                    col++;
-                }
-            } else {
-                u8 color = *p++;
-                int i;
-                for (i = 0; i < count && col < width; i++) {
-                    dst_row[col++] = color;
-                }
-            }
-        }
-        dst_row += dst_stride;
-    }
-
-    return 0;
-}
+/*
+ * RLE解码函数已移至fd2_rle.c
+ * 使用 fd2_rle_decode_cursor() - 基于IDA sub_4E98D
+ */
 
 int load_cursor_image(fd2_game_t* game, state_battle_data_t* data) {
     (void)game;
@@ -212,12 +169,12 @@ void battle_render_cursor(state_battle_data_t* data, u8* screen, int screen_w, i
                 int img_w = data->cursor_image_width;
                 int img_h = data->cursor_image_height;
 
-                decode_rle_image(
+                /* 使用统一RLE模块解码光标 */
+                fd2_rle_decode_cursor(
                     data->cursor_image_data,
+                    img_w * img_h,
                     cursor_pixels,
-                    img_w,
-                    img_w,
-                    img_h
+                    img_w
                 );
 
                 int start_x = cursor_screen_x;

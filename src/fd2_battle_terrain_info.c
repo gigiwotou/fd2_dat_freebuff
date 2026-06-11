@@ -2,68 +2,21 @@
  * FD2 Battle Terrain Info UI
  *
  * Based on IDA sub_126F7 and sub_4E22A.
+ * RLE解码函数已移至fd2_rle.c
  */
 
 #define _GNU_SOURCE
 #include "fd2_game.h"
 #include "fd2_battle.h"
+#include "../include/fd2_rle.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /*
- * RLE decode function - based on IDA sub_4E22A.
+ * RLE解码函数已移至fd2_rle.c
+ * 使用 fd2_rle_decode_terrain() - 基于IDA sub_4E22A
  */
-static void rle_decode_terrain_image(const u8* src, u8* dst, int stride) {
-    const u8* src_ptr = src;
-    u8* dst_ptr = dst;
-    int stride_minus_24 = stride - 24;
-    
-    for (int row = 0; row < 24; row++) {
-        int bh = 24;
-        
-        while (bh > 0) {
-            u8 al = *src_ptr++;
-            
-            if (al & 0x80) {
-                if ((al & 0x40) == 0) {
-                    int count = (al >> 2) + 1;
-                    if (count > bh) count = bh;
-                    memcpy(dst_ptr, src_ptr, count);
-                    src_ptr += count;
-                    dst_ptr += count;
-                    bh -= count;
-                } else {
-                    int count = (al >> 2) + 1;
-                    if (count > bh) count = bh;
-                    dst_ptr += count;
-                    bh -= count;
-                }
-            } else {
-                if ((al & 0x40) == 0) {
-                    int count = (al >> 2) + 1;
-                    if (count > bh) count = bh;
-                    u8 fill_color = *src_ptr++;
-                    memset(dst_ptr, fill_color, count);
-                    dst_ptr += count;
-                    bh -= count;
-                } else {
-                    int count = (al >> 2) + 1;
-                    bh -= count;
-                    bh -= count;
-                    
-                    u8 fill_color = *src_ptr++;
-                    for (int i = 0; i < count; i++) {
-                        dst_ptr++;
-                        *dst_ptr++ = fill_color;
-                    }
-                }
-            }
-        }
-        
-        dst_ptr += stride_minus_24;
-    }
-}
 
 int load_terrain_info_data(fd2_game_t* game, state_battle_data_t* data) {
     const char* fdother_path = fd2_resources_dat_path(&game->resources, FD2_DAT_FDOTHER);
@@ -134,7 +87,8 @@ void battle_render_terrain_info(state_battle_data_t* data, u8* screen, int scree
     /* Buffer position: 456 * cursor_y + 24 * cursor_x (from IDA 12747-12774) */
     u8* dst_in_buffer = data->terrain_info_buffer + 456 * cursor_y + 24 * cursor_x;
     
-    rle_decode_terrain_image(terrain_image_data, dst_in_buffer, dst_stride);
+    /* 使用统一RLE模块解码 */
+    fd2_rle_decode_terrain(terrain_image_data, dst_in_buffer, dst_stride);
 
     /* Render buffer to screen at bottom center */
     int box_x = (FD2_SCREEN_W - TERRAIN_INFO_WIDTH) / 2;

@@ -11,6 +11,7 @@
 
 #include "fd2_battle.h"
 #include "fd2_dat.h"
+#include "../include/fd2_rle.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -26,126 +27,9 @@
 #define BACKBUF_OFFSET 32904
 
 /*
- * sub_4E22A: RLE解压/直接blit 24x24精灵到目标缓冲区
- * IDA分析: 这是一个RLE解压函数,处理24x24的精灵数据
- * 
- * RLE格式:
- * - 每个字节高2位表示操作类型,低6位表示计数
- * - 操作0: 跳过(填充0)
- * - 操作1: 复制数据
- * - 操作2: 填充单色
- * - 操作3: 特殊填充
+ * RLE解码函数已移至fd2_rle.c
+ * 使用 fd2_rle_blit_24x24() 和 fd2_rle_blit_24x24_palette()
  */
-static void rle_blit_24x24(const u8* src, u8* dst, int dst_stride)
-{
-    int y;
-    const u8* src_ptr = src;
-    
-    for (y = 0; y < 24; y++) {
-        u8* dst_ptr = dst;
-        int remaining = 24;
-        
-        while (remaining > 0) {
-            u8 cmd = *src_ptr++;
-            u8 type = (cmd >> 6) & 0x03;
-            u8 count = ((cmd >> 2) & 0x0F) + 1;
-            
-            if (count > remaining)
-                count = remaining;
-            
-            switch (type) {
-                case 0:
-                    /* 跳过 */
-                    memset(dst_ptr, 0, count);
-                    break;
-                case 1:
-                    /* 复制数据 */
-                    memcpy(dst_ptr, src_ptr, count);
-                    src_ptr += count;
-                    break;
-                case 2:
-                    /* 填充单色 */
-                    memset(dst_ptr, *src_ptr, count);
-                    src_ptr++;
-                    break;
-                case 3:
-                    /* 特殊: 交替填充 */
-                    {
-                        u8 val = *src_ptr++;
-                        int i;
-                        for (i = 0; i < count; i += 2) {
-                            if (i < count) dst_ptr[i] = val;
-                            if (i + 1 < count) dst_ptr[i + 1] = val;
-                        }
-                    }
-                    break;
-            }
-            
-            dst_ptr += count;
-            remaining -= count;
-        }
-        
-        dst += dst_stride;
-    }
-}
-
-/*
- * sub_4E016: 带调色板映射的24x24精灵blit
- * IDA分析: 与sub_4E22A类似,但使用调色板映射表转换颜色
- */
-static void rle_blit_24x24_palette(const u8* src, u8* dst, int dst_stride, const u8* palette_map)
-{
-    int y;
-    const u8* src_ptr = src;
-    
-    for (y = 0; y < 24; y++) {
-        u8* dst_ptr = dst;
-        int remaining = 24;
-        
-        while (remaining > 0) {
-            u8 cmd = *src_ptr++;
-            u8 type = (cmd >> 6) & 0x03;
-            u8 count = ((cmd >> 2) & 0x0F) + 1;
-            
-            if (count > remaining)
-                count = remaining;
-            
-            switch (type) {
-                case 0:
-                    memset(dst_ptr, 0, count);
-                    break;
-                case 1:
-                    {
-                        int i;
-                        for (i = 0; i < count; i++) {
-                            dst_ptr[i] = palette_map[src_ptr[i]];
-                        }
-                        src_ptr += count;
-                    }
-                    break;
-                case 2:
-                    memset(dst_ptr, palette_map[*src_ptr], count);
-                    src_ptr++;
-                    break;
-                case 3:
-                    {
-                        u8 val = palette_map[*src_ptr++];
-                        int i;
-                        for (i = 0; i < count; i += 2) {
-                            if (i < count) dst_ptr[i] = val;
-                            if (i + 1 < count) dst_ptr[i + 1] = val;
-                        }
-                    }
-                    break;
-            }
-            
-            dst_ptr += count;
-            remaining -= count;
-        }
-        
-        dst += dst_stride;
-    }
-}
 
 /*
  * sub_11EEE: 核心渲染函数
@@ -218,11 +102,11 @@ static void render_char_layout(
             
             /* 根据use_palette选择渲染方式 */
             if (use_palette == 255) {
-                /* 直接blit */
-                rle_blit_24x24(sprite_data, row_dst, dst_stride);
+                /* 直接blit - 使用统一RLE模块 */
+                fd2_rle_blit_24x24(sprite_data, row_dst, dst_stride);
             } else {
-                /* 带调色板映射的blit */
-                rle_blit_24x24_palette(sprite_data, row_dst, dst_stride, palette_map);
+                /* 带调色板映射的blit - 使用统一RLE模块 */
+                fd2_rle_blit_24x24_palette(sprite_data, row_dst, dst_stride, palette_map);
             }
             
             row_dst += 24;

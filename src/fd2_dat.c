@@ -136,86 +136,12 @@ void fd_get_image_dimensions(const byte *data, int *width, int *height) {
     *height = data[2] | (data[3] << 8);
 }
 
-int fd_decompress_rle(const byte *src, int src_size, byte *dst, int dst_width, int dst_height, int value_param) {
-    // Implementation based on Python decompress_rle
-    int width = dst_width;
-    int height = dst_height;
-    int expected = width * height;
-    
-    int num4 = 0;
-    int num3 = src_size - 1;
-    int num7 = 0;
-    int num8 = 0;
-    int num9 = 0;
-    byte b = 0;
-    int num10 = 0; // x coordinate
-    int num11 = 0; // y coordinate
-    
-    int pixel_idx = 0;
-    
-    while (num4 <= num3 && pixel_idx < expected) {
-        int flag = num8 != 0;
-        
-        if (!flag) {
-            num7 = 0;
-            num8 = 0;
-            num9 = 0;
-            
-            if (num4 < src_size) {
-                b = src[num4];
-                if (b >= 192) {
-                    num7 = b - 192 + 1;
-                } else if (b >= 128) {
-                    num8 = b - 128 + 1;
-                } else if (b >= 64) {
-                    num9 = b - 64;
-                    num8 = 1;
-                } else {
-                    num8 = 1;
-                    num9 = b;
-                }
-            }
-            
-            num10 += num7;
-            if (num10 >= width) {
-                num10 = 0;
-                num11 += 1;
-            }
-        } else {
-            int num12 = num9;
-            int num13 = 0;
-            while (num13 <= num12) {
-                if (b >= 64 && b < 128) {
-                    num10 += 1;
-                }
-                if (num4 < src_size) {
-                    byte index = src[num4];
-                    if (num10 >= 0 && num10 < width && num11 >= 0 && num11 < height) {
-                        if (pixel_idx < expected) {
-                            dst[pixel_idx] = index;
-                            pixel_idx++;
-                        }
-                    }
-                }
-                num10 += 1;
-                if (num10 >= width) {
-                    num10 = 0;
-                    num11 += 1;
-                }
-                num13++;
-            }
-            num8--;
-        }
-        
-        num4++;
-        
-        if (num11 >= height) {
-            break;
-        }
-    }
-    
-    return 0;
-}
+/*
+ * RLE解码函数已移至fd2_rle.c
+ * - fd2_rle_decompress() 用于通用RLE解码 (IDA sub_4E98D)
+ * - fd2_afm_rle_frame() 用于AFM格式RLE解码 (IDA sub_36F24)
+ * - fd2_afm_rle_palette() 用于AFM调色板解码 (IDA sub_36E65)
+ */
 
 int fd_analyze_resource(const byte *data, int size) {
     // Placeholder for debugging

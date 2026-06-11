@@ -97,42 +97,10 @@ u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index);
 /* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
 extern u32 fd2_last_loaded_size;
 
-/* ---- RLE Decompression ---- */
-
-/*
- * Decompress FD2 RLE data (IDA sub_4E98D).
- * 
- * Input:  src points to compressed data (after 4-byte width/height header)
- *         src_size is the compressed data size
- *         dst is pre-allocated buffer of width * height bytes
- * 
- * Returns 0 on success, -1 on error.
- */
-int fd2_rle_decompress(const u8* src, u32 src_size,
-                       u8* dst, int width, int height);
-
-/*
- * Convenience: decompress a resource that starts with a 4-byte header
- * (2-byte width + 2-byte height, little-endian).
- * 
- * Allocates the destination buffer. Caller must free *out_pixels.
- * Sets *out_w, *out_h to the dimensions.
- * Returns 0 on success, -1 on error.
- */
-int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
-                                     u8** out_pixels, int* out_w, int* out_h);
-
-/*
- * Convenience: decompress RLE data directly into a buffer with given stride.
- * Matches original sub_4E98D behavior for scroll buffer construction.
- * 
- * dst_buf: destination buffer (must be pre-allocated and zero-initialized)
- * dst_y: Y offset in destination buffer (dst_buf + stride * dst_y)
- * stride: bytes per row in destination buffer (typically 320)
- * Returns 0 on success, -1 on error.
- */
-int fd2_rle_decompress_to_buffer(const u8* res_data, u32 res_size,
-                                  u8* dst_buf, int dst_y, int stride);
+/* ---- RLE Decompression (from fd2_rle.h) ---- */
+/* All RLE functions are now in fd2_rle.h */
+/* Include it for convenience */
+#include "fd2_rle.h"
 
 /* ---- Palette ---- */
 
@@ -177,14 +145,8 @@ void fd2_palette_fade(const u8* src, const u8* dst,
  */
 void fd2_palette_add_6bit(u8* palette_8bit, int add_6bit);
 
-/* ---- Image Dimensions ---- */
-
-/*
- * Read width and height from a resource with a 4-byte header.
- * Returns 0 on success, -1 if the header is invalid.
- */
-int fd2_image_get_dimensions(const u8* data, u32 data_size,
-                             int* out_w, int* out_h);
+/* ---- Image Dimensions (from fd2_rle.h) ---- */
+/* fd2_image_get_dimensions is now in fd2_rle.h */
 
 /* ---- Resource Classification ---- */
 

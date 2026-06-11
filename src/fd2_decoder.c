@@ -1,11 +1,21 @@
+/**
+ * FD2 Decoder - DAT文件加载和资源分类
+ *
+ * 基于IDA Pro汇编代码1:1还原
+ *
+ * 注意: 所有RLE解码函数已移至fd2_rle.c
+ * 请包含fd2_decoder.h或fd2_rle.h使用RLE功能
+ */
+
 #include "fd2_decoder.h"
+#include "../include/fd2_rle.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* ========================================================================
+/* ============================================================================
  * DAT File System
- * ======================================================================== */
+ * ============================================================================ */
 
 int fd2_dat_load(fd2_dat_t* dat, const char* path) {
     if (!dat || !path) return -1;
@@ -102,7 +112,7 @@ const u8* fd2_dat_get_resource(const fd2_dat_t* dat, int index, u32* out_size) {
 /* Global variable set by fd2_dat_load_resource (matches dword_53BFF). */
 u32 fd2_last_loaded_size = 0;
 
-/* ========================================================================
+/* ============================================================================
  * sub_111BA: Single Resource Loader (IDA 0x111BA)
  *
  * Original assembly behavior (1:1 replication):
@@ -116,7 +126,7 @@ u32 fd2_last_loaded_size = 0;
  *   8. fread resource data
  *   9. fclose(fp)
  *   10. return pointer
- * ======================================================================== */
+ * ============================================================================ */
 
 u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index) {
     FILE* fp;
@@ -177,201 +187,9 @@ u8* fd2_dat_load_resource(const char* filename, void* old_ptr, int index) {
     return buffer;
 }
 
-/* ========================================================================
- * RLE Decompression (IDA sub_4E98D)
- *
- * The algorithm uses bits 7,6 of each control byte to determine the mode:
- *   bit7=1, bit6=1: skip (transparent) - advance dst by count
- *   bit7=1, bit6=0: copy count bytes from src to dst
- *   bit7=0, bit6=1: sparse fill - write value at every 2nd position (odd offsets)
- *   bit7=0, bit6=0: fill count pixels with value from src
- *
- * count = (value & 0x3F) + 1
- *
- * Data is organized in rows of 'width' pixels.
- * After each row, dst advances by (stride - width) to handle padding.
- * ======================================================================== */
-
-int fd2_rle_decompress(const u8* src, u32 src_size,
-                       u8* dst, int width, int height) {
-    if (!src || !dst || width <= 0 || height <= 0) return -1;
-
-    const u8* p = src;
-    const u8* src_end = src + src_size;
-    u8* dst_end = dst + width * height;
-
-    for (int row = 0; row < height; row++) {
-        u8* row_dst = dst + row * width;
-        int count = width;
-
-        while (count > 0 && p < src_end) {
-            u8 value = *p++;
-            int count_1 = (value & 0x3F) + 1;
-            int bit7 = (value >> 7) & 1;
-            int bit6 = (value >> 6) & 1;
-
-            if (bit7 && bit6) {
-                /* 11: skip (transparent) - cap both dst and count at buffer end */
-                if (row_dst + count_1 <= dst_end) {
-                    row_dst += count_1;
-                } else {
-                    row_dst = dst_end;
-                }
-                if (count >= count_1) {
-                    count -= count_1;
-                } else {
-                    count = 0;
-                }
-            } else if (bit7 && !bit6) {
-                /* 10: copy from source - with bounds checking */
-                for (int i = 0; i < count_1 && count > 0 && p < src_end; i++) {
-                    if (row_dst < dst_end) {
-                        *row_dst = *p;
-                    }
-                    row_dst++;
-                    p++;
-                    count--;
-                }
-            } else if (!bit7 && bit6) {
-                /* 01: sparse fill - write at every 2nd position (odd offsets)
-                 * Original (IDA): count = count - count_1 - count_1
-                 * Writes to dst[1], then dst+=2, for count_1 iterations.
-                 * Each iteration consumes 2 pixels of width. */
-                if (p < src_end) {
-                    u8 fill = *p++;
-                    for (int i = 0; i < count_1 && count > 0; i++) {
-                        if (count >= 2) {
-                            if (row_dst + 1 < dst_end) {
-                                row_dst[1] = fill;
-                            }
-                            row_dst += 2;
-                            count -= 2;
-                        } else {
-                            /* count == 1: last pixel in row */
-                            if (row_dst < dst_end) {
-                                *row_dst = fill;
-                            }
-                            row_dst += 1;
-                            count -= 1;
-                        }
-                    }
-                }
-            } else {
-                /* 00: regular fill - write at every position
-                 * Original (IDA): memset(dst, value, count_1) */
-                if (p < src_end) {
-                    u8 fill = *p++;
-                    for (int i = 0; i < count_1 && count > 0; i++) {
-                        if (row_dst < dst_end) {
-                            *row_dst = fill;
-                        }
-                        row_dst++;
-                        count--;
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
-}
-
-/* ========================================================================
- * RLE Decompression with stride (for scroll buffer)
- * Decompresses RLE data directly into a buffer with given stride.
- * Matches original sub_4E98D behavior.
- * ======================================================================== */
-
-int fd2_rle_decompress_to_buffer(const u8* res_data, u32 res_size,
-                                  u8* dst_buf, int dst_y, int stride) {
-    if (!res_data || res_size < 4 || !dst_buf || stride <= 0) return -1;
-
-    int w, h;
-    if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return -1;
-
-    /* Start writing at dst_buf + stride * dst_y */
-    u8* dst = dst_buf + stride * dst_y;
-    const u8* src = res_data + 4;  /* Skip 4-byte header */
-    const u8* src_end = res_data + res_size;
-
-    for (int row = 0; row < h; row++) {
-        u8* row_dst = dst + row * stride;
-        int count = w;  /* Pixels remaining in this row */
-
-        while (count > 0 && src < src_end) {
-            u8 value = *src++;
-            int run_len = (value & 0x3F) + 1;
-            int bit7 = (value >> 7) & 1;
-            int bit6 = (value >> 6) & 1;
-
-            if (bit7 && bit6) {
-                /* 11: skip (transparent) - advance dst by count */
-                row_dst += run_len;
-                count -= (count >= run_len) ? run_len : count;
-            } else if (bit7 && !bit6) {
-                /* 10: copy from source */
-                for (int i = 0; i < run_len && count > 0 && src < src_end; i++) {
-                    *row_dst++ = *src++;
-                    count--;
-                }
-            } else if (!bit7 && bit6) {
-                /* 01: sparse fill - write at every 2nd position */
-                if (src < src_end) {
-                    u8 fill = *src++;
-                    for (int i = 0; i < run_len && count > 0; i++) {
-                        if (count >= 2) {
-                            row_dst[1] = fill;
-                            row_dst += 2;
-                            count -= 2;
-                        } else {
-                            *row_dst++ = fill;
-                            count -= 1;
-                        }
-                    }
-                }
-            } else {
-                /* 00: regular fill */
-                if (src < src_end) {
-                    u8 fill = *src++;
-                    for (int i = 0; i < run_len && count > 0; i++) {
-                        *row_dst++ = fill;
-                        count--;
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
-}
-
-int fd2_rle_decompress_from_resource(const u8* res_data, u32 res_size,
-                                     u8** out_pixels, int* out_w, int* out_h) {
-    if (!res_data || res_size < 4 || !out_pixels || !out_w || !out_h) return -1;
-
-    int w, h;
-    if (fd2_image_get_dimensions(res_data, res_size, &w, &h) != 0) return -1;
-
-    /* Use calloc instead of malloc: RLE data contains skip (transparent)
-     * operations that leave dst pixels untouched. These must be black (0).
-     * Original sub_4E98D writes into a calloc-initialized scroll buffer. */
-    u8* pixels = (u8*)calloc(1, (size_t)(w * h));
-    if (!pixels) return -1;
-
-    if (fd2_rle_decompress(res_data + 4, res_size - 4, pixels, w, h) != 0) {
-        free(pixels);
-        return -1;
-    }
-
-    *out_pixels = pixels;
-    *out_w = w;
-    *out_h = h;
-    return 0;
-}
-
-/* ========================================================================
+/* ============================================================================
  * Palette
- * ======================================================================== */
+ * ============================================================================ */
 
 void fd2_palette_6bit_to_8bit(const u8* palette_6bit, u8* palette_8bit) {
     if (!palette_6bit || !palette_8bit) return;
@@ -386,7 +204,7 @@ void fd2_palette_6bit_to_8bit(const u8* palette_6bit, u8* palette_8bit) {
 
 void fd2_palette_set_brightness(u8* palette_8bit, int brightness) {
     if (!palette_8bit || brightness < 0) return;
-    if (brightness > 63) brightness = 63;  /* sub_11D40 uses 64 for full, clamp to 63 */
+    if (brightness > 63) brightness = 63;
 
     float factor = (float)brightness / 63.0f;
     for (int i = 0; i < FD2_PALETTE_BYTES; i++) {
@@ -417,38 +235,17 @@ void fd2_palette_add_6bit(u8* palette_8bit, int add_6bit) {
 
     for (int i = 0; i < FD2_PALETTE_COLORS; i++) {
         for (int c = 0; c < 3; c++) {
-            /* Convert 8-bit back to 6-bit: v6 = v8 >> 2 */
             int v6 = palette_8bit[i * 3 + c] >> 2;
             v6 += add_6bit;
             if (v6 > 63) v6 = 63;
-            /* Convert back to 8-bit */
             palette_8bit[i * 3 + c] = (u8)((v6 << 2) | (v6 >> 4));
         }
     }
 }
 
-/* ========================================================================
- * Image Dimensions
- * ======================================================================== */
-
-int fd2_image_get_dimensions(const u8* data, u32 data_size,
-                             int* out_w, int* out_h) {
-    if (!data || data_size < 4 || !out_w || !out_h) return -1;
-
-    u16 w, h;
-    memcpy(&w, data, 2);
-    memcpy(&h, data + 2, 2);
-
-    if (w == 0 || w > 640 || h == 0 || h > 480) return -1;
-
-    *out_w = w;
-    *out_h = h;
-    return 0;
-}
-
-/* ========================================================================
+/* ============================================================================
  * Resource Classification
- * ======================================================================== */
+ * ============================================================================ */
 
 int fd2_is_dat_magic(const u8* data, u32 size) {
     return (size >= FD2_DAT_MAGIC_LEN &&
@@ -523,9 +320,10 @@ void fd2_resource_classify(const u8* data, u32 size, fd2_resource_info_t* info) 
     info->type = FD2_RES_RAW;
 }
 
-/* ========================================================================
+/* ============================================================================
  * BG.DAT Background Decoding
- * ======================================================================== */
+ * (使用fd2_rle_decompress_from_resource)
+ * ============================================================================ */
 
 int fd2_bg_decode(const u8* res_data, u32 res_size,
                   u8** out_pixels, int* out_w, int* out_h) {
@@ -533,9 +331,9 @@ int fd2_bg_decode(const u8* res_data, u32 res_size,
                                             out_pixels, out_w, out_h);
 }
 
-/* ========================================================================
+/* ============================================================================
  * FDSHAP.DAT Sprite Decoding
- * ======================================================================== */
+ * ============================================================================ */
 
 int fd2_shap_extract_palette(const u8* res_data, u32 res_size,
                              fd2_shap_palette_t* out) {
@@ -548,9 +346,9 @@ int fd2_shap_extract_palette(const u8* res_data, u32 res_size,
     return 0;
 }
 
-/* ========================================================================
+/* ============================================================================
  * FIGANI.DAT Animation Decoding
- * ======================================================================== */
+ * ============================================================================ */
 
 int fd2_ani_decode_frame(const u8* res_data, u32 res_size,
                          fd2_ani_frame_t* frame) {
@@ -564,7 +362,7 @@ int fd2_ani_decode_frame(const u8* res_data, u32 res_size,
     }
 
     frame->pixel_count = (u32)(frame->width * frame->height);
-    frame->frame_delay = 10; /* Default */
+    frame->frame_delay = 10;
     return 0;
 }
 
@@ -573,9 +371,9 @@ int fd2_ani_read_timing(const u8* res_data, u32 res_size) {
     return (res_data[0] << 16) | (res_data[1] << 8) | res_data[2];
 }
 
-/* ========================================================================
+/* ============================================================================
  * FDTXT.DAT Text/Font Decoding
- * ======================================================================== */
+ * ============================================================================ */
 
 int fd2_text_decode_glyph(const u8* res_data, u32 res_size,
                           fd2_text_glyph_t* glyph) {
@@ -587,9 +385,9 @@ int fd2_text_decode_glyph(const u8* res_data, u32 res_size,
                                             &glyph->width, &glyph->height);
 }
 
-/* ========================================================================
+/* ============================================================================
  * TAI.DAT Portrait Decoding
- * ======================================================================== */
+ * ============================================================================ */
 
 int fd2_tai_decode_portrait(const u8* res_data, u32 res_size,
                             u8** out_pixels, int* out_w, int* out_h) {
