@@ -457,17 +457,25 @@ static void refresh_display(void) {
             if (fdother_get_lmi1(g_current_index, &lmi1) == 0) {
                 g_max_sub_items = lmi1.tile_count;
                 
-                /* 显示指定tile - 使用sub_4ED0B逐行memcpy解码 */
+                /* 显示指定tile - 使用decode_tile返回的实际尺寸
+                 * 注意: RLE压缩的tile其4字节头中的w/h是实际像素尺寸,
+                 *       而tile_size可能小于4+w*h. 因此以decoder返回的尺寸为准.
+                 * decoder返回值: 低16位=width, 高16位=height
+                 */
                 if (g_sub_index < lmi1.tile_count) {
-                    word tw, th;
-                    if (fdother_lmi1_get_tile_size(&lmi1, g_sub_index, &tw, &th) == 0 && tw > 0 && th > 0) {
-                        memset(g_decode_buffer, 0, sizeof(g_decode_buffer));
-                        int ret = fdother_lmi1_decode_tile(&lmi1, g_sub_index, g_decode_buffer, tw);
-                        if (ret > 0) {
-                            g_decode_width = tw;
-                            g_decode_height = th;
-                            draw_pixels(g_decode_buffer, tw, th, palette_rgb24, 0);
-                        }
+                    word tw = lmi1.tile_width;
+                    word th = lmi1.tile_height;
+                    /* 尝试从4字节头预取尺寸(类型B 16x16等), 失败也无所谓 */
+                    (void)fdother_lmi1_get_tile_size(&lmi1, g_sub_index, &tw, &th);
+                    
+                    memset(g_decode_buffer, 0, sizeof(g_decode_buffer));
+                    int ret = fdother_lmi1_decode_tile(&lmi1, g_sub_index, g_decode_buffer, tw);
+                    if (ret > 0) {
+                        int actual_w  = ret & 0xFFFF;
+                        int actual_h  = (ret >> 16) & 0xFFFF;
+                        g_decode_width  = actual_w;
+                        g_decode_height = actual_h;
+                        draw_pixels(g_decode_buffer, actual_w, actual_h, palette_rgb24, 0);
                     }
                 }
             }

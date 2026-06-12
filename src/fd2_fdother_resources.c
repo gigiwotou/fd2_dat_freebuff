@@ -624,15 +624,14 @@ int fdother_lmi1_get_tile_size(const fdother_lmi1_t* lmi1, int tile_index,
     }
     
     /* 自动检测tile格式 (基于sub_4ED0B反汇编):
-     *   类型A: 4字节头[w:2][h:2] + 原始数据, 总大小 = 4 + w*h
+     *   类型A: 4字节头[w:2][h:2] + 像素数据 (无论是否压缩)
      *   类型B: 无头, 固定大小(如256字节对应16x16), 默认16x16
      */
     word w = data[tile_offset]     | (data[tile_offset + 1] << 8);
     word h = data[tile_offset + 2] | (data[tile_offset + 3] << 8);
     
-    if (w > 0 && w <= 1024 && h > 0 && h <= 1024
-        && (dword)(4 + (dword)w * (dword)h) == tile_size) {
-        /* 类型A: 有4字节头 */
+    if (w > 0 && w <= 1024 && h > 0 && h <= 1024) {
+        /* 类型A: 有4字节头 (无论是否RLE压缩, 都使用头中声明的w/h) */
         if (out_width)  *out_width  = w;
         if (out_height) *out_height = h;
     } else if (tile_size == 256) {
