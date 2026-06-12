@@ -837,6 +837,10 @@ int fd2_rle_lmi1_decode_tile_4e(const byte* src, int src_size, byte* dst, int* o
         }
     }
     if (out != total) return -1;
+    /* 严格检查: 4E 范围 RLE 必须完整消耗 data_size, 否则不是 RLE 编码.
+     * 否则未压缩数据(如 0x63 0xbd ...)会"误判成功": 0x63 控制字节被当作
+     * FILL count=36 + 0xbd 像素, 2 条指令就填满 48 像素, 错误地"成功" */
+    if (pos != data_size) return -1;
     if (out_w) *out_w = w;
     if (out_h) *out_h = h;
     return 0;
