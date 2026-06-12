@@ -10,6 +10,7 @@
 
 #include "fd2_fdother_resources.h"
 #include "fd2_dat.h"
+#include "fd2_rle.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -523,16 +524,33 @@ int fdother_lmi1_decode_tile(const fdother_lmi1_t* lmi1, int tile_index,
         tile_size = data_size - tile_offset;
     }
     
-    /* 自动检测格式: 类型A(4字节头)或类型B(无头, 16x16) */
+    /* 自动检测格式: 类型A(4字节头)或类型B(无头, 16x16)
+     *
+     * 索引5的138个tile分析:
+     *   - 所有tile都有4字节头[w:2][h:2]
+     *   - size == 4+w*h: 未压缩, 用 sub_4ED4F (透明色过滤)
+     *   - size < 4+w*h:  RLE压缩, 用 sub_4EBFF+sub_4EC66 (RLE+透明色过滤)
+     *   - size > 4+w*h:  填充, 用 sub_4ED4F
+     *   - tile_size == 256:  特殊固定16x16 (无头)
+     */
     word width, height;
     const byte* src;
-    
+
     if (tile_offset + 4 <= data_size) {
         word w = data[tile_offset]     | (data[tile_offset + 1] << 8);
         word h = data[tile_offset + 2] | (data[tile_offset + 3] << 8);
-        if (w > 0 && w <= 1024 && h > 0 && h <= 1024
-            && (dword)(4 + (dword)w * (dword)h) == tile_size) {
-            /* 类型A: 有4字节头 */
+        if (w > 0 && w <= 1024 && h > 0 && h <= 1024) {
+            /* 有4字节头 - 使用LMI1 tile解码(自动检测RLE/未压缩) */
+            int out_w = 0, out_h = 0;
+            int ret = fd2_rle_lmi1_decode_tile_auto(
+                data + tile_offset, (int)tile_size,
+                out_pixels, &out_w, &out_h, out_pitch);
+            if (ret == 0) {
+                width = (word)out_w;
+                height = (word)out_h;
+                return (int)width | ((int)height << 16);
+            }
+            /* 失败, 尝试回退到 sub_4ED0B memcpy */
             width = w;
             height = h;
             src = data + tile_offset + 4;
@@ -552,8 +570,8 @@ int fdother_lmi1_decode_tile(const fdother_lmi1_t* lmi1, int tile_index,
     } else {
         return -1;
     }
-    
-    /* 1:1 复现 sub_4ED0B 的逐行memcpy */
+
+    /* 1:1 复现 sub_4ED0B 的逐行memcpy (回退方案) */
     byte* dst = out_pixels;
     for (int row = 0; row < height; row++) {
         /* 边界检查: 防止读取越界 */
@@ -564,7 +582,7 @@ int fdother_lmi1_decode_tile(const fdother_lmi1_t* lmi1, int tile_index,
         src += width;
         dst += out_pitch;
     }
-    
+
     return (int)width | ((int)height << 16);  /* 高16位=h, 低16位=w */
 }
 

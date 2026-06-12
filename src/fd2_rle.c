@@ -686,6 +686,194 @@ int fd2_rle_sub_36F24(const byte* src, int src_size, byte* dst, int total_size) 
     return 0;
 }
 
+/* ========================================================================
+ *  LMI1 Tile 解码函数 (FDOTHER.DAT 索引5)
+ *
+ *  LMI1 Tile 格式: 4字节头 [w:2][h:2] + 像素数据
+ *  - 透明色 = 0 (0字节表示透明像素, 不写入目标缓冲区)
+ *  - 非0字节 = 像素索引
+ *
+ *  两种编码方式:
+ *  A. 未压缩 (sub_4ED4F @ 0x4ED4F, size 0x2A):
+ *     直接 w*h 字节, 0=透明, 非0=像素
+ *
+ *  B. RLE压缩 (sub_4EBFF @ 0x4EBFF, size 0x32 + sub_4EC66 @ 0x4EC66, size 0x16):
+ *     RLE控制字节 (基于 sub_4EC66 状态机):
+ *       - 0xC0 以下: RAW, 1个像素
+ *       - 0xC0+count (0xC1-0xFF): RLE, count=al-0xC0个相同像素
+ *     状态寄存器: ah = 待输出计数(初值0,每次输出后减1,0时再读)
+ *     输出值: al
+ *     0=透明色 (不写入)
+ * ======================================================================== */
+
+/* sub_4ED4F - LMI1 tile 未压缩解码 (透明色过滤)
+ *  头: [w:2][h:2]
+ *  数据: w*h 字节 (0=透明,非0=像素)
+ */
+int fd2_rle_lmi1_decode_tile(const byte* src, int src_size, byte* dst, int* out_w, int* out_h) {
+    if (!src || !dst || src_size < 4) return -1;
+    int w = src[0] | (src[1] << 8);
+    int h = src[2] | (src[3] << 8);
+    if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return -1;
+    if (src_size < 4 + w * h) return -1;
+    const byte* s = src + 4;
+    for (int i = 0; i < w * h; i++) {
+        byte v = s[i];
+        if (v) dst[i] = v;  /* 0=透明,跳过 */
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return 0;
+}
+
+/* sub_4EBFF + sub_4EC66 - LMI1 tile RLE压缩解码 (透明色过滤)
+ *  头: [w:2][h:2]
+ *  数据: RLE压缩的 w*h 像素
+ *  RLE格式 (基于 sub_4EC66 状态机):
+ *    - 状态ah=0时,读1字节al:
+ *      - al <= 0xC0: RAW,输出al (1像素)
+ *      - al > 0xC0:  RLE,ah=al-0xC1,再读1字节al作为重复值,输出al
+ *    - 状态ah>0时,直接输出上次的al,ah--
+ *  0=透明色,不写入
+ */
+int fd2_rle_lmi1_decode_tile_rle(const byte* src, int src_size, byte* dst, int* out_w, int* out_h) {
+    if (!src || !dst || src_size < 4) return -1;
+    int w = src[0] | (src[1] << 8);
+    int h = src[2] | (src[3] << 8);
+    if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return -1;
+    const byte* s = src + 4;
+    int data_size = src_size - 4;
+    if (data_size <= 0) return -1;
+
+    /* 状态机: ah = 待输出计数(初值0, 触发新读), al = 当前值 */
+    int ah = 0;
+    byte al = 0;
+    int pos = 0;  /* 数据读取位置 */
+
+    for (int i = 0; i < w * h; i++) {
+        if (ah == 0) {
+            /* 读新控制/数据字节 */
+            if (pos >= data_size) return -1;
+            al = s[pos++];
+            if (al > 0xC0) {
+                /* RLE模式: ah = al - 0xC1 (修正:汇编 sub ah, 0xC1h) */
+                ah = (al - 0xC1) & 0xFF;
+                if (pos >= data_size) return -1;
+                al = s[pos++];
+            }
+            /* RAW模式: ah=0, al=像素值 */
+        } else {
+            ah--;  /* 输出前递减 */
+        }
+        if (al) dst[i] = al;  /* 0=透明,跳过 */
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return 0;
+}
+
+/* LMI1 tile 4E 范围 RLE 解码 (透明色过滤)
+ *  4E 范围 RLE 协议 (4 模式: FILL/ALT/COPY/SKIP):
+ *    - 控制字节 c: count = ((4*c) & 0xFF) >> 2 + 1
+ *    - top2 = 0x00: FILL  count 像素, 值 = 下一字节
+ *    - top2 = 0x40: ALT   count 对 (写 count 像素+跳 count 像素)
+ *    - top2 = 0x80: COPY  count 字节, 复制
+ *    - top2 = 0xC0: SKIP  count 像素
+ *  0=透明色,不写入
+ *  对应 IDA Pro MCP sub_4E98D 风格的 4E 范围 RLE
+ */
+int fd2_rle_lmi1_decode_tile_4e(const byte* src, int src_size, byte* dst, int* out_w, int* out_h) {
+    if (!src || !dst || src_size < 4) return -1;
+    int w = src[0] | (src[1] << 8);
+    int h = src[2] | (src[3] << 8);
+    if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return -1;
+    const byte* s = src + 4;
+    int data_size = src_size - 4;
+    if (data_size <= 0) return -1;
+
+    int pos = 0;
+    int total = w * h;
+    int out = 0;
+    /* 目标缓冲区需先初始化为0 (透明) */
+    memset(dst, 0, total);
+
+    while (out < total && pos < data_size) {
+        byte c = s[pos++];
+        byte top2 = c & 0xC0;
+        int count = (((4 * c) & 0xFF) >> 2) + 1;
+
+        if (top2 == 0x00) {
+            /* FILL: 读 1 字节值, 写 count 像素 */
+            if (pos >= data_size) return -1;
+            byte v = s[pos++];
+            if (v) {
+                for (int k = 0; k < count && out < total; k++) {
+                    dst[out++] = v;
+                }
+            } else {
+                out += count;
+            }
+        } else if (top2 == 0x40) {
+            /* ALT: 读 1 字节值, 间隔写 count 像素 (中间跳 count 透明) */
+            if (pos >= data_size) return -1;
+            byte v = s[pos++];
+            for (int k = 0; k < count && out < total; k++) {
+                if (v) dst[out] = v;
+                out += 2;
+            }
+        } else if (top2 == 0x80) {
+            /* COPY: 复制 count 字节 */
+            for (int k = 0; k < count && out < total; k++) {
+                if (pos >= data_size) return -1;
+                byte v = s[pos++];
+                if (v) dst[out] = v;
+                out++;
+            }
+        } else {
+            /* SKIP: 跳过 count 像素 (透明) */
+            out += count;
+        }
+    }
+    if (out != total) return -1;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return 0;
+}
+
+/* LMI1 tile 自动检测解码 (未压缩/RLE/4E-RLE)
+ *  根据 tile_size 和 4字节头 [w:2][h:2] 关系自动选择:
+ *    - size >= 4+w*h: 未压缩 (sub_4ED4F)
+ *    - size <  4+w*h: 先尝试 sub_4EBFF+sub_4EC66 RLE, 失败后尝试 4E 范围 RLE (sub_4E98D 风格)
+ *  @param out_pixels 目标缓冲区 (至少 w*h 字节, 已初始化为0)
+ *  @param pitch      目标步长 (供未来扩展, 当前未使用)
+ *  @return 0 成功, -1 失败
+ */
+int fd2_rle_lmi1_decode_tile_auto(const byte* src, int src_size, byte* dst,
+                                   int* out_w, int* out_h, int pitch) {
+    if (!src || !dst || src_size < 4) return -1;
+    (void)pitch;
+    int w = src[0] | (src[1] << 8);
+    int h = src[2] | (src[3] << 8);
+    if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return -1;
+    int expected_size = 4 + w * h;
+    if (expected_size <= 0) return -1;
+
+    int ret;
+    if (src_size >= expected_size) {
+        /* 未压缩或填充: 用 sub_4ED4F 解码 (用expected_size限制读取) */
+        ret = fd2_rle_lmi1_decode_tile(src, expected_size, dst, out_w, out_h);
+    } else {
+        /* src_size < expected_size: 尝试 RLE 压缩
+         * 优先尝试 sub_4EBFF+sub_4EC66 RLE, 失败时回退到 4E 范围 RLE */
+        ret = fd2_rle_lmi1_decode_tile_rle(src, src_size, dst, out_w, out_h);
+        if (ret != 0) {
+            /* 回退: 4E 范围 RLE (sub_4E98D 风格) */
+            ret = fd2_rle_lmi1_decode_tile_4e(src, src_size, dst, out_w, out_h);
+        }
+    }
+    return ret;
+}
+
 /* sub_36F82 - 像素填充RLE (变长, 用于BG像素)
  *  IDA Pro MCP反汇编: 0x36F82, size 0x2A
  *  输入格式: [count:2] 重复count次以下结构:

@@ -162,6 +162,51 @@ int fd2_rle_sub_36F24(const byte* src, int src_size, byte* dst, int total_size);
  */
 int fd2_rle_sub_36F82(const byte* src, int src_size, byte* dst);
 
+/* ========================================================================
+ *  LMI1 Tile 解码函数 (FDOTHER.DAT 索引5)
+ *  LMI1 Tile 格式: 4字节头 [w:2][h:2] + 像素数据
+ *  - 透明色 = 0 (不写入目标缓冲区)
+ *  - 非0字节 = 像素索引
+ * ======================================================================== */
+
+/**
+ * LMI1 tile 未压缩解码 (对应 IDA sub_4ED4F @ 0x4ED4F, size 0x2A)
+ * 数据: 4字节头 + w*h字节 (0=透明, 非0=像素)
+ */
+int fd2_rle_lmi1_decode_tile(const byte* src, int src_size, byte* dst, int* out_w, int* out_h);
+
+/**
+ * LMI1 tile RLE压缩解码 (对应 IDA sub_4EBFF @ 0x4EBFF + sub_4EC66 @ 0x4EC66)
+ * 数据: 4字节头 + RLE压缩的w*h像素
+ * RLE格式 (基于 sub_4EC66 状态机):
+ *   - 状态ah=0时,读1字节al:
+ *     - al <= 0xC0: RAW,输出al (1像素)
+ *     - al > 0xC0:  RLE,ah=al-0xC0,再读1字节al作为重复值,输出al
+ *   - 状态ah>0时,直接输出上次的al,ah--
+ */
+int fd2_rle_lmi1_decode_tile_rle(const byte* src, int src_size, byte* dst, int* out_w, int* out_h);
+
+/**
+ * LMI1 tile 4E 范围 RLE 解码 (透明色过滤)
+ * 4E 范围 RLE 协议 (4 模式: FILL/ALT/COPY/SKIP):
+ *   - 控制字节 c: count = ((4*c) & 0xFF) >> 2 + 1
+ *   - top2 = 0x00: FILL  count 像素, 值 = 下一字节
+ *   - top2 = 0x40: ALT   count 对 (写 count 像素+跳 count 像素)
+ *   - top2 = 0x80: COPY  count 字节, 复制
+ *   - top2 = 0xC0: SKIP  count 像素
+ * 0=透明色,不写入
+ */
+int fd2_rle_lmi1_decode_tile_4e(const byte* src, int src_size, byte* dst, int* out_w, int* out_h);
+
+/**
+ * LMI1 tile 自动检测解码 (未压缩/RLE/4E-RLE)
+ * 自动根据 tile_size 与 4+w*h 的关系选择:
+ *   - size >= 4+w*h: 未压缩 (sub_4ED4F)
+ *   - size <  4+w*h: 先尝试RLE (sub_4EBFF+sub_4EC66), 失败后尝试4E-RLE (sub_4E98D风格)
+ */
+int fd2_rle_lmi1_decode_tile_auto(const byte* src, int src_size, byte* dst,
+                                   int* out_w, int* out_h, int pitch);
+
 #ifdef __cplusplus
 }
 #endif
