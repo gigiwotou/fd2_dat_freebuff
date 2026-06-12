@@ -203,6 +203,7 @@ void fdother_unload(void);
 
 /* 获取原始资源数据 */
 const byte* fdother_get_resource(int index, dword* out_size);
+int fdother_get_resource_count(void);
 
 /* 获取资源类型 */
 fdother_res_type_t fdother_get_resource_type(const byte* data, dword size);

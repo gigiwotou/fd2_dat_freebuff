@@ -141,6 +141,13 @@ const byte* fdother_get_resource(int index, dword* out_size) {
     return g_fdother.data + start;
 }
 
+int fdother_get_resource_count(void) {
+    if (!g_fdother.loaded) {
+        return 0;
+    }
+    return (int)g_fdother.resource_count;
+}
+
 /* ========================================================================
  * 资源类型识别
  * ======================================================================== */
