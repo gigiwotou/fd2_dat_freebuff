@@ -389,6 +389,61 @@ static void test_decode_bg(void) {
     PASS();
 }
 
+/* ========================================================================
+ *  测试 fd2_rle_sub_4E98D_no_header (无4字节头版本)
+ * ======================================================================== */
+extern int fd2_rle_sub_4E98D_no_header(const byte* src, int src_size, byte* dst, int width, int height, int value_1);
+
+static void test_sub_4E98D_no_header(void) {
+    TEST("fd2_rle_sub_4E98D_no_header - 无4字节头");
+    byte dst[16 * 16];
+    byte src[16 * 2];
+    int idx = 0;
+    /* 16行填充 0x88 (无头部) */
+    for (int y = 0; y < 16; y++) {
+        src[idx++] = 15;  /* FILL 16 */
+        src[idx++] = 0x88;
+    }
+
+    int ret = fd2_rle_sub_4E98D_no_header(src, idx, dst, 16, 16, -1);
+    if (ret != 0) { FAIL("返回值非0"); return; }
+    for (int i = 0; i < 16 * 16; i++) {
+        if (dst[i] != 0x88) {
+            char buf[64]; sprintf(buf, "dst[%d] = 0x%02X (期望0x88)", i, dst[i]);
+            FAIL(buf);
+            return;
+        }
+    }
+    PASS();
+}
+
+/* ========================================================================
+ *  测试 fd2_rle_sub_36F24 count=0 兼容 (按64处理)
+ * ======================================================================== */
+static void test_sub_36F24_count0(void) {
+    TEST("fd2_rle_sub_36F24 - count=0 兼容 (按64处理)");
+    byte dst[100];
+    memset(dst, 0, sizeof(dst));
+
+    /* 控制字节 0xC0 = RLE, count=0 -> 实际64次 */
+    byte src[10];
+    int idx = 0;
+    src[idx++] = 0xC0;  /* count=0, 旧行为=64 */
+    src[idx++] = 0x55;  /* 重复值 */
+    /* 64字节填充 0x55 */
+
+    int ret = fd2_rle_sub_36F24(src, idx, dst, 64);
+    if (ret != 0) { FAIL("返回值非0"); return; }
+    for (int i = 0; i < 64; i++) {
+        if (dst[i] != 0x55) {
+            char buf[64]; sprintf(buf, "dst[%d] = 0x%02X (期望0x55)", i, dst[i]);
+            FAIL(buf);
+            return;
+        }
+    }
+    PASS();
+}
+
 int main(void) {
     printf("===== FD2 RLE 函数测试 =====\n");
     test_sub_4E22A();
@@ -400,6 +455,8 @@ int main(void) {
     test_sub_36F24();
     test_sub_36F82();
     test_sub_4E98D();
+    test_sub_4E98D_no_header();
+    test_sub_36F24_count0();
     test_sub_4E8D3();
     test_decode_fdother();
     test_decode_bg();

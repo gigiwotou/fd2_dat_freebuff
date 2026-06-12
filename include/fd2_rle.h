@@ -134,6 +134,13 @@ int fd2_rle_sub_4E8D3(const byte* src, int src_size, byte* dst, int arg0, int ar
  */
 int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int height, int value_1);
 
+/**
+ * sub_4E98D 无4字节头版本 - 通用RLE解码器
+ * 数据格式: 直接从src[0]开始是控制字节(无[w:2][h:2]头部)
+ * 用于旧 fd_decompress_rle 调用方
+ */
+int fd2_rle_sub_4E98D_no_header(const byte* src, int src_size, byte* dst, int width, int height, int value_1);
+
 /* ========================================================================
  *  36范围 RLE 解码函数 (2种模式: RLE/RAW)
  * ======================================================================== */

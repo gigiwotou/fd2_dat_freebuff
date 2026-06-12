@@ -1,9 +1,9 @@
 /*
  * FDTXT.DAT 文本渲染测试 - 完整游戏对话逻辑版本
- * 
+ *
  * 1:1还原游戏对话框绘制和控制逻辑
  * 基于sub_15F84和sub_4ED7A函数
- * 
+ *
  * 编译: build.bat fdtxttest
  * 运行: bin\fd2_fdtxt_test.exe
  */
@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "../include/fd2_rle.h"
 #include <stdbool.h>
 
 /* 游戏常量 */
@@ -148,26 +149,15 @@ static void load_palette_6bit(uint8_t* pal, int size)
 }
 
 /* ============================================================
- * RLE解压缩 (1:1还原游戏逻辑)
+ * RLE解压缩 (1:1还原游戏逻辑) - 委托给 fd2_rle.c
  * ============================================================ */
 static int rle_decompress(const uint8_t* src, int src_size, uint8_t* dst, int max_pixels)
 {
-    int i = 0, j = 0;
-    while (i < src_size && j < max_pixels) {
-        uint8_t byte = src[i++];
-        if (byte >= 0xC0) {
-            if (i < src_size) {
-                int count = byte & 0x3F;
-                if (count == 0) count = 64;
-                uint8_t val = src[i++];
-                for (int k = 0; k < count && j < max_pixels; k++)
-                    dst[j++] = val;
-            }
-        } else {
-            dst[j++] = byte;
-        }
+    /* 委托给 fd2_rle_sub_36F24 (count=0 兼容旧行为按64处理) */
+    if (fd2_rle_sub_36F24(src, src_size, dst, max_pixels) != 0) {
+        return -1;
     }
-    return j;
+    return max_pixels;
 }
 
 /* ============================================================

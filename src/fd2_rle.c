@@ -556,6 +556,72 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
 }
 
 /* ========================================================================
+ *  fd2_rle_sub_4E98D_no_header - 通用RLE解码器(无4字节头版本)
+ *  IDA Pro MCP反汇编: 0x4E98D, size 0x1BB (去掉头部读取)
+ *  用于 fd2_dat.c 中旧 fd_decompress_rle 调用方,数据不含[w:2][h:2]头
+ *  参数:
+ *    src     - 压缩数据(无头)
+ *    src_size - 源数据大小
+ *    dst     - 目标缓冲区
+ *    width   - 图像宽度
+ *    height  - 图像高度
+ *    value_1 - 模式控制:
+ *                -1: 直接复制像素
+ *                > 0xFF: 调色板映射 (value_1 + ((value_1>>8 + pixel) & 7))
+ *                <= 0xFF: 固定值填充
+ * ======================================================================== */
+int fd2_rle_sub_4E98D_no_header(const byte* src, int src_size, byte* dst, int width, int height, int value_1) {
+    if (!src || !dst || src_size <= 0 || width <= 0 || height <= 0) return -1;
+
+    int src_idx = 0;
+    byte* row = dst;
+
+    for (int y = 0; y < height; y++) {
+        byte* col = row;
+        int remaining = width;
+        while (remaining > 0) {
+            if (src_idx >= src_size) return -1;
+            byte ctrl = src[src_idx++];
+            int count = ((ctrl * 4) & 0xFF) >> 2;
+            count = count + 1;
+
+            byte top2 = ctrl & 0xC0;
+            byte pixel;
+
+            if (top2 == 0x80) {
+                /* bit7=1, bit6=0: COPY */
+                for (int k = 0; k < count; k++) {
+                    if (src_idx >= src_size) return -1;
+                    byte v = src[src_idx++];
+                    if (value_1 == -1) pixel = v;
+                    else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
+                    else pixel = value_1 & 0xFF;
+                    col[k] = pixel;
+                }
+                col += count;
+                remaining -= count;
+            } else if (top2 == 0xC0) {
+                /* bit7=1, bit6=1: SKIP */
+                col += count;
+                remaining -= count;
+            } else {
+                /* bit7=0: FILL (不论bit6,与旧fd_decompress_rle行为一致) */
+                if (src_idx >= src_size) return -1;
+                byte v = src[src_idx++];
+                if (value_1 == -1) pixel = v;
+                else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
+                else pixel = value_1 & 0xFF;
+                memset(col, pixel, count);
+                col += count;
+                remaining -= count;
+            }
+        }
+        row += width;
+    }
+    return 0;
+}
+
+/* ========================================================================
  *  36xxx 范围 RLE 解码器 (2种模式: RLE/RAW)
  *
  *  控制字节 (8-bit):
@@ -594,6 +660,8 @@ int fd2_rle_sub_36E65(const byte* src, int src_size, byte* dst) {
 /* sub_36F24 - 帧数据RLE (64000字节)
  *  IDA Pro MCP反汇编: 0x36F24, size 0x45
  *  与sub_36E65结构相同, 仅目标大小不同
+ *
+ *  兼容性: count=0 时按 64 处理(游戏中常见trick, 与旧 rle_decompress 一致)
  */
 int fd2_rle_sub_36F24(const byte* src, int src_size, byte* dst, int total_size) {
     if (!src || !dst || src_size <= 0 || total_size <= 0) return -1;
@@ -607,6 +675,7 @@ int fd2_rle_sub_36F24(const byte* src, int src_size, byte* dst, int total_size) 
             if (src_idx >= src_size) return -1;
             byte v = src[src_idx++];
             int count = b & 0x3F;
+            if (count == 0) count = 64;  /* 兼容旧实现: 0当作64 */
             for (int k = 0; k < count && dst_idx < total_size; k++) {
                 dst[dst_idx++] = v;
             }
