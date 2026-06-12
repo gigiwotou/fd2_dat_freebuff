@@ -767,6 +767,8 @@ int fd2_rle_lmi1_decode_tile_rle(const byte* src, int src_size, byte* dst, int* 
         }
         if (al) dst[i] = al;  /* 0=透明,跳过 */
     }
+    /* 严格检查: RLE 模式必须完整消耗 data_size, 否则不是 RLE 编码 */
+    if (pos != data_size) return -1;
     if (out_w) *out_w = w;
     if (out_h) *out_h = h;
     return 0;
@@ -841,9 +843,10 @@ int fd2_rle_lmi1_decode_tile_4e(const byte* src, int src_size, byte* dst, int* o
 }
 
 /* LMI1 tile 自动检测解码 (未压缩/RLE/4E-RLE)
- *  根据 tile_size 和 4字节头 [w:2][h:2] 关系自动选择:
- *    - size >= 4+w*h: 未压缩 (sub_4ED4F)
- *    - size <  4+w*h: 先尝试 sub_4EBFF+sub_4EC66 RLE, 失败后尝试 4E 范围 RLE (sub_4E98D 风格)
+ *  关键: 不能用 size 与 4+w*h 的大小关系来判断格式!
+ *  因为某些 RLE 编码的 size 可能 >= expected (例如小数字图 4e RLE 编码).
+ *  必须先尝试 RLE 解码 (sub_4EBFF+sub_4EC66, 然后 4E), 验证完整消耗 data_size 才算成功.
+ *  最后才回退到未压缩解码 (sub_4ED4F).
  *  @param out_pixels 目标缓冲区 (至少 w*h 字节, 已初始化为0)
  *  @param pitch      目标步长 (供未来扩展, 当前未使用)
  *  @return 0 成功, -1 失败
@@ -859,19 +862,21 @@ int fd2_rle_lmi1_decode_tile_auto(const byte* src, int src_size, byte* dst,
     if (expected_size <= 0) return -1;
 
     int ret;
+
+    /* 1. 优先尝试 sub_4EBFF+sub_4EC66 RLE (状态机编码, 0=透明像素也消耗1字节)
+     *    严格检查 pos==data_size, 失败才回退 */
+    ret = fd2_rle_lmi1_decode_tile_rle(src, src_size, dst, out_w, out_h);
+    if (ret == 0) return 0;
+
+    /* 2. 尝试 4E 范围 RLE (sub_4E98D 风格, SKIP跳过0=透明) */
+    ret = fd2_rle_lmi1_decode_tile_4e(src, src_size, dst, out_w, out_h);
+    if (ret == 0) return 0;
+
+    /* 3. 回退: 未压缩 (sub_4ED4F) - 仅当 src_size 足够时 */
     if (src_size >= expected_size) {
-        /* 未压缩或填充: 用 sub_4ED4F 解码 (用expected_size限制读取) */
-        ret = fd2_rle_lmi1_decode_tile(src, expected_size, dst, out_w, out_h);
-    } else {
-        /* src_size < expected_size: 尝试 RLE 压缩
-         * 优先尝试 sub_4EBFF+sub_4EC66 RLE, 失败时回退到 4E 范围 RLE */
-        ret = fd2_rle_lmi1_decode_tile_rle(src, src_size, dst, out_w, out_h);
-        if (ret != 0) {
-            /* 回退: 4E 范围 RLE (sub_4E98D 风格) */
-            ret = fd2_rle_lmi1_decode_tile_4e(src, src_size, dst, out_w, out_h);
-        }
+        return fd2_rle_lmi1_decode_tile(src, expected_size, dst, out_w, out_h);
     }
-    return ret;
+    return -1;
 }
 
 /* sub_36F82 - 像素填充RLE (变长, 用于BG像素)

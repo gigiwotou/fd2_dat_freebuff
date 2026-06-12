@@ -733,7 +733,8 @@ static int main_loop(void) {
                                 refresh_display();
                             }
                         } else {
-                            if (g_sub_index < g_max_sub_items - 1) {
+                            /* 子项索引范围: [0, g_max_sub_items - 1], 共g_max_sub_items个 */
+                            if (g_sub_index < g_max_sub_items) {
                                 g_sub_index++;
                                 print_resource_info();
                                 refresh_display();
