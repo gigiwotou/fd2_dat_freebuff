@@ -457,18 +457,17 @@ static void refresh_display(void) {
             if (fdother_get_lmi1(g_current_index, &lmi1) == 0) {
                 g_max_sub_items = lmi1.tile_count;
                 
-                /* 显示第一个tile */
+                /* 显示指定tile - 使用sub_4ED0B逐行memcpy解码 */
                 if (g_sub_index < lmi1.tile_count) {
-                    const byte* rle_data;
-                    dword rle_size;
-                    
-                    if (fdother_lmi1_get_tile(&lmi1, g_sub_index, &rle_data, &rle_size) == 0) {
-                        /* LMI1 tile没有宽高头，使用lmi1结构体中的宽高 */
-                        memset(g_decode_buffer, 0, lmi1.tile_width * lmi1.tile_height);
-                        fd_decompress_rle(rle_data, rle_size, g_decode_buffer, lmi1.tile_width, lmi1.tile_height, -1);
-                        g_decode_width = lmi1.tile_width;
-                        g_decode_height = lmi1.tile_height;
-                        draw_pixels(g_decode_buffer, lmi1.tile_width, lmi1.tile_height, palette_rgb24, 0);
+                    word tw, th;
+                    if (fdother_lmi1_get_tile_size(&lmi1, g_sub_index, &tw, &th) == 0 && tw > 0 && th > 0) {
+                        memset(g_decode_buffer, 0, sizeof(g_decode_buffer));
+                        int ret = fdother_lmi1_decode_tile(&lmi1, g_sub_index, g_decode_buffer, tw);
+                        if (ret > 0) {
+                            g_decode_width = tw;
+                            g_decode_height = th;
+                            draw_pixels(g_decode_buffer, tw, th, palette_rgb24, 0);
+                        }
                     }
                 }
             }

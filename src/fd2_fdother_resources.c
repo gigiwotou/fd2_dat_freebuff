@@ -465,6 +465,171 @@ int fdother_lmi1_get_tile(const fdother_lmi1_t* lmi1, int tile_index,
     return 0;
 }
 
+/* ------------------------------------------------------------------
+ * 基于sub_4ED0B (0x4ED0B) 反汇编代码的正确LMI1 tile解码
+ * 
+ * 汇编逻辑:
+ *   void sub_4ED0B(char *dst, unsigned __int16 *arg4, int arg8):
+ *     count = *arg4           // 2字节width(每行字节数)
+ *     src = arg4 + 2          // src指向height之后
+ *     v6 = arg4[1]            // 2字节height(行数)
+ *     do {
+ *       rep movsb             // 逐字节memcpy一行count字节
+ *       src += count
+ *       dst += arg8           // 跳到下一行(pitch)
+ *       v6--
+ *     } while (v6)
+ * 
+ * LMI1 tile结构 (汇编实测):
+ *   [0:2] = width (每行字节数)
+ *   [2:2] = height (行数)
+ *   [4:width*height] = 原始像素数据 (无RLE压缩)
+ * ------------------------------------------------------------------ */
+
+int fdother_lmi1_decode_tile(const fdother_lmi1_t* lmi1, int tile_index,
+                             byte* out_pixels, int out_pitch) {
+    if (!lmi1 || !out_pixels || tile_index < 0 || tile_index >= lmi1->tile_count) {
+        return -1;
+    }
+    
+    const byte* data = lmi1->data;
+    dword data_size = lmi1->size;
+    
+    /* 读取tile偏移 */
+    dword offset_addr = 6 + tile_index * 4;
+    if (offset_addr + 4 > data_size) {
+        return -1;
+    }
+    
+    dword tile_offset = data[offset_addr] |
+                       (data[offset_addr + 1] << 8) |
+                       (data[offset_addr + 2] << 16) |
+                       (data[offset_addr + 3] << 24);
+    
+    if (tile_offset >= data_size) {
+        return -1;
+    }
+    
+    /* 获取tile大小 */
+    dword tile_size;
+    dword next_offset_addr = 6 + (tile_index + 1) * 4;
+    if (next_offset_addr + 4 <= data_size) {
+        dword next_tile_offset = data[next_offset_addr] |
+                                (data[next_offset_addr + 1] << 8) |
+                                (data[next_offset_addr + 2] << 16) |
+                                (data[next_offset_addr + 3] << 24);
+        tile_size = next_tile_offset - tile_offset;
+    } else {
+        tile_size = data_size - tile_offset;
+    }
+    
+    /* 自动检测格式: 类型A(4字节头)或类型B(无头, 16x16) */
+    word width, height;
+    const byte* src;
+    
+    if (tile_offset + 4 <= data_size) {
+        word w = data[tile_offset]     | (data[tile_offset + 1] << 8);
+        word h = data[tile_offset + 2] | (data[tile_offset + 3] << 8);
+        if (w > 0 && w <= 1024 && h > 0 && h <= 1024
+            && (dword)(4 + (dword)w * (dword)h) == tile_size) {
+            /* 类型A: 有4字节头 */
+            width = w;
+            height = h;
+            src = data + tile_offset + 4;
+        } else if (tile_size == 256) {
+            /* 类型B: 无头, 固定16x16 */
+            width = 16;
+            height = 16;
+            src = data + tile_offset;
+        } else {
+            return -1;
+        }
+    } else if (tile_size == 256) {
+        /* 类型B: 无头, 16x16 */
+        width = 16;
+        height = 16;
+        src = data + tile_offset;
+    } else {
+        return -1;
+    }
+    
+    /* 1:1 复现 sub_4ED0B 的逐行memcpy */
+    byte* dst = out_pixels;
+    for (int row = 0; row < height; row++) {
+        /* 边界检查: 防止读取越界 */
+        if ((dword)(src - data) + width > data_size) {
+            return -1;
+        }
+        memcpy(dst, src, width);
+        src += width;
+        dst += out_pitch;
+    }
+    
+    return (int)width | ((int)height << 16);  /* 高16位=h, 低16位=w */
+}
+
+/* 便捷函数: 获取tile的width和height */
+int fdother_lmi1_get_tile_size(const fdother_lmi1_t* lmi1, int tile_index,
+                               word* out_width, word* out_height) {
+    if (!lmi1 || tile_index < 0 || tile_index >= lmi1->tile_count) {
+        return -1;
+    }
+    
+    const byte* data = lmi1->data;
+    dword data_size = lmi1->size;
+    
+    dword offset_addr = 6 + tile_index * 4;
+    if (offset_addr + 4 > data_size) {
+        return -1;
+    }
+    
+    dword tile_offset = data[offset_addr] |
+                       (data[offset_addr + 1] << 8) |
+                       (data[offset_addr + 2] << 16) |
+                       (data[offset_addr + 3] << 24);
+    
+    if (tile_offset + 4 > data_size) {
+        return -1;
+    }
+    
+    /* 获取tile大小: 相邻偏移差 */
+    dword tile_size;
+    dword next_offset_addr = 6 + (tile_index + 1) * 4;
+    if (next_offset_addr + 4 <= data_size) {
+        dword next_tile_offset = data[next_offset_addr] |
+                                (data[next_offset_addr + 1] << 8) |
+                                (data[next_offset_addr + 2] << 16) |
+                                (data[next_offset_addr + 3] << 24);
+        tile_size = next_tile_offset - tile_offset;
+    } else {
+        tile_size = data_size - tile_offset;
+    }
+    
+    /* 自动检测tile格式 (基于sub_4ED0B反汇编):
+     *   类型A: 4字节头[w:2][h:2] + 原始数据, 总大小 = 4 + w*h
+     *   类型B: 无头, 固定大小(如256字节对应16x16), 默认16x16
+     */
+    word w = data[tile_offset]     | (data[tile_offset + 1] << 8);
+    word h = data[tile_offset + 2] | (data[tile_offset + 3] << 8);
+    
+    if (w > 0 && w <= 1024 && h > 0 && h <= 1024
+        && (dword)(4 + (dword)w * (dword)h) == tile_size) {
+        /* 类型A: 有4字节头 */
+        if (out_width)  *out_width  = w;
+        if (out_height) *out_height = h;
+    } else if (tile_size == 256) {
+        /* 类型B: 无头, 固定16x16 */
+        if (out_width)  *out_width  = 16;
+        if (out_height) *out_height = 16;
+    } else if (out_width && out_height) {
+        /* 未知格式, 用lmi1结构体的tile_width/height */
+        *out_width  = lmi1->tile_width;
+        *out_height = lmi1->tile_height;
+    }
+    
+    return 0;
+}
+
 /* ========================================================================
  * 嵌套DAT解析
  * ======================================================================== */

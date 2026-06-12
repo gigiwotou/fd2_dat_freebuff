@@ -221,6 +221,15 @@ int fdother_parse_lmi1(const byte* data, dword size, fdother_lmi1_t* out_lmi1);
 int fdother_lmi1_get_tile(const fdother_lmi1_t* lmi1, int tile_index, 
                           const byte** out_rle_data, dword* out_rle_size);
 
+/* 获取LMI1 tile的宽高(从4字节头[w:2][h:2]读取, 来自sub_4ED0B反汇编) */
+int fdother_lmi1_get_tile_size(const fdother_lmi1_t* lmi1, int tile_index,
+                               word* out_width, word* out_height);
+
+/* 1:1 复现 sub_4ED0B 的LMI1 tile解码(逐行memcpy, 无RLE压缩)
+ * 返回: 成功返回 (width | (height << 16)), 失败返回-1 */
+int fdother_lmi1_decode_tile(const fdother_lmi1_t* lmi1, int tile_index,
+                             byte* out_pixels, int out_pitch);
+
 /* 解析嵌套DAT */
 int fdother_parse_nested_dat(const byte* data, dword size, fdother_nested_dat_t* out_nested);
 
