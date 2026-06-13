@@ -89,7 +89,7 @@ static const char* get_resource_desc(int index) {
     switch (index) {
         case 0: return "主调色板";
         case 1: return "图标 24x24";
-        case 2: return "偏移表 (77个子资源: 24x20图标)";
+        case 2: return "偏移表 (77个子资源: 73个24x20图标 + 4个24x16图标)";
         case 3: return "LMI1 Tile集 (23 tiles)";
         case 4: return "RAW数据 (字符位图?)";
         case 5: return "LMI1 Tile集 (138 tiles)";

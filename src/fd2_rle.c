@@ -559,6 +559,13 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
  *  fd2_rle_sub_4E98D_no_header - 通用RLE解码器(无4字节头版本)
  *  IDA Pro MCP反汇编: 0x4E98D, size 0x1BB (去掉头部读取)
  *  用于 fd2_dat.c 中旧 fd_decompress_rle 调用方,数据不含[w:2][h:2]头
+ *
+ *  RLE控制字节 b:
+ *    bit7=0, bit6=0 (b<0x40):     FILL     count=b+1,           写count个v到dst
+ *    bit7=0, bit6=1 (0x40<=b<0x80): FILL2   count=(b&0x3F)+1,   隔一个写count个v(consume 2*count)
+ *    bit7=1, bit6=0 (0x80<=b<0xC0): COPY   count=(b&0x3F)+1,   复制count个src字节
+ *    bit7=1, bit6=1 (b>=0xC0):      SKIP   count=(b&0x3F)+1,   跳过count像素
+ *
  *  参数:
  *    src     - 压缩数据(无头)
  *    src_size - 源数据大小
@@ -580,38 +587,62 @@ int fd2_rle_sub_4E98D_no_header(const byte* src, int src_size, byte* dst, int wi
         byte* col = row;
         int remaining = width;
         while (remaining > 0) {
-            if (src_idx >= src_size) return -1;
+            /* 源数据耗尽: 视为剩余像素全部为0(透明/背景).
+             * 这种情况出现在索引2的"空"子资源(全0 RLE数据)
+             * 和全 0 子资源中, 视为合法解码完成. */
+            if (src_idx >= src_size) {
+                return 0;
+            }
             byte ctrl = src[src_idx++];
-            int count = ((ctrl * 4) & 0xFF) >> 2;
-            count = count + 1;
-
             byte top2 = ctrl & 0xC0;
-            byte pixel;
+            int count;
 
-            if (top2 == 0x80) {
-                /* bit7=1, bit6=0: COPY */
-                for (int k = 0; k < count; k++) {
-                    if (src_idx >= src_size) return -1;
-                    byte v = src[src_idx++];
-                    if (value_1 == -1) pixel = v;
-                    else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
-                    else pixel = value_1 & 0xFF;
-                    col[k] = pixel;
-                }
-                col += count;
-                remaining -= count;
-            } else if (top2 == 0xC0) {
-                /* bit7=1, bit6=1: SKIP */
-                col += count;
-                remaining -= count;
-            } else {
-                /* bit7=0: FILL (不论bit6,与旧fd_decompress_rle行为一致) */
-                if (src_idx >= src_size) return -1;
+            if (top2 == 0x00) {
+                /* FILL: count = ctrl + 1 */
+                count = ctrl + 1;
+                if (src_idx >= src_size) return 0;  /* 源数据耗尽, 视为全0完成 */
                 byte v = src[src_idx++];
+                byte pixel;
                 if (value_1 == -1) pixel = v;
                 else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
                 else pixel = value_1 & 0xFF;
                 memset(col, pixel, count);
+                col += count;
+                remaining -= count;
+            } else if (top2 == 0x40) {
+                /* FILL2: count = (ctrl & 0x3F) + 1, 隔一个写 (consume 2*count) */
+                count = (ctrl & 0x3F) + 1;
+                if (src_idx >= src_size) return 0;  /* 源数据耗尽, 视为全0完成 */
+                byte v = src[src_idx++];
+                byte pixel;
+                if (value_1 == -1) pixel = v;
+                else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
+                else pixel = value_1 & 0xFF;
+                /* 写入 col[1], col[3], col[5], ... 共 count 个 */
+                for (int k = 0; k < count; k++) {
+                    if (1 + k * 2 < remaining) {
+                        col[1 + k * 2] = pixel;
+                    }
+                }
+                col += count * 2;
+                remaining -= count * 2;
+            } else if (top2 == 0x80) {
+                /* COPY: count = (ctrl & 0x3F) + 1 */
+                count = (ctrl & 0x3F) + 1;
+                for (int k = 0; k < count; k++) {
+                    if (src_idx >= src_size) return 0;  /* 源数据耗尽, 视为全0完成 */
+                    byte v = src[src_idx++];
+                    byte pixel;
+                    if (value_1 == -1) pixel = v;
+                    else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
+                    else pixel = value_1 & 0xFF;
+                    if (k < remaining) col[k] = pixel;
+                }
+                col += count;
+                remaining -= count;
+            } else {
+                /* SKIP: count = (ctrl & 0x3F) + 1 */
+                count = (ctrl & 0x3F) + 1;
                 col += count;
                 remaining -= count;
             }
