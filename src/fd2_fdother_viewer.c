@@ -422,20 +422,23 @@ static void refresh_display(void) {
                 if (g_multi_tile_loaded && g_sub_index < g_multi_tile.icon_count) {
                     const byte* rle_data;
                     dword rle_size;
-                    
+
                     if (fdother_multi_tile_get_icon(&g_multi_tile, g_sub_index, &rle_data, &rle_size) == 0) {
                         /* 索引1图标使用sub_4E22A解码（与sub_4EC66完全不同的RLE格式）
                          * 图标数据不包含宽高头，直接就是sub_4E22A编码的像素数据
+                         *
+                         * sub_4E22A 输出 dst 保留 0-127 范围的调色板索引
+                         *   (0xC0-0xFF 是 SKIP 透明，不会写入 dst)
+                         * 应直接用作主调色板 0-127 索引，不应加 window 偏移
                          */
                         memset(g_decode_buffer, 0, g_multi_tile.width * g_multi_tile.height);
-                        /* sub_4E22A解码不应用palette_window */
-                        fd_decompress_sub_4E22A(rle_data, rle_size, g_decode_buffer, 
+                        fd_decompress_sub_4E22A(rle_data, rle_size, g_decode_buffer,
                                                g_multi_tile.width, g_multi_tile.height, g_multi_tile.width);
                         g_decode_width = g_multi_tile.width;
                         g_decode_height = g_multi_tile.height;
-                        /* draw_pixels中应用palette_window */
-                        draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height, 
-                                   palette_rgb24, g_multi_tile.palette_window);
+                        /* 直接用 dst 作为调色板索引，不应用 palette_window 偏移 */
+                        draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height,
+                                   palette_rgb24, -1);
                     }
                 }
             } else {
