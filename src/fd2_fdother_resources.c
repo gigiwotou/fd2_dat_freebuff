@@ -796,20 +796,22 @@ int fdother_parse_offset_table(int index, fdother_offset_table_t* out_table) {
 
 const byte* fdother_offset_table_get_resource(const fdother_offset_table_t* table,
                                                int resource_index, dword* out_size) {
-    if (!table || resource_index < 0 || resource_index >= (int)table->offset_count - 1) {
+    if (!table || resource_index < 0 || resource_index >= (int)table->offset_count) {
         if (out_size) *out_size = 0;
         return NULL;
     }
-    
+
     dword start = table->offsets[resource_index];
-    dword end = table->offsets[resource_index + 1];
+    /* 最后一个子资源(索引=offset_count-1)的终点是数据区末尾 */
+    dword end = (resource_index + 1 < (int)table->offset_count) ?
+                table->offsets[resource_index + 1] : table->size;
     dword size = end - start;
-    
+
     if (start >= table->size || end > table->size) {
         if (out_size) *out_size = 0;
         return NULL;
     }
-    
+
     if (out_size) *out_size = size;
     return table->data + start;
 }

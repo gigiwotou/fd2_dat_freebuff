@@ -89,7 +89,7 @@ static const char* get_resource_desc(int index) {
     switch (index) {
         case 0: return "主调色板";
         case 1: return "图标 24x24";
-        case 2: return "偏移表 (77个子资源: 73个24x20图标 + 4个24x16图标)";
+        case 2: return "偏移表 (78个子资源: 73个24x20图标 + 4个24x16图标)";
         case 3: return "LMI1 Tile集 (23 tiles)";
         case 4: return "RAW数据 (字符位图?)";
         case 5: return "LMI1 Tile集 (138 tiles)";
@@ -525,11 +525,11 @@ static void refresh_display(void) {
                 g_max_sub_items = FONT_CHARS_PER_PAGE;
                 draw_font_view(res_data);
             } else if (g_current_index == 2) {
-                /* 索引2是偏移表 (77个子资源) */
+                /* 索引2是偏移表 (78个子资源) */
                 if (!g_offset_table_loaded) {
                     if (fdother_parse_offset_table(2, &g_offset_table) == 0) {
                         g_offset_table_loaded = true;
-                        g_max_sub_items = g_offset_table.offset_count - 1;
+                        g_max_sub_items = g_offset_table.offset_count;
                         printf("偏移表加载成功: %u个偏移, %u个子资源\n", 
                                g_offset_table.offset_count, g_max_sub_items);
                     }
@@ -637,9 +637,7 @@ static void print_resource_info(void) {
                 printf("页: %d / %d (每页%d字符)\n", g_font_page, FONT_PAGE_COUNT - 1, FONT_CHARS_PER_PAGE);
             } else if (g_current_index == 2) {
                 if (g_offset_table_loaded) {
-                    printf("偏移表: %u个偏移\n", g_offset_table.offset_count);
-                    printf("子资源: %d / %d\n", g_sub_index, g_max_sub_items);
-                    
+                    /* 打印当前选中子资源的详细信息, 避免与顶部"子项"行重复 */
                     dword sub_size;
                     const byte* sub_data = fdother_offset_table_get_resource(&g_offset_table, g_sub_index, &sub_size);
                     if (sub_data && sub_size > 0) {
@@ -736,8 +734,9 @@ static int main_loop(void) {
                                 refresh_display();
                             }
                         } else {
-                            /* 子项索引范围: [0, g_max_sub_items - 1], 共g_max_sub_items个 */
-                            if (g_sub_index < g_max_sub_items) {
+                            /* 子项索引范围: [0, g_max_sub_items - 1], 共g_max_sub_items个
+                             * 右移上限 = g_max_sub_items - 1, 防止 g_sub_index 越界到 g_max_sub_items */
+                            if (g_sub_index < g_max_sub_items - 1) {
                                 g_sub_index++;
                                 print_resource_info();
                                 refresh_display();

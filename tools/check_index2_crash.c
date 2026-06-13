@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
     byte* buf = (byte*)calloc(1, max_buf_size);
     if (!buf) { printf("calloc failed\n"); return 1; }
 
-    for (dword i = 0; i < table.offset_count - 1; i++) {
+    for (dword i = 0; i < table.offset_count; i++) {
         dword sub_size;
         const byte* sub_data = fdother_offset_table_get_resource(&table, i, &sub_size);
         if (!sub_data || sub_size < 5) continue;
