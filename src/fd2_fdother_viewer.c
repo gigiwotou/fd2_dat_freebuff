@@ -456,11 +456,15 @@ static void refresh_display(void) {
     
     byte palette_rgb24[768];
     
-    /* 统一使用索引0的主调色板 */
-    int pal_ret = fdother_get_palette(0, (fdother_palette_t*)palette_rgb24);
+    /* 根据资源索引选择调色板 (1:1 复刻游戏代码)
+     * - 资源 7 (开始菜单/菜单背景) 用 索引 8 的菜单调色板 (sub_1F894: FDOTHER_DAT=8)
+     * - 其他资源用 索引 0 的主调色板
+     */
+    int palette_idx = (g_current_index == 7) ? 8 : 0;
+    int pal_ret = fdother_get_palette(palette_idx, (fdother_palette_t*)palette_rgb24);
     if (pal_ret == 0) {
         fdother_palette_t pal;
-        if (fdother_get_palette(0, &pal) == 0) {
+        if (fdother_get_palette(palette_idx, &pal) == 0) {
             fdother_palette_to_rgb24(&pal, palette_rgb24);
         }
     }

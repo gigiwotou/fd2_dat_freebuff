@@ -17,11 +17,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    /* 加载调色板 */
+    /* 加载调色板 - 资源7用菜单调色板(索引8), 其他用主调色板(索引0)
+     * 1:1 复刻 fd2_opening_animation.c sub_1F894: FDOTHER_DAT=8 */
     fdother_palette_t pal;
-    if (fdother_get_palette(0, &pal) != 0) {
-        printf("Failed to load palette\n");
-        return 1;
+    int pal_idx = 7;  /* 资源 7 用调色板 8 */
+    if (fdother_get_palette(pal_idx, &pal) != 0) {
+        if (fdother_get_palette(0, &pal) != 0) {
+            printf("Failed to load palette\n");
+            return 1;
+        }
     }
     byte palette_rgb24[768];
     fdother_palette_to_rgb24(&pal, palette_rgb24);
