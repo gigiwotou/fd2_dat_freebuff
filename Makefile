@@ -97,7 +97,7 @@ FDOTHER_TEST_OBJS = $(OBJ_DIR)/fd2_fdother_test.o $(OBJ_DIR)/fd2_fdother_resourc
 ANALYZER_OBJS = $(OBJ_DIR)/fd2_resource_analyzer.o $(OBJ_DIR)/fd2_fdother_resources.o $(OBJ_DIR)/fd2_dat.o $(OBJ_DIR)/fd2_rle.o
 
 # viewer objects
-VIEWER_OBJS = $(OBJ_DIR)/fd2_fdother_viewer.o $(OBJ_DIR)/fd2_fdother_resources.o $(OBJ_DIR)/fd2_dat.o $(OBJ_DIR)/fd2_rle.o $(OBJ_DIR)/fd2_sfx.o
+VIEWER_OBJS = $(OBJ_DIR)/fd2_fdother_viewer.o $(OBJ_DIR)/fd2_fdother_resources.o $(OBJ_DIR)/fd2_dat.o $(OBJ_DIR)/fd2_rle.o $(OBJ_DIR)/fd2_sfx.o $(DECODER_OBJS)
 
 # Targets
 TARGET_GAME   = $(BIN_DIR)/fd2$(EXE_EXT)
