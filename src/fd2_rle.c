@@ -144,12 +144,16 @@ int fd2_rle_sub_4E22A(const byte* src, int src_size, byte* dst, int width, int h
                 col += count;
                 remaining -= count;
             } else if (top2 == 0x40) {
-                /* ALT: 间隔写入(读1字节, 写1个跳1个) */
+                /* ALT: 间隔写入(读1字节, 写col+1, 然后col+=2)
+                 * 汇编 sub_4E22A LABEL_8 区域: v11=col+1; *v11=v; col=v11+1=col+2
+                 * 起始col=x, 依次写入位置 x+1, x+3, x+5, ... (col每次+=2)
+                 * 写count次, 跳过count像素, 总前进 2*count
+                 */
                 if (src_idx >= src_size) return -1;
                 byte v = src[src_idx++];
                 remaining -= count + count;
                 for (int k = 0; k < count; k++) {
-                    col[0] = v;
+                    col[1] = v;
                     col += 2;
                 }
             } else if (top2 == 0x80) {

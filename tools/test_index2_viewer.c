@@ -8,14 +8,22 @@
 #include "../include/fd2_dat.h"
 
 int main(int argc, char** argv) {
-    if (fdother_load("D:/workspace/fd2_dat_freebuff/game/FDOTHER.DAT") != 0) {
+    printf("[1] start\n");
+    fflush(stdout);
+    if (fdother_load("d:/workspace/fd2_dat_freebuff/game/FDOTHER.DAT") != 0) {
         printf("Cannot load\n");
         return 1;
     }
+    printf("[2] loaded\n");
+    fflush(stdout);
 
     /* 模拟 viewer 逻辑: 加载偏移表 */
     fdother_offset_table_t table = {0};
+    printf("[3] before parse\n");
+    fflush(stdout);
     int ret = fdother_parse_offset_table(2, &table);
+    printf("[4] ret=%d\n", ret);
+    fflush(stdout);
     printf("fdother_parse_offset_table ret=%d, offset_count=%u, size=%u\n",
            ret, table.offset_count, table.size);
     printf("Viewer 显示 max_sub_items = %d\n", (int)table.offset_count - 1);
@@ -32,23 +40,29 @@ int main(int argc, char** argv) {
         int idx = sub_indices[s];
         dword sub_size;
         const byte* sub_data = fdother_offset_table_get_resource(&table, idx, &sub_size);
+        fflush(stdout);
 
-        printf("\n=== Sub %d (size=%u) ===\n", idx, sub_size);
+        printf("\n=== Sub %d (size=%u, data=%p) ===\n", idx, sub_size, (const void*)sub_data);
+        fflush(stdout);
         if (!sub_data || sub_size < 5) {
             printf("  无效数据\n");
+            fflush(stdout);
             continue;
         }
         printf("  头 5 字节: ");
         for (int i = 0; i < 5; i++) printf("%02x ", sub_data[i]);
         printf("\n");
+        fflush(stdout);
 
         fdother_tile_t tile;
         if (fdother_parse_tile(sub_data, sub_size, &tile) != 0) {
             printf("  fdother_parse_tile 失败\n");
+            fflush(stdout);
             continue;
         }
         printf("  tile w=%d h=%d win=%d rle_size=%u\n",
                tile.width, tile.height, tile.palette_window, tile.rle_size);
+        fflush(stdout);
 
         /* 模拟 viewer: 用 fd_decompress_rle 解码 */
         byte* buf = (byte*)calloc(1, tile.width * tile.height);

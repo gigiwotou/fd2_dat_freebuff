@@ -608,19 +608,37 @@ static void refresh_display(void) {
                 if (g_offset_table_loaded && g_sub_index < g_max_sub_items) {
                     dword sub_size;
                     const byte* sub_data = fdother_offset_table_get_resource(&g_offset_table, g_sub_index, &sub_size);
-                    
-                    if (sub_data && sub_size > 0) {
-                        /* 尝试解析为TILE */
-                        fdother_tile_t tile;
-                        if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
-                            if (tile.rle_data && tile.rle_size > 0 && tile.rle_size < sub_size) {
-                                /* 清零解码缓冲区 */
-                                memset(g_decode_buffer, 0, tile.width * tile.height);
-                                /* RLE解码时不应用调色板窗口 */
-                                fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
-                                g_decode_width = tile.width;
-                                g_decode_height = tile.height;
-                                draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
+
+                    if (sub_data && sub_size >= 4) {
+                        word tw = sub_data[0] | (sub_data[1] << 8);
+                        word th = sub_data[2] | (sub_data[3] << 8);
+                        dword raw_size = 4 + (dword)tw * (dword)th;
+
+                        /* 索引2子资源实测格式: 4字节头 [w:2][h:2] + raw像素数据
+                         * (无palette_window, 无RLE压缩, 与普通TILE 5字节头+sub_4E22A格式不同)
+                         * 验证: 73 个 24x20 = 484字节, 4 个 24x16 = 388字节, 全部等于 4+w*h */
+                        if (tw > 0 && th > 0 && tw <= 64 && th <= 64 && sub_size == raw_size) {
+                            /* 4字节头 + raw 像素 */
+                            memset(g_decode_buffer, 0, tw * th);
+                            memcpy(g_decode_buffer, sub_data + 4, tw * th);
+                            g_decode_width  = tw;
+                            g_decode_height = th;
+                            /* raw 像素值 0xC7=199 已是调色板索引, 直接用, 不应用 window */
+                            draw_pixels(g_decode_buffer, tw, th, palette_rgb24, -1);
+                        } else {
+                            /* 备用: 尝试 5字节头 + RLE (兼容未来可能出现的 RLE 子资源) */
+                            fdother_tile_t tile;
+                            if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
+                                if (tile.rle_data && tile.rle_size > 0 && tile.rle_size < sub_size) {
+                                    #define SUB4E22A_SIZE 24
+                                    byte sub_buf[SUB4E22A_SIZE * SUB4E22A_SIZE];
+                                    memset(sub_buf, 0, sizeof(sub_buf));
+                                    fd_decompress_sub_4E22A(tile.rle_data, tile.rle_size, sub_buf,
+                                                           SUB4E22A_SIZE, SUB4E22A_SIZE, SUB4E22A_SIZE);
+                                    g_decode_width  = tile.width;
+                                    g_decode_height = tile.height;
+                                    draw_pixels(sub_buf, tile.width, tile.height, palette_rgb24, -1);
+                                }
                             }
                         }
                     }
