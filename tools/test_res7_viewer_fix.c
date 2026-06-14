@@ -31,16 +31,7 @@ static int fdother_nested_calculate_valid_count(const byte* data, dword size, dw
         }
         valid_count++;
     }
-    /* 末尾偏移 == size 是结束标记, 实际子资源数 = valid_count - 1 */
-    if (valid_count > 0) {
-        dword last_off = data[10 + (valid_count - 1) * 4] |
-                         (data[10 + (valid_count - 1) * 4 + 1] << 8) |
-                         (data[10 + (valid_count - 1) * 4 + 2] << 16) |
-                         (data[10 + (valid_count - 1) * 4 + 3] << 24);
-        if (last_off == size && valid_count > 1) {
-            valid_count--;
-        }
-    }
+    /* 不再减去末尾哨兵: 末尾 off==res_size 仍计入子项数(渲染时 sub_size=0 自然跳过) */
     return valid_count;
 }
 
@@ -119,5 +110,5 @@ int main(int argc, char* argv[]) {
     printf("首张图片(Sub 0): 应为 61x7 (4字节头 LMI1)\n");
     printf("所有有效子资源解码: %s\n", all_ok ? "成功" : "失败");
 
-    return (all_ok && valid_count == 6) ? 0 : 1;
+    return (all_ok && valid_count == 7) ? 0 : 1;
 }

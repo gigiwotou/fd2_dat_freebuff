@@ -94,7 +94,7 @@ static const char* get_resource_desc(int index) {
         case 4: return "RAW数据 (字符位图?)";
         case 5: return "LMI1 Tile集 (138 tiles)";
         case 6: return "LMI1 Tile集 (230 tiles)";
-        case 7: return "嵌套DAT (声明38子资源, 实际6有效)";
+        case 7: return "嵌套DAT (声明38子资源, 实际7有效)";
         case 8: return "调色板副本";
         case 9: return "LMI1 Tile集 (12 tiles)";
         case 10: return "图标 62x26";
@@ -370,14 +370,15 @@ static int load_and_decode_tile_image(int index, byte* out_pixels,
 /* ========================================================================
  * 嵌套DAT有效子资源数计算
  * 
- * 根据IDA Pro MCP汇编分析 (sub_2FF01等), 游戏代码在解析LLLLLL嵌套DAT时,
- * 偏移表项必须落在数据区范围内才视为有效. viewer资源7的实际数据:
+ * 根据IDA Pro MCP汇编分析, 游戏代码在解析LLLLLL嵌套DAT时, 偏移表项必须
+ * 落在数据区范围内才视为有效. viewer资源7的实际数据:
  *   - 声明的resource_count = 38 (来自字节6-9)
  *   - 实际有效偏移表项 = 7 (前7项, 其余31项是子资源0的像素数据被误判为偏移)
+ *   - 7个有效偏移全部计入子资源(包含末尾 Off[6]=res_size 的哨兵项)
  * 
- * 末尾偏移 (offset[valid_count-1] == res_size) 表示数据区结束, 是结束标记,
- * 实际子资源数为 valid_count - 1 (如果有结束标记).
- * 例如viewer资源7: 7个有效偏移, 但最后一个等于res_size=23377, 所以实际是6个子资源.
+ * viewer实际渲染时, Sub 0..Sub 5 都有有效数据能正常绘制; Sub 6 (off=res_size)
+ * 是结束哨兵, 渲染时 sub_size=0 会自然跳过(条件 sub_end > sub_offset 不成立),
+ * 但子项索引范围是 [0, 7), 防止用户按右箭头时在 Sub 5 之后直接退出.
  * 
  * 因此我们需要在viewer层重新计算resource_count.
  * ======================================================================== */
@@ -388,7 +389,7 @@ static int fdother_nested_calculate_valid_count(const byte* data, dword size, dw
     
     /* 偏移表起始 = 10, 每项4字节.
      * 有效条件: 偏移值 >= 偏移表结尾 (10 + declared_count * 4)
-     *          且偏移值 < size (数据范围内)
+     *          且偏移值 <= size (允许 off==size 作为末尾哨兵)
      * (与已验证的check_all_nested.py一致的判定逻辑) */
     dword offset_table_end = 10 + declared_count * 4;
     int valid_count = 0;
@@ -403,17 +404,6 @@ static int fdother_nested_calculate_valid_count(const byte* data, dword size, dw
             break;  /* 遇到第一个无效偏移就停止, 与汇编代码一致 */
         }
         valid_count++;
-    }
-    
-    /* 末尾偏移 == size 表示数据区结束标记, 实际子资源数 = valid_count - 1 */
-    if (valid_count > 0) {
-        dword last_off = data[10 + (valid_count - 1) * 4] |
-                         (data[10 + (valid_count - 1) * 4 + 1] << 8) |
-                         (data[10 + (valid_count - 1) * 4 + 2] << 16) |
-                         (data[10 + (valid_count - 1) * 4 + 3] << 24);
-        if (last_off == size && valid_count > 1) {
-            valid_count--;  /* 减去结束标记 */
-        }
     }
     
     return valid_count;

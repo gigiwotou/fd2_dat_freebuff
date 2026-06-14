@@ -30,15 +30,6 @@ static int fdother_nested_calculate_valid_count(const byte* data, dword size, dw
         }
         valid_count++;
     }
-    if (valid_count > 0) {
-        dword last_off = data[10 + (valid_count - 1) * 4] |
-                         (data[10 + (valid_count - 1) * 4 + 1] << 8) |
-                         (data[10 + (valid_count - 1) * 4 + 2] << 16) |
-                         (data[10 + (valid_count - 1) * 4 + 3] << 24);
-        if (last_off == size && valid_count > 1) {
-            valid_count--;
-        }
-    }
     return valid_count;
 }
 
