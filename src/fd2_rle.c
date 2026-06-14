@@ -560,6 +560,73 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
 }
 
 /* ========================================================================
+ *  sub_4EC66 (0x4EC66, size 0x16) - FDOTHER.DAT TILE 状态机RLE解码器
+ *
+ *  IDA Pro MCP反汇编: 0x4EC66, size 0x16
+ *  数据格式: 4字节头 [w:2][h:2] + RLE压缩的 w*h 像素
+ *
+ *  状态机寄存器(汇编原变量名):
+ *    ah = 待输出计数(初值0, 触发新读)
+ *    al = 当前像素值
+ *  算法:
+ *    循环 (w*h 次):
+ *      if (ah > 0): ah--, al = prev_al    ; 重复输出
+ *      else:                              ; 读新数据
+ *        al = read_byte()
+ *        if (al > 0xC0):
+ *          ah = al - 0xC1                 ; 计数 = al - 193
+ *          al = read_byte()               ; 重复值
+ *        else:
+ *          ah = 0                         ; RAW 单像素
+ *        prev_al = al
+ *      输出 al 到 dst[i++]
+ *
+ *  与 sub_4E22A/sub_4E98D 风格(4模式 FILL/ALT/COPY/SKIP) 不同,
+ *  sub_4EC66 是 2模式 (RAW/RLE), 简单但高效.
+ *
+ *  用于 FDOTHER.DAT 资源10 (62x26图标) 等所有 TILE 资源 (16x16字符, 24x24图标, 320x200全屏图像).
+ * ======================================================================== */
+int fd2_rle_sub_4EC66(const byte* src, int src_size, byte* dst, int width, int height) {
+    if (!src || !dst || src_size < 4 || width <= 0 || height <= 0) return -1;
+
+    /* 跳过4字节头 [w:2][h:2] */
+    int src_idx = 4;
+    int data_size = src_size;  /* 总大小, src_idx 从 4 开始递增到 src_size-1 */
+    if (data_size <= 4) return -1;
+
+    /* 状态机寄存器 */
+    int ah = 0;        /* 待输出计数(初值0, 触发新读) */
+    byte al = 0;       /* 当前像素值 */
+    byte prev_al = 0;  /* 缓存的上次输出值(用于RLE重复) */
+
+    int total = width * height;
+    for (int i = 0; i < total; i++) {
+        if (ah > 0) {
+            /* 状态ah>0: 直接输出上次的al, ah-- */
+            ah--;
+            al = prev_al;
+        } else {
+            /* ah=0: 读新数据 */
+            if (src_idx >= data_size) return -1;
+            al = src[src_idx++];
+            if (al > 0xC0) {
+                /* RLE模式: 计数 = al - 0xC1 (再读1字节作为重复值) */
+                ah = (al - 0xC1) & 0xFF;
+                if (src_idx >= data_size) return -1;
+                al = src[src_idx++];
+            } else {
+                /* RAW模式: 单像素, ah=0 */
+                ah = 0;
+            }
+            prev_al = al;
+        }
+        /* 输出像素 */
+        dst[i] = al;
+    }
+    return 0;
+}
+
+/* ========================================================================
  *  fd2_rle_sub_4E98D_no_header - 通用RLE解码器(无4字节头版本)
  *  IDA Pro MCP反汇编: 0x4E98D, size 0x1BB (去掉头部读取)
  *  用于 fd2_dat.c 中旧 fd_decompress_rle 调用方,数据不含[w:2][h:2]头
@@ -976,4 +1043,153 @@ int fd2_decode_bg_resource(byte* src, int length, byte* palette, byte* dst, int 
     int w = src[0] | (src[1] << 8);
     int h = src[2] | (src[3] << 8);
     return fd2_rle_sub_4E98D(src, length, dst, w, h, -1);
+}
+
+/* ========================================================================
+ *  fd2_rle_decode_char_grid_5x5 - 5x5字符位图解码 (FDOTHER.DAT 资源19/21)
+ *
+ *  资源 19 头部格式 (基于实际数据 1:1 分析):
+ *    [w:2] = 5  (5 列字符网格)
+ *    [h:2] = 5  (5 行字符网格)
+ *    [dword:4] = 0  (保留)
+ *    [offset_table:5*dword] - 5 行 RLE 数据起点 (小端字节序)
+ *    [rle_data] - 5 行字符 RLE 数据 (每行 5 个 16x16 字符, sub_4E22A 风格 4 模式 RLE)
+ *
+ *  sub_4E22A 风格 RLE 控制字节:
+ *    count = ((ctrl * 4) & 0xFF) >> 2 + 1
+ *    top2 = 0x00: FILL   读1字节值, 写 count 像素
+ *    top2 = 0x40: ALT    读1字节值, 间隔写 count 像素 (col+=2)
+ *    top2 = 0x80: COPY   复制 count 字节
+ *    top2 = 0xC0: SKIP   跳过 count 像素
+ *
+ *  注: 资源 19 实际数据中, 字符(0,2) 处偏移表行 0 终点 0x19a 但 RLE 数据不足
+ *  完整 16x16 字符, 这是数据固有问题. 函数行为: 该字符失败时跳过, 继续解码
+ *  后续行/列. 最终返回 0.
+ *
+ *  @param src         源数据(资源19字节流)
+ *  @param src_size    源数据大小
+ *  @param dst         目标缓冲区(至少 5*char_w*5*char_h 字节)
+ *  @param char_w      每字符宽度(默认 16)
+ *  @param char_h      每字符高度(默认 16)
+ *  @return 0 成功, -1 失败
+ * ======================================================================== */
+int fd2_rle_decode_char_grid_5x5(const byte* src, int src_size, byte* dst,
+                                  int char_w, int char_h) {
+    if (!src || !dst || src_size < 28 || char_w <= 0 || char_h <= 0) return -1;
+    if (char_w > 24 || char_h > 24) return -1;
+
+    /* 读取头 [w:2][h:2] */
+    int w = src[0] | (src[1] << 8);
+    int h = src[2] | (src[3] << 8);
+    if (w != 5 || h != 5) return -1;  /* 只支持 5x5 字符网格 */
+
+    /* 读取 5 行偏移表(从小端字节 dword) */
+    int row_offsets[5];
+    for (int j = 0; j < 5; j++) {
+        int o = 8 + j * 4;
+        row_offsets[j] = src[o] | (src[o+1] << 8) | (src[o+2] << 16) | (src[o+3] << 24);
+    }
+
+    /* 清空目标缓冲区 */
+    int grid_w = 5 * char_w;
+    int grid_h = 5 * char_h;
+    memset(dst, 0, grid_w * grid_h);
+
+    /* 逐行解码 */
+    for (int row = 0; row < 5; row++) {
+        int row_start = row_offsets[row];
+        int row_end = (row < 4) ? row_offsets[row+1] : src_size;
+        if (row_start > row_end || row_start >= src_size) continue;
+        if (row_end > src_size) row_end = src_size;
+
+        int si = row_start;
+        for (int col = 0; col < 5; col++) {
+            if (si >= row_end) break;
+
+            /* 临时缓冲区(每字符独立解码) */
+            byte char_buf[24 * 24];  /* 最大支持 24x24 字符 */
+            memset(char_buf, 0, char_w * char_h);
+
+            /* sub_4E22A 风格解码单字符到 char_buf (同时计算消耗字节数) */
+            int consumed = 0;
+            int char_ok = 1;
+            {
+                int local_si = 0;
+                int local_size = row_end - si;
+                for (int y = 0; y < char_h && char_ok; y++) {
+                    int x = 0;
+                    while (x < char_w) {
+                        if (local_si >= local_size) {
+                            char_ok = 0;
+                            break;
+                        }
+                        byte ctrl = src[si + local_si];
+                        local_si++;
+                        int count = (((ctrl * 4) & 0xFF) >> 2) + 1;
+                        byte top2 = ctrl & 0xC0;
+                        if (top2 == 0x00) {
+                            /* FILL: 1 字节 */
+                            if (local_si >= local_size) {
+                                char_ok = 0;
+                                break;
+                            }
+                            byte v = src[si + local_si];
+                            local_si++;
+                            for (int k = 0; k < count && x + k < char_w; k++) {
+                                char_buf[y * char_w + x + k] = v;
+                            }
+                            x += count;
+                        } else if (top2 == 0x40) {
+                            /* ALT: 1 字节, 间隔写 count 像素 (col+=2) */
+                            if (local_si >= local_size) {
+                                char_ok = 0;
+                                break;
+                            }
+                            byte v = src[si + local_si];
+                            local_si++;
+                            for (int k = 0; k < count; k++) {
+                                if (x + k * 2 < char_w) {
+                                    char_buf[y * char_w + x + k * 2] = v;
+                                }
+                            }
+                            x += count * 2;
+                        } else if (top2 == 0x80) {
+                            /* COPY: count 字节 */
+                            for (int k = 0; k < count; k++) {
+                                if (local_si >= local_size) {
+                                    char_ok = 0;
+                                    break;
+                                }
+                                if (x + k < char_w) {
+                                    char_buf[y * char_w + x + k] = src[si + local_si];
+                                }
+                                local_si++;
+                            }
+                            if (!char_ok) break;
+                            x += count;
+                        } else {
+                            /* SKIP */
+                            x += count;
+                        }
+                    }
+                }
+                consumed = local_si;
+            }
+
+            /* 复制 char_buf 到 dst 中 (row, col) 位置 (即使失败也复制, 保留部分数据) */
+            for (int y = 0; y < char_h; y++) {
+                for (int x = 0; x < char_w; x++) {
+                    int dst_x = col * char_w + x;
+                    int dst_y = row * char_h + y;
+                    dst[dst_y * grid_w + dst_x] = char_buf[y * char_w + x];
+                }
+            }
+
+            /* 字符失败: 中断本行剩余字符解码, 继续下一行 */
+            if (!char_ok) break;
+
+            si += consumed;
+        }
+    }
+    return 0;
 }

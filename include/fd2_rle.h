@@ -141,6 +141,31 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
  */
 int fd2_rle_sub_4E98D_no_header(const byte* src, int src_size, byte* dst, int width, int height, int value_1);
 
+/**
+ * sub_4EC66 (0x4EC66, size 0x16) - FDOTHER.DAT TILE 状态机RLE解码器
+ *
+ * 算法(基于汇编代码 1:1 复刻):
+ *   状态机寄存器: ah = 待输出计数(初值0), al = 当前像素值
+ *   数据格式: 4字节头[w:2][h:2] + RLE压缩的 w*h 像素
+ *   RLE控制字节:
+ *     - al <= 0xC0: RAW, 1个像素 (ah=0, al=像素值)
+ *     - al >  0xC0: RLE, ah=al-0xC1 (再读1字节作为重复值), 输出ah+1次
+ *   状态ah>0时: 直接输出上次的al, ah--
+ *
+ * 与 sub_4E22A/sub_4E98D 风格的 4模式RLE (FILL/ALT/COPY/SKIP) 不同,
+ * sub_4EC66 是 2模式RLE (RAW/RLE), 简单但有效.
+ *
+ * 用于 FDOTHER.DAT 资源10 (62x26图标) 等所有 TILE 资源.
+ *
+ * @param src      源数据(包含4字节头[w:2][h:2])
+ * @param src_size 源数据大小
+ * @param dst      目标缓冲区(至少 width*height 字节)
+ * @param width    图像宽度(从src[0..1]读取)
+ * @param height   图像高度(从src[2..3]读取)
+ * @return 0 成功, -1 失败
+ */
+int fd2_rle_sub_4EC66(const byte* src, int src_size, byte* dst, int width, int height);
+
 /* ========================================================================
  *  36范围 RLE 解码函数 (2种模式: RLE/RAW)
  * ======================================================================== */
@@ -206,6 +231,33 @@ int fd2_rle_lmi1_decode_tile_4e(const byte* src, int src_size, byte* dst, int* o
  */
 int fd2_rle_lmi1_decode_tile_auto(const byte* src, int src_size, byte* dst,
                                    int* out_w, int* out_h, int pitch);
+
+/* ========================================================================
+ *  5x5 字符位图解码 (FDOTHER.DAT 资源 19/21)
+ *
+ *  资源 19 头部格式 (基于实际数据 1:1 分析):
+ *    [w:2] = 5  (5 列字符网格)
+ *    [h:2] = 5  (5 行字符网格)
+ *    [dword:4] = 0  (保留)
+ *    [offset_table:5*dword] - 5 行 RLE 数据起点 (小端字节序)
+ *    [rle_data] - 5 行字符 RLE 数据 (每行 5 个 16x16 字符, sub_4E22A 风格 4 模式 RLE)
+ *
+ *  sub_4E22A 风格 RLE 控制字节:
+ *    count = ((ctrl * 4) & 0xFF) >> 2 + 1
+ *    top2 = 0x00: FILL   读1字节值, 写 count 像素
+ *    top2 = 0x40: ALT    读1字节值, 间隔写 count 像素 (col+=2)
+ *    top2 = 0x80: COPY   复制 count 字节
+ *    top2 = 0xC0: SKIP   跳过 count 像素
+ *
+ *  @param src         源数据(资源19字节流)
+ *  @param src_size    源数据大小
+ *  @param dst         目标缓冲区(至少 5*16*5*16 = 6400 字节)
+ *  @param char_w      每字符宽度(默认 16)
+ *  @param char_h      每字符高度(默认 16)
+ *  @return 0 成功, -1 失败
+ * ======================================================================== */
+int fd2_rle_decode_char_grid_5x5(const byte* src, int src_size, byte* dst,
+                                  int char_w, int char_h);
 
 #ifdef __cplusplus
 }
