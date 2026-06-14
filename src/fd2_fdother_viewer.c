@@ -94,7 +94,7 @@ static const char* get_resource_desc(int index) {
         case 4: return "RAW数据 (字符位图?)";
         case 5: return "LMI1 Tile集 (138 tiles)";
         case 6: return "LMI1 Tile集 (230 tiles)";
-        case 7: return "嵌套DAT (38子资源)";
+        case 7: return "嵌套DAT (声明38子资源, 实际6有效)";
         case 8: return "调色板副本";
         case 9: return "LMI1 Tile集 (12 tiles)";
         case 10: return "图标 62x26";
@@ -367,6 +367,58 @@ static int load_and_decode_tile_image(int index, byte* out_pixels,
     return ret;
 }
 
+/* ========================================================================
+ * 嵌套DAT有效子资源数计算
+ * 
+ * 根据IDA Pro MCP汇编分析 (sub_2FF01等), 游戏代码在解析LLLLLL嵌套DAT时,
+ * 偏移表项必须落在数据区范围内才视为有效. viewer资源7的实际数据:
+ *   - 声明的resource_count = 38 (来自字节6-9)
+ *   - 实际有效偏移表项 = 7 (前7项, 其余31项是子资源0的像素数据被误判为偏移)
+ * 
+ * 末尾偏移 (offset[valid_count-1] == res_size) 表示数据区结束, 是结束标记,
+ * 实际子资源数为 valid_count - 1 (如果有结束标记).
+ * 例如viewer资源7: 7个有效偏移, 但最后一个等于res_size=23377, 所以实际是6个子资源.
+ * 
+ * 因此我们需要在viewer层重新计算resource_count.
+ * ======================================================================== */
+static int fdother_nested_calculate_valid_count(const byte* data, dword size, dword declared_count) {
+    if (!data || size < 10 || memcmp(data, "LLLLLL", 6) != 0) {
+        return 0;
+    }
+    
+    /* 偏移表起始 = 10, 每项4字节.
+     * 有效条件: 偏移值 >= 偏移表结尾 (10 + declared_count * 4)
+     *          且偏移值 < size (数据范围内)
+     * (与已验证的check_all_nested.py一致的判定逻辑) */
+    dword offset_table_end = 10 + declared_count * 4;
+    int valid_count = 0;
+    
+    for (dword j = 0; j < declared_count; j++) {
+        if (10 + j * 4 + 4 > size) break;
+        dword off = data[10 + j * 4] |
+                    (data[10 + j * 4 + 1] << 8) |
+                    (data[10 + j * 4 + 2] << 16) |
+                    (data[10 + j * 4 + 3] << 24);
+        if (off < offset_table_end || off > size) {
+            break;  /* 遇到第一个无效偏移就停止, 与汇编代码一致 */
+        }
+        valid_count++;
+    }
+    
+    /* 末尾偏移 == size 表示数据区结束标记, 实际子资源数 = valid_count - 1 */
+    if (valid_count > 0) {
+        dword last_off = data[10 + (valid_count - 1) * 4] |
+                         (data[10 + (valid_count - 1) * 4 + 1] << 8) |
+                         (data[10 + (valid_count - 1) * 4 + 2] << 16) |
+                         (data[10 + (valid_count - 1) * 4 + 3] << 24);
+        if (last_off == size && valid_count > 1) {
+            valid_count--;  /* 减去结束标记 */
+        }
+    }
+    
+    return valid_count;
+}
+
 /* 根据当前资源同步 g_max_sub_items, 供 print_resource_info 在调用 refresh_display
  * 之前/之后都能打印正确的子项数量. */
 static void sync_max_sub_items(void) {
@@ -398,12 +450,11 @@ static void sync_max_sub_items(void) {
             break;
         }
         case FDOTHER_RES_TYPE_NESTED_DAT: {
-            fdother_nested_dat_t nested;
-            if (fdother_get_nested_dat(g_current_index, &nested) == 0) {
-                g_max_sub_items = nested.resource_count;
-            } else {
-                g_max_sub_items = 0;
-            }
+            /* NESTED_DAT: 必须根据实际有效偏移表项数计算, 不能用字节6-9的declared_count.
+             * 原因: viewer资源7声明38个, 但实际只有7个有效偏移. */
+            int valid_count = fdother_nested_calculate_valid_count(res_data, res_size, 
+                (dword)(res_data[6] | (res_data[7] << 8) | (res_data[8] << 16) | (res_data[9] << 24)));
+            g_max_sub_items = (valid_count > 0) ? valid_count : 0;
             break;
         }
         case FDOTHER_RES_TYPE_RAW:
@@ -550,30 +601,69 @@ static void refresh_display(void) {
         }
         
         case FDOTHER_RES_TYPE_NESTED_DAT: {
-            fdother_nested_dat_t nested;
-            if (fdother_get_nested_dat(g_current_index, &nested) == 0) {
-                g_max_sub_items = nested.resource_count;
-                
-                /* 显示第一个子资源 */
-                if (g_sub_index < (int)nested.resource_count) {
-                    dword sub_size;
-                    const byte* sub_data = fdother_nested_get_resource(&nested, g_sub_index, &sub_size);
+            /* NESTED_DAT 子资源处理
+             * 
+             * 重要: viewer资源7 (LLLLLL 嵌套) 的子资源格式是 LMI1 4字节头[w:2][h:2]+RLE数据
+             * 不是TILE 5字节头[w:2][h:2][window:1]+RLE数据
+             * 
+             * 实测数据 (子资源0, 230字节):
+             *   +00: 3d 00 07 00 10 df 9b fd ed f2 f2 f5 fd f2 ed ed
+             *         ^^^^^^^^  w=61, h=7
+             *                  ^^^^^^^^^  4字节头之后的RLE数据起始
+             * 
+             * 原代码错误使用 fdother_parse_tile (5字节头) 会将字节4(0x10)误认为
+             * palette_window=16, 字节5(0xdf)误认为RLE起始, 导致首张图片分辨率错误.
+             * 
+             * 正确做法: 使用 fd2_rle_lmi1_decode_tile_auto 自动检测LMI1 tile格式.
+             * (该函数内部会读4字节[w:2][h:2]头, 然后尝试RLE/未压缩解码)
+             * 
+             * 偏移表项数: 必须用有效子资源数(valid_count), 不能用字节6-9的declared_count.
+             * 原因: 字节6-9=38但只有7个有效偏移, fdother_nested_get_resource用declared_count
+             *       会读到无效offset[7]=0xc80140作为next_offset, 导致子资源大小计算错误.
+             */
+            dword declared_count = (dword)(res_data[6] | (res_data[7] << 8) | 
+                                            (res_data[8] << 16) | (res_data[9] << 24));
+            int valid_count = fdother_nested_calculate_valid_count(res_data, res_size, declared_count);
+            g_max_sub_items = (valid_count > 0) ? valid_count : 0;
+            
+            /* 显示指定子资源 - 直接基于有效偏移表计算, 避免 fdother_nested_get_resource
+             * 用 declared_count=38 读到无效 offset[7]=0xc80140 导致子资源大小错误 */
+            if (g_sub_index >= 0 && g_sub_index < valid_count) {
+                dword offset_addr = 10 + g_sub_index * 4;
+                if (offset_addr + 4 <= res_size) {
+                    dword sub_offset = res_data[offset_addr] |
+                                       (res_data[offset_addr + 1] << 8) |
+                                       (res_data[offset_addr + 2] << 16) |
+                                       (res_data[offset_addr + 3] << 24);
                     
-                    if (sub_data && sub_size > 0 && sub_size < res_size) {
-                        fdother_res_type_t sub_type = fdother_get_resource_type(sub_data, sub_size);
+                    /* 下一个有效偏移或资源末尾 */
+                    dword sub_end;
+                    if (g_sub_index + 1 < valid_count) {
+                        dword next_addr = 10 + (g_sub_index + 1) * 4;
+                        sub_end = res_data[next_addr] |
+                                  (res_data[next_addr + 1] << 8) |
+                                  (res_data[next_addr + 2] << 16) |
+                                  (res_data[next_addr + 3] << 24);
+                    } else {
+                        sub_end = res_size;
+                    }
+                    
+                    if (sub_offset < res_size && sub_end <= res_size && sub_end > sub_offset) {
+                        dword sub_size = sub_end - sub_offset;
+                        const byte* sub_data = res_data + sub_offset;
                         
-                        if (sub_type == FDOTHER_RES_TYPE_TILE) {
-                            fdother_tile_t tile;
-                            if (fdother_parse_tile(sub_data, sub_size, &tile) == 0) {
-                                if (tile.rle_data && tile.rle_size > 0 && tile.rle_size < sub_size) {
-                                    /* 清零解码缓冲区 */
-                                    memset(g_decode_buffer, 0, tile.width * tile.height);
-                                    /* RLE解码时不应用调色板窗口 */
-                                    fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
-                                    g_decode_width = tile.width;
-                                    g_decode_height = tile.height;
-                                    draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
-                                }
+                        if (sub_size >= 4) {
+                            /* LMI1 tile解码: 4字节头[w:2][h:2] + RLE数据 */
+                            int out_w = 0, out_h = 0;
+                            int ret = fd2_rle_lmi1_decode_tile_auto(
+                                sub_data, (int)sub_size, g_decode_buffer, &out_w, &out_h, 0);
+                            if (ret == 0 && out_w > 0 && out_h > 0) {
+                                g_decode_width  = (dword)out_w;
+                                g_decode_height = (dword)out_h;
+                                /* LMI1 tile解码后像素已是调色板索引(0=透明, 非0=像素),
+                                 * 与子资源0(0x10=16, 0xdf=223等)的实际值匹配,
+                                 * 不应用 palette_window 偏移. */
+                                draw_pixels(g_decode_buffer, out_w, out_h, palette_rgb24, -1);
                             }
                         }
                     }
@@ -715,12 +805,13 @@ static void print_resource_info(void) {
         }
             
         case FDOTHER_RES_TYPE_NESTED_DAT: {
-            fdother_nested_dat_t nested;
-            if (fdother_get_nested_dat(g_current_index, &nested) == 0) {
-                printf("类型: 嵌套DAT\n");
-                printf("子资源数量: %d\n", nested.resource_count);
-                printf("总大小: %u 字节\n", nested.size);
-            }
+            /* 嵌套DAT: 区分声明的子资源数(declared_count)和有效数(valid_count) */
+            dword declared_count = (dword)(res_data[6] | (res_data[7] << 8) | 
+                                            (res_data[8] << 16) | (res_data[9] << 24));
+            int valid_count = fdother_nested_calculate_valid_count(res_data, res_size, declared_count);
+            printf("类型: 嵌套DAT\n");
+            printf("子资源数量(有效): %d (声明: %d)\n", valid_count, declared_count);
+            printf("总大小: %u 字节\n", res_size);
             break;
         }
             
