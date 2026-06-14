@@ -655,7 +655,9 @@ static void print_resource_info(void) {
     /* 确保 g_max_sub_items 与当前资源一致, 防止 print_resource_info 早于
      * refresh_display 设置子项数量时显示旧值(如资源3的23) */
     sync_max_sub_items();
-    printf("子项: %d / %d\n", g_sub_index, g_max_sub_items);
+    /* 1-based 显示: g_sub_index 内部 0-based, 显示时+1. 例如78个子资源显示 1/78..78/78 */
+    int sub_idx_disp = (g_max_sub_items > 0) ? (g_sub_index + 1) : 0;
+    printf("子项: %d / %d\n", sub_idx_disp, g_max_sub_items);
     
     switch (g_current_type) {
         case FDOTHER_RES_TYPE_PALETTE:
@@ -669,7 +671,8 @@ static void print_resource_info(void) {
                     printf("尺寸: %dx%d\n", g_multi_tile.width, g_multi_tile.height);
                     printf("调色板窗口: %d\n", g_multi_tile.palette_window);
                     printf("图标数量: %d\n", g_multi_tile.icon_count);
-                    printf("当前图标: %d\n", g_sub_index);
+                    /* 1-based 显示, 与顶部"子项"行保持一致 */
+                    printf("当前图标: %d\n", (g_multi_tile.icon_count > 0) ? (g_sub_index + 1) : 0);
                 }
             } else {
                 fdother_tile_t tile;
