@@ -367,6 +367,70 @@ static int load_and_decode_tile_image(int index, byte* out_pixels,
     return ret;
 }
 
+/* 根据当前资源同步 g_max_sub_items, 供 print_resource_info 在调用 refresh_display
+ * 之前/之后都能打印正确的子项数量. */
+static void sync_max_sub_items(void) {
+    dword res_size;
+    const byte* res_data = fdother_get_resource(g_current_index, &res_size);
+    if (!res_data || res_size == 0) {
+        g_max_sub_items = 0;
+        return;
+    }
+    fdother_res_type_t type = fdother_get_resource_type(res_data, res_size);
+    switch (type) {
+        case FDOTHER_RES_TYPE_PALETTE:
+            g_max_sub_items = 256;
+            break;
+        case FDOTHER_RES_TYPE_TILE:
+            if (g_current_index == 1 && g_multi_tile_loaded) {
+                g_max_sub_items = g_multi_tile.icon_count;
+            } else {
+                g_max_sub_items = 1;
+            }
+            break;
+        case FDOTHER_RES_TYPE_LMI1: {
+            fdother_lmi1_t lmi1;
+            if (fdother_get_lmi1(g_current_index, &lmi1) == 0) {
+                g_max_sub_items = lmi1.tile_count;
+            } else {
+                g_max_sub_items = 0;
+            }
+            break;
+        }
+        case FDOTHER_RES_TYPE_NESTED_DAT: {
+            fdother_nested_dat_t nested;
+            if (fdother_get_nested_dat(g_current_index, &nested) == 0) {
+                g_max_sub_items = nested.resource_count;
+            } else {
+                g_max_sub_items = 0;
+            }
+            break;
+        }
+        case FDOTHER_RES_TYPE_RAW:
+            if (g_current_index == 4) {
+                g_max_sub_items = FONT_CHARS_PER_PAGE;
+            } else if (g_current_index == 2) {
+                /* 确保偏移表已加载, 然后使用 offset_count 作为子资源数 */
+                if (!g_offset_table_loaded) {
+                    if (fdother_parse_offset_table(2, &g_offset_table) == 0) {
+                        g_offset_table_loaded = true;
+                    }
+                }
+                if (g_offset_table_loaded) {
+                    g_max_sub_items = g_offset_table.offset_count;
+                } else {
+                    g_max_sub_items = 0;
+                }
+            } else {
+                g_max_sub_items = 0;
+            }
+            break;
+        default:
+            g_max_sub_items = 0;
+            break;
+    }
+}
+
 /* 当前资源加载和显示 */
 static void refresh_display(void) {
     dword res_size;
@@ -529,12 +593,18 @@ static void refresh_display(void) {
                 if (!g_offset_table_loaded) {
                     if (fdother_parse_offset_table(2, &g_offset_table) == 0) {
                         g_offset_table_loaded = true;
-                        g_max_sub_items = g_offset_table.offset_count;
-                        printf("偏移表加载成功: %u个偏移, %u个子资源\n", 
-                               g_offset_table.offset_count, g_max_sub_items);
+                        printf("偏移表加载成功: %u个偏移, %u个子资源\n",
+                               g_offset_table.offset_count, g_offset_table.offset_count);
+                    } else {
+                        printf("偏移表加载失败\n");
                     }
                 }
-                
+                /* 始终从已加载的偏移表设置g_max_sub_items,
+                 * 避免从其他资源切回索引2时残留旧值(如资源3的23) */
+                if (g_offset_table_loaded) {
+                    g_max_sub_items = g_offset_table.offset_count;
+                }
+
                 if (g_offset_table_loaded && g_sub_index < g_max_sub_items) {
                     dword sub_size;
                     const byte* sub_data = fdother_offset_table_get_resource(&g_offset_table, g_sub_index, &sub_size);
@@ -582,6 +652,9 @@ static void print_resource_info(void) {
     printf("\n=== 资源 %d [%s] ===\n", g_current_index, get_type_name(g_current_type));
     printf("描述: %s\n", get_resource_desc(g_current_index));
     printf("大小: %u 字节\n", res_size);
+    /* 确保 g_max_sub_items 与当前资源一致, 防止 print_resource_info 早于
+     * refresh_display 设置子项数量时显示旧值(如资源3的23) */
+    sync_max_sub_items();
     printf("子项: %d / %d\n", g_sub_index, g_max_sub_items);
     
     switch (g_current_type) {
@@ -715,6 +788,8 @@ static int main_loop(void) {
                                 refresh_display();
                             }
                         } else {
+                            /* 先同步子项总数, 避免在第一次访问资源2时 g_max_sub_items 仍为旧值 */
+                            sync_max_sub_items();
                             if (g_sub_index > 0) {
                                 g_sub_index--;
                                 print_resource_info();
@@ -722,7 +797,7 @@ static int main_loop(void) {
                             }
                         }
                         break;
-                        
+
                     case SDLK_RIGHT:
                         /* 切换到下一个子项 */
                         if (g_current_index == 4) {
@@ -734,6 +809,8 @@ static int main_loop(void) {
                                 refresh_display();
                             }
                         } else {
+                            /* 先同步子项总数, 避免在第一次访问资源2时 g_max_sub_items 仍为旧值 */
+                            sync_max_sub_items();
                             /* 子项索引范围: [0, g_max_sub_items - 1], 共g_max_sub_items个
                              * 右移上限 = g_max_sub_items - 1, 防止 g_sub_index 越界到 g_max_sub_items */
                             if (g_sub_index < g_max_sub_items - 1) {
