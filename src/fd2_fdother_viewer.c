@@ -517,14 +517,15 @@ static void refresh_display(void) {
                     }
                 }
             } else {
-                /* 普通TILE */
+                /* 普通TILE - 使用 sub_4EC66 状态机RLE解码 (fdother_decode_tile 已封装).
+                 * 调色板窗口为 -1: 解码后的像素值直接作为调色板索引, 不应用 window 偏移. */
                 fdother_tile_t tile;
                 if (fdother_parse_tile(res_data, res_size, &tile) == 0) {
                     memset(g_decode_buffer, 0, tile.width * tile.height);
-                    fd_decompress_rle(tile.rle_data, tile.rle_size, g_decode_buffer, tile.width, tile.height, -1);
+                    fdother_decode_tile(&tile, g_decode_buffer);
                     g_decode_width = tile.width;
                     g_decode_height = tile.height;
-                    draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, tile.palette_window);
+                    draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, -1);
                 }
             }
             break;
@@ -1023,12 +1024,76 @@ int main(int argc, char* argv[]) {
     printf("空格 : 播放音效 (索引31)\n");
     printf("P   : 静音/恢复\n");
     printf("Q/ESC: 退出\n\n");
-    
+
+    /* 自动截图模式: --screenshot <资源索引> [<子项>] [<输出PPM>] */
+    if (argc >= 3 && strcmp(argv[2], "--screenshot") == 0) {
+        int target_index = atoi(argv[3]);
+        int target_sub = (argc >= 5) ? atoi(argv[4]) : 0;
+        const char* out_path = (argc >= 6) ? argv[5] : "output/viewer_screenshot.ppm";
+        printf("[SCREENSHOT] 资源 %d, 子项 %d -> %s\n", target_index, target_sub, out_path);
+        g_current_index = target_index;
+        g_sub_index = target_sub;
+        refresh_display();
+        /* 保存为 PPM (RGB格式) */
+        FILE* fp = fopen(out_path, "wb");
+        if (fp) {
+            fprintf(fp, "P6\n%d %d\n255\n", VIEWER_WIDTH, VIEWER_HEIGHT);
+            /* g_pixels 是 ARGB (0xAARRGGBB), 提取 RGB */
+            for (int i = 0; i < VIEWER_WIDTH * VIEWER_HEIGHT; i++) {
+                Uint32 p = g_pixels[i];
+                byte r = (p >> 16) & 0xFF;
+                byte g = (p >> 8) & 0xFF;
+                byte b = p & 0xFF;
+                fputc(r, fp);
+                fputc(g, fp);
+                fputc(b, fp);
+            }
+            fclose(fp);
+            printf("[SCREENSHOT] 已保存: %s\n", out_path);
+        } else {
+            printf("[SCREENSHOT] 无法打开输出文件: %s\n", out_path);
+        }
+
+        /* 额外保存 decoder 原始输出 (仅TILE/NESTED_DAT等) */
+        if (g_decode_width > 0 && g_decode_height > 0) {
+            char decoder_path[256];
+            snprintf(decoder_path, sizeof(decoder_path), "%s.decoder.ppm", out_path);
+            fp = fopen(decoder_path, "wb");
+            if (fp) {
+                fprintf(fp, "P6\n%d %d\n255\n", g_decode_width, g_decode_height);
+                /* 用主调色板重新映射 (模拟 viewer draw_pixels 的逻辑) */
+                for (int i = 0; i < g_decode_width * g_decode_height; i++) {
+                    byte p = g_decode_buffer[i];
+                    int pal_idx = p;  /* viewer 用 palette_window=-1, 不应用偏移 */
+                    Uint32 color;
+                    extern fdother_res_type_t fdother_get_resource_type(const byte*, dword);
+                    (void)color;
+                    /* 直接用调色板 */
+                    extern int fdother_get_palette(int, fdother_palette_t*);
+                    fdother_palette_t pal;
+                    int pal_idx_pal = (g_current_index == 7) ? 8 : 0;
+                    fdother_get_palette(pal_idx_pal, &pal);
+                    byte r = (pal.colors[pal_idx * 3 + 0] * 255 + 31) / 63;
+                    byte g_ = (pal.colors[pal_idx * 3 + 1] * 255 + 31) / 63;
+                    byte b_ = (pal.colors[pal_idx * 3 + 2] * 255 + 31) / 63;
+                    fputc(r, fp);
+                    fputc(g_, fp);
+                    fputc(b_, fp);
+                }
+                fclose(fp);
+                printf("[SCREENSHOT] Decoder输出: %s (%dx%d)\n", decoder_path, g_decode_width, g_decode_height);
+            }
+        }
+        goto cleanup;
+    }
+
     /* 初始显示 */
     refresh_display();
-    
+
     /* 主循环 */
     main_loop();
+
+cleanup:
     
     /* 清理 */
     SDL_DestroyTexture(g_texture);

@@ -228,29 +228,33 @@ void fdother_palette_to_rgb32(const fdother_palette_t* pal, dword* out_rgb32) {
  * ======================================================================== */
 
 int fdother_parse_tile(const byte* data, dword size, fdother_tile_t* out_tile) {
-    if (!data || !out_tile || size < 5) {
+    if (!data || !out_tile || size < 4) {
         return -1;
     }
-    
+
     word w = data[0] | (data[1] << 8);
     word h = data[2] | (data[3] << 8);
-    
+
     if (w == 0 || w > 640 || h == 0 || h > 480) {
         return -1;
     }
-    
+
     out_tile->width = w;
     out_tile->height = h;
-    
-    /* 根据Python测试验证，tile格式固定为：
-     * [width:2][height:2][window_offset:1][rle_data...]
-     * RLE数据总是从offset 5开始
+
+    /* TILE 格式(基于 sub_4EC66 状态机RLE 1:1 复刻):
+     *   4字节头 [w:2][h:2] + RLE压缩的 w*h 像素
+     *   - RLE数据从offset 4开始
+     *   - 调色板窗口由调用方决定, 不从tile数据中读取(原5字节头中的byte[4]是误读)
+     *   - 解码后像素值直接作为调色板索引, 不应用 window 偏移
      */
-    out_tile->header_size = 5;
-    out_tile->palette_window = data[4];  // 单字节调色板窗口偏移
-    out_tile->rle_data = data + 5;
-    out_tile->rle_size = size - 5;
-    
+    out_tile->header_size = 4;
+    out_tile->palette_window = (word)-1;  /* 调色板窗口由调用方决定 */
+    /* rle_data 指向 4字节头开始处, sub_4EC66 需要读 src[0..3] 作为 w/h.
+     * rle_size 包含 4字节头, 保持 src_size 一致. */
+    out_tile->rle_data = data;
+    out_tile->rle_size = size;
+
     return 0;
 }
 
@@ -357,16 +361,20 @@ int fdother_decode_tile(const fdother_tile_t* tile, byte* dst) {
     if (!tile || !dst || !tile->rle_data) {
         return -1;
     }
-    
-    int result = fd_decompress_rle(
+
+    /* FDOTHER.DAT TILE 资源统一使用 sub_4EC66 状态机RLE解码 (1:1 复刻汇编).
+     * rle_data 指向 4 字节头 [w:2][h:2] 开始处, rle_size 包含头部.
+     * 与 sub_4E22A/sub_4E98D 风格的4模式RLE不同, sub_4EC66是2模式(RAW/RLE).
+     * 适用于资源10 (62x26图标), 资源11/15/55-62/97/100 (320x200全屏图像),
+     * 资源96 (24x24图标B), 资源18-21 (16x16字符位图) 等所有 TILE 类型. */
+    int result = fd2_rle_sub_4EC66(
         tile->rle_data,
         (int)tile->rle_size,
         dst,
         tile->width,
-        tile->height,
-        tile->palette_window
+        tile->height
     );
-    
+
     return result;
 }
 
