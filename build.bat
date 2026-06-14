@@ -216,6 +216,8 @@ echo [OK] %TARGET_ANALYZER%
 goto :end
 
 :build_viewer
+call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
@@ -228,7 +230,7 @@ call :compile %SRC_DIR%\fd2_fdother_viewer.c %OBJ_DIR%\fd2_fdother_viewer.o
 if errorlevel 1 goto :error
 
 echo Linking %TARGET_VIEWER%
-%GCC% %CFLAGS% -o %TARGET_VIEWER% %OBJ_DIR%\fd2_fdother_viewer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o %OBJ_DIR%\fd2_sfx.o %LDFLAGS%
+%GCC% %CFLAGS% -o %TARGET_VIEWER% %OBJ_DIR%\fd2_fdother_viewer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o %OBJ_DIR%\fd2_sfx.o %DECODER_OBJ% %LDFLAGS%
 if errorlevel 1 goto :error
 echo [OK] %TARGET_VIEWER%
 
