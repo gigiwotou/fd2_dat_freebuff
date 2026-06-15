@@ -501,56 +501,80 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
     byte* row = dst;
     int dst_size = width * height;
 
+    /* 1:1 模拟游戏汇编:
+     *  bx (count) 是 16 位有符号, count -= count_1 可能下溢为负数
+     *  while (count) 在负数时继续 (直到 count 回到 0)
+     *  src 越界读取 (游戏不检查, 只是读到 res_data 后续字节)
+     *
+     *  alt 模式特殊: 写 col+1, col+3, col+5 (count次, 每次 dst+=2)
+     */
     for (int y = 0; y < height; y++) {
         byte* col = row;
-        int remaining = width;
-        while (remaining > 0) {
-            if (src_idx >= src_size) return -1;
-            byte ctrl = src[src_idx++];
-            int count = ((ctrl * 4) & 0xFF) >> 2;
-            count = count + 1;
+        int count = width & 0xFFFF;  /* 16位有符号 bx */
+        if (count > 0x7FFF) count -= 0x10000;
+        int cur_iter = 0;
+        while (count != 0) {
+            cur_iter++;
+            if (cur_iter > 65536) return -1;  /* 真死循环保护 */
 
+            /* src 越界读取时返回 0 (实际游戏是越界读到 res_data 后面, 用 0 模拟) */
+            byte ctrl = (src_idx < src_size) ? src[src_idx] : 0;
+            src_idx++;
             byte top2 = ctrl & 0xC0;
+            int count_1 = (ctrl & 0x3F) + 1;
             byte pixel;
 
             if (top2 == 0x00) {
                 /* FILL */
-                if (src_idx >= src_size) return -1;
-                byte v = src[src_idx++];
+                byte v = (src_idx < src_size) ? src[src_idx] : 0;
+                src_idx++;
                 if (value_1 == -1) pixel = v;
                 else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
                 else pixel = value_1 & 0xFF;
-                memset(col, pixel, count);
-                col += count;
-                remaining -= count;
-            } else if (top2 == 0x40) {
-                /* ALT */
-                if (src_idx >= src_size) return -1;
-                byte v = src[src_idx++];
-                if (value_1 == -1) pixel = v;
-                else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
-                else pixel = value_1 & 0xFF;
-                remaining -= count + count;
-                for (int k = 0; k < count; k++) {
-                    col[0] = pixel;
-                    col += 2;
+                /* col += count; count -= count */
+                for (int k = 0; k < count_1; k++) {
+                    if ((col - dst) + k < dst_size) col[k] = pixel;
                 }
+                col += count_1;
+                count = count - count_1;
+                count = count & 0xFFFF;
+                if (count > 0x7FFF) count -= 0x10000;
+            } else if (top2 == 0x40) {
+                /* ALT: 读1字节, 写count次 col+1, col+3, col+5 ... */
+                byte v = (src_idx < src_size) ? src[src_idx] : 0;
+                src_idx++;
+                if (value_1 == -1) pixel = v;
+                else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
+                else pixel = value_1 & 0xFF;
+                for (int k = 0; k < count_1; k++) {
+                    int pos = (col - dst) + 1 + k * 2;
+                    if (0 <= pos && pos < dst_size) dst[pos] = pixel;
+                }
+                col += count_1 * 2;
+                count = count - count_1 - count_1;
+                count = count & 0xFFFF;
+                if (count > 0x7FFF) count -= 0x10000;
             } else if (top2 == 0x80) {
-                /* COPY(逐像素处理) */
-                for (int k = 0; k < count; k++) {
-                    if (src_idx >= src_size) return -1;
-                    byte v = src[src_idx++];
+                /* COPY (逐像素处理) */
+                for (int k = 0; k < count_1; k++) {
+                    byte v = (src_idx < src_size) ? src[src_idx] : 0;
+                    src_idx++;
                     if (value_1 == -1) pixel = v;
                     else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
                     else pixel = value_1 & 0xFF;
-                    col[k] = pixel;
+                    int pos = (col - dst) + k;
+                    if (0 <= pos && pos < dst_size) dst[pos] = pixel;
                 }
-                col += count;
-                remaining -= count;
+                col += count_1;
+                count = count - count_1;
+                count = count & 0xFFFF;
+                if (count > 0x7FFF) count -= 0x10000;
             } else {
                 /* SKIP */
-                col += count;
-                remaining -= count;
+                col += count_1;
+                count = count - count_1;
+                count = count & 0xFFFF;
+                if (count > 0x7FFF) count -= 0x10000;
             }
         }
         row += width;

@@ -567,23 +567,15 @@ static void refresh_display(void) {
              * 1:1 复刻游戏 sub_16886 公式 (汇编实测 a7 + 4*a8 + 6):
              *   u32 sub_offset = *(uint32_t*)(res_data + 4*sub_index + 6);
              *   res_data[sub_offset + 0..3] = [w:2][h:2] (4字节头)
-             *   res_data[sub_offset + 4..]   = RLE 数据 (sub_4E98D, value=-1)
+             *   res_data[sub_offset + 4..]   = RLE 数据
              *
-             * 资源 7 (开始菜单) / 资源 12 都是此格式:
-             *   [0..5]  = "LLLLLL" (魔数)
-             *   [6..]   = 偏移表 (u32 LE)
+             * 资源12的NESTED_DAT子资源**全部**用 sub_4E98D 4模式 RLE 解码
+             * (1:1 复刻 IDA Pro MCP 反汇编 0x4E98D 完整逻辑)
              *
-             * 资源12实际有 28 个有效子项 (按 sub_16886 算法扫描):
-             *   0: 320x200 全屏背景 (res+0x7a, [6..9] 的值刚好等于子项0偏移 122)
-             *   1: 63x15  菜单项(竖向文字)
-             *   2: 6x99   菜单分隔
-             *   3..10: 24x20 菜单图标 (8个)
-             *   11..15: 8x9, 6x8 小图标
-             *   16: 310x86 大段文字 (汉字)
-             *   17..22: 8-13x6-9 小字符
-             *   23..27: 25x17 中文字符块
-             *
-             * 资源数判定: 沿 sub_index 递增, 当偏移 >= res_size 时停止.
+             * 关键: sub_4E98D 的 count 是 16 位有符号 bx,
+             *       count -= count_1 可能下溢为负数, while(count) 继续
+             *       src 越界读取 (游戏不检查)
+             *       alt 模式特殊: 写 col+1, col+3, col+5 (count次, 每次 dst+=2)
              */
             int valid_count = 0;
             for (int i = 0; i < 64; i++) {  /* 最多64个防爆 */
@@ -605,9 +597,6 @@ static void refresh_display(void) {
                                    (res_data[6 + g_sub_index * 4 + 3] << 24);
                 if (sub_offset < res_size) {
                     const byte* sub_data = res_data + sub_offset;
-                    /* 关键修复: sub_size 必须用子偏移表的下一项算, 不能用 res_size - sub_offset
-                     * 否则会传过大的 RLE 数据给 fd2_rle_decompress, 引发 dst buffer 溢出
-                     * (子项 2 实测: 偏移表项=598字节, res_size-sub_off=8532字节, 差了13倍) */
                     dword sub_size;
                     if (g_sub_index + 1 < valid_count) {
                         dword next_offset = res_data[6 + (g_sub_index + 1) * 4] |
@@ -620,24 +609,16 @@ static void refresh_display(void) {
                     }
 
                     if (sub_size >= 4) {
-                        /* 4 字节头 [w:2][h:2] + RLE 数据, 用 sub_4EC66 状态机 RLE 解码
-                         *
-                         * 关键修正: 资源12的NESTED_DAT子资源实际是 TILE 格式, 使用
-                         * sub_4EC66 状态机RLE (与 FDOTHER.DAT 资源10/11/18-21 一致),
-                         * 不是 fd2_opening_animation.c 中 sub_16886 的 sub_4E98D 4模式RLE!
-                         * 证据: 子项 3 (24x20) RLE 高频字节 0x4A/0x4D/0xC5/0xC7, 0xC0+ 是
-                         * sub_4EC66 的 RLE 模式标记 (0xC0+count, 输出 count 个相同像素).
-                         */
                         int w = sub_data[0] | (sub_data[1] << 8);
                         int h = sub_data[2] | (sub_data[3] << 8);
                         fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_off=0x%x w=%d h=%d sub_size=%u buf_size=%zu\n",
                                 g_sub_index, sub_offset, w, h, sub_size, sizeof(g_decode_buffer));
                         if (w > 0 && h > 0 && (long)w * h <= (long)sizeof(g_decode_buffer)) {
                             memset(g_decode_buffer, 0, (size_t)w * h);
-                            int ret = fd2_rle_sub_4EC66(
-                                sub_data, (int)sub_size,
-                                g_decode_buffer, w, h);
-                            fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d ret=%d\n", g_sub_index, ret);
+                            /* 统一调用 sub_4E98D (1:1 复刻游戏汇编) */
+                            int ret = fd2_rle_sub_4E98D(sub_data, (int)sub_size,
+                                                        g_decode_buffer, w, h, -1);
+                            fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_4E98D ret=%d\n", g_sub_index, ret);
                             if (ret == 0) {
                                 g_decode_width  = (dword)w;
                                 g_decode_height = (dword)h;
