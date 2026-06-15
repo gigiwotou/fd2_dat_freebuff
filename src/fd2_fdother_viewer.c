@@ -605,20 +605,38 @@ static void refresh_display(void) {
                                    (res_data[6 + g_sub_index * 4 + 3] << 24);
                 if (sub_offset < res_size) {
                     const byte* sub_data = res_data + sub_offset;
-                    dword sub_size = res_size - sub_offset;
+                    /* 关键修复: sub_size 必须用子偏移表的下一项算, 不能用 res_size - sub_offset
+                     * 否则会传过大的 RLE 数据给 fd2_rle_decompress, 引发 dst buffer 溢出
+                     * (子项 2 实测: 偏移表项=598字节, res_size-sub_off=8532字节, 差了13倍) */
+                    dword sub_size;
+                    if (g_sub_index + 1 < valid_count) {
+                        dword next_offset = res_data[6 + (g_sub_index + 1) * 4] |
+                                            (res_data[6 + (g_sub_index + 1) * 4 + 1] << 8) |
+                                            (res_data[6 + (g_sub_index + 1) * 4 + 2] << 16) |
+                                            (res_data[6 + (g_sub_index + 1) * 4 + 3] << 24);
+                        sub_size = (next_offset > sub_offset) ? (next_offset - sub_offset) : 4;
+                    } else {
+                        sub_size = res_size - sub_offset;
+                    }
 
                     if (sub_size >= 4) {
-                        /* 4 字节头 [w:2][h:2] + RLE 数据, 用 fd2_rle_decompress 解码
-                         * (与 fd2_opening_animation.c sub_16886 完全一致) */
+                        /* 4 字节头 [w:2][h:2] + RLE 数据, 用 sub_4EC66 状态机 RLE 解码
+                         *
+                         * 关键修正: 资源12的NESTED_DAT子资源实际是 TILE 格式, 使用
+                         * sub_4EC66 状态机RLE (与 FDOTHER.DAT 资源10/11/18-21 一致),
+                         * 不是 fd2_opening_animation.c 中 sub_16886 的 sub_4E98D 4模式RLE!
+                         * 证据: 子项 3 (24x20) RLE 高频字节 0x4A/0x4D/0xC5/0xC7, 0xC0+ 是
+                         * sub_4EC66 的 RLE 模式标记 (0xC0+count, 输出 count 个相同像素).
+                         */
                         int w = sub_data[0] | (sub_data[1] << 8);
                         int h = sub_data[2] | (sub_data[3] << 8);
                         fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_off=0x%x w=%d h=%d sub_size=%u buf_size=%zu\n",
                                 g_sub_index, sub_offset, w, h, sub_size, sizeof(g_decode_buffer));
                         if (w > 0 && h > 0 && (long)w * h <= (long)sizeof(g_decode_buffer)) {
                             memset(g_decode_buffer, 0, (size_t)w * h);
-                            int ret = fd2_rle_decompress(
-                                sub_data + 4, sub_size - 4,
-                                g_decode_buffer, 0, 0, w, w, h, -1);
+                            int ret = fd2_rle_sub_4EC66(
+                                sub_data, (int)sub_size,
+                                g_decode_buffer, w, h);
                             fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d ret=%d\n", g_sub_index, ret);
                             if (ret == 0) {
                                 g_decode_width  = (dword)w;
