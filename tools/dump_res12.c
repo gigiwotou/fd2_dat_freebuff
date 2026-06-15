@@ -64,6 +64,8 @@ int main(int argc, char** argv) {
      * src_size 设为 size_12-sub_offset, 游戏汇编不检查 src 越界,
      * 直接读连续 res_data 内存. */
     static byte back_buffer[320*200];
+    /* 资源12最大子项是 320x200 (子项0) */
+    static byte compact[320*200];  /* pitch=320 取样后 w*h 紧凑输出 */
     for (int idx = 0; idx < valid_count; idx++) {
         dword sub_offset = offsets[idx];
         byte* sub_data = res12 + sub_offset;
@@ -77,22 +79,29 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  子项%d %dx%d 解码失败 ret=%d\n", idx, w, h, ret);
             continue;
         }
-        /* 统计 [0, w*h) 范围唯一色 */
+        /* 1:1 复刻游戏: back buffer pitch=320, 输出时按 pitch 取样
+         * 还原成 w*h 紧凑格式 (与子项0等小尺寸子项一致) */
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                compact[y * w + x] = back_buffer[y * 320 + x];
+            }
+        }
+        /* 统计唯一色 */
         int colors[256] = {0};
-        for (int i = 0; i < w*h; i++) colors[back_buffer[i]]++;
+        for (int i = 0; i < w*h; i++) colors[compact[i]]++;
         int n_uniq = 0;
         for (int i = 0; i < 256; i++) if (colors[i]) n_uniq++;
         fprintf(stderr, "  子项%d %dx%d 唯一色=%d OK\n", idx, w, h, n_uniq);
         (void)colors;
 
-        /* 输出原始像素数据 (只取 w*h 范围) */
+        /* 输出原始像素数据 (w*h 紧凑) */
         char fname[256];
         snprintf(fname, sizeof(fname), "%s/res12_c_sub%d.bin", out_dir, idx);
         FILE* pf = fopen(fname, "wb");
         if (!pf) continue;
         fwrite(&w, 2, 1, pf);
         fwrite(&h, 2, 1, pf);
-        fwrite(back_buffer, 1, w*h, pf);
+        fwrite(compact, 1, w*h, pf);
         fclose(pf);
     }
 

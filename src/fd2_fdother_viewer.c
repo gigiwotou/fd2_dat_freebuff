@@ -147,8 +147,12 @@ static void clear_pixels(void) {
     memset(g_pixels, 0, sizeof(g_pixels));
 }
 
-/* 绘制像素到屏幕 (固定3倍缩放，基于320x200游戏画布) */
-static void draw_pixels(const byte* pixels, int width, int height, 
+/* 绘制像素到屏幕 (固定3倍缩放，基于320x200游戏画布)
+ *
+ * pitch 是 dst 步长(行宽字节数). 当 pitch==width 时使用紧凑读法;
+ * 当 pitch>width (如 sub_4E98D 写入 back buffer, pitch=320) 时按 pitch 取样.
+ */
+static void draw_pixels(const byte* pixels, int width, int height, int pitch,
                         const byte* palette_rgb24, int palette_window) {
     clear_pixels();
     
@@ -164,7 +168,7 @@ static void draw_pixels(const byte* pixels, int width, int height,
     /* 渲染像素（应用palette_window到调色板索引） */
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
-            byte pal_idx = pixels[y * width + x];
+            byte pal_idx = pixels[y * pitch + x];
             
             /* 应用调色板窗口偏移 */
             if (palette_window != -1) {
@@ -513,7 +517,7 @@ static void refresh_display(void) {
                         g_decode_height = g_multi_tile.height;
                         /* 直接用 dst 作为调色板索引，不应用 palette_window 偏移 */
                         draw_pixels(g_decode_buffer, g_multi_tile.width, g_multi_tile.height,
-                                   palette_rgb24, -1);
+                                   g_multi_tile.width, palette_rgb24, -1);
                     }
                 }
             } else {
@@ -525,7 +529,7 @@ static void refresh_display(void) {
                     fdother_decode_tile(&tile, g_decode_buffer);
                     g_decode_width = tile.width;
                     g_decode_height = tile.height;
-                    draw_pixels(g_decode_buffer, tile.width, tile.height, palette_rgb24, -1);
+                    draw_pixels(g_decode_buffer, tile.width, tile.height, tile.width, palette_rgb24, -1);
                 }
             }
             break;
@@ -554,7 +558,7 @@ static void refresh_display(void) {
                         int actual_h  = (ret >> 16) & 0xFFFF;
                         g_decode_width  = actual_w;
                         g_decode_height = actual_h;
-                        draw_pixels(g_decode_buffer, actual_w, actual_h, palette_rgb24, 0);
+                        draw_pixels(g_decode_buffer, actual_w, actual_h, actual_w, palette_rgb24, 0);
                     }
                 }
             }
@@ -629,7 +633,9 @@ static void refresh_display(void) {
                             if (ret == 0) {
                                 g_decode_width  = (dword)w;
                                 g_decode_height = (dword)h;
-                                draw_pixels(g_decode_buffer, w, h, palette_rgb24, -1);
+                                /* sub_4E98D 写入 back buffer (pitch=320),
+                                 * draw_pixels 必须按 pitch 取样显示 */
+                                draw_pixels(g_decode_buffer, w, h, 320, palette_rgb24, -1);
                             }
                         } else {
                             fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d 跳过: w*h=%ld > buf_size=%zu\n",
@@ -683,7 +689,7 @@ static void refresh_display(void) {
                             g_decode_width  = tw;
                             g_decode_height = th;
                             /* raw 像素值 0xC7=199 已是调色板索引, 直接用, 不应用 window */
-                            draw_pixels(g_decode_buffer, tw, th, palette_rgb24, -1);
+                            draw_pixels(g_decode_buffer, tw, th, tw, palette_rgb24, -1);
                         } else {
                             /* 备用: 尝试 5字节头 + RLE (兼容未来可能出现的 RLE 子资源) */
                             fdother_tile_t tile;
@@ -696,7 +702,7 @@ static void refresh_display(void) {
                                                            SUB4E22A_SIZE, SUB4E22A_SIZE, SUB4E22A_SIZE);
                                     g_decode_width  = tile.width;
                                     g_decode_height = tile.height;
-                                    draw_pixels(sub_buf, tile.width, tile.height, palette_rgb24, -1);
+                                    draw_pixels(sub_buf, tile.width, tile.height, tile.width, palette_rgb24, -1);
                                 }
                             }
                         }
