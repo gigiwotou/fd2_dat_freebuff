@@ -631,11 +631,13 @@ static void refresh_display(void) {
                                                         g_decode_buffer, w, h, -1);
                             fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_4E98D ret=%d\n", g_sub_index, ret);
                             if (ret == 0) {
-                                g_decode_width  = (dword)w;
+                                /* sub_4E98D 写入 back buffer (pitch=320, dst 起点=0)
+                                 * 子资源声明 [w,h] 内的 RLE 可能是病态的 (dst[col] 远超 w,
+                                 * 写到下一区域), 实际游戏显示在 n15 buffer 滚动区.
+                                 * viewer 1:1 复刻 back buffer: 显示 320xh 全宽区域 */
+                                g_decode_width  = 320;
                                 g_decode_height = (dword)h;
-                                /* sub_4E98D 写入 back buffer (pitch=320),
-                                 * draw_pixels 必须按 pitch 取样显示 */
-                                draw_pixels(g_decode_buffer, w, h, 320, palette_rgb24, -1);
+                                draw_pixels(g_decode_buffer, 320, h, 320, palette_rgb24, -1);
                             }
                         } else {
                             fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d 跳过: w*h=%ld > buf_size=%zu\n",
