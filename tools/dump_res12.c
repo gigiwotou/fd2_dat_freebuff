@@ -54,37 +54,45 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "资源12有 %d 个子项\n", valid_count);
 
-    /* 解码每个子项并输出 PPM */
-    byte pixels[64000];
+    /* 解码每个子项并输出原始像素数据 */
+    /* 1:1 复刻游戏: 用 320x200 back buffer 作为 dst, fd2_rle_sub_4E98D
+     * 内部按 320 行宽 (a6) 推进, 可能写 w*h 之外 (不影响实际显示).
+     * 我们只提取 [0, w*h) 范围的像素.
+     *
+     * 关键修复: src 必须是 sub_data 起点 (含 4 字节头),
+     * fd2_rle_sub_4E98D 内部会从 src[0..3] 读 w,h (1:1 复刻游戏汇编).
+     * src_size 设为 size_12-sub_offset, 游戏汇编不检查 src 越界,
+     * 直接读连续 res_data 内存. */
+    static byte back_buffer[320*200];
     for (int idx = 0; idx < valid_count; idx++) {
         dword sub_offset = offsets[idx];
         byte* sub_data = res12 + sub_offset;
-        dword sub_size = (idx + 1 < valid_count) ? (offsets[idx+1] - sub_offset) : (size_12 - sub_offset);
-        if (sub_size < 4) continue;
+        if (size_12 - sub_offset < 4) continue;
         int w = sub_data[0] | (sub_data[1] << 8);
         int h = sub_data[2] | (sub_data[3] << 8);
         if (w <= 0 || h <= 0 || w * h > 64000) continue;
-        memset(pixels, 0, w * h);
-        int ret = fd2_rle_sub_4E98D(sub_data, (int)sub_size, pixels, w, h, -1);
+        memset(back_buffer, 0, sizeof(back_buffer));
+        int ret = fd2_rle_sub_4E98D(sub_data, (int)(size_12 - sub_offset), back_buffer, w, h, -1);
         if (ret != 0) {
-            fprintf(stderr, "  子项%d %dx%d 解码失败\n", idx, w, h);
+            fprintf(stderr, "  子项%d %dx%d 解码失败 ret=%d\n", idx, w, h, ret);
             continue;
         }
-        /* 统计唯一色 */
+        /* 统计 [0, w*h) 范围唯一色 */
         int colors[256] = {0};
-        for (int i = 0; i < w*h; i++) colors[pixels[i]]++;
+        for (int i = 0; i < w*h; i++) colors[back_buffer[i]]++;
         int n_uniq = 0;
         for (int i = 0; i < 256; i++) if (colors[i]) n_uniq++;
         fprintf(stderr, "  子项%d %dx%d 唯一色=%d OK\n", idx, w, h, n_uniq);
+        (void)colors;
 
-        /* 输出原始像素数据 */
+        /* 输出原始像素数据 (只取 w*h 范围) */
         char fname[256];
         snprintf(fname, sizeof(fname), "%s/res12_c_sub%d.bin", out_dir, idx);
         FILE* pf = fopen(fname, "wb");
         if (!pf) continue;
         fwrite(&w, 2, 1, pf);
         fwrite(&h, 2, 1, pf);
-        fwrite(pixels, 1, w*h, pf);
+        fwrite(back_buffer, 1, w*h, pf);
         fclose(pf);
     }
 

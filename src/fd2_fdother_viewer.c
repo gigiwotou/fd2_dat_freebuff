@@ -614,9 +614,16 @@ static void refresh_display(void) {
                         fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_off=0x%x w=%d h=%d sub_size=%u buf_size=%zu\n",
                                 g_sub_index, sub_offset, w, h, sub_size, sizeof(g_decode_buffer));
                         if (w > 0 && h > 0 && (long)w * h <= (long)sizeof(g_decode_buffer)) {
-                            memset(g_decode_buffer, 0, (size_t)w * h);
-                            /* 统一调用 sub_4E98D (1:1 复刻游戏汇编) */
-                            int ret = fd2_rle_sub_4E98D(sub_data, (int)sub_size,
+                            /* 1:1 复刻游戏: dst 是 back buffer (320x200=64000字节),
+                             * sub_4E98D 内部按 320 行宽 (a6) 推进, 可能写 w*h 之外 (不影响显示).
+                             * 然后 draw_pixels 只显示 [0,0, w,h] 范围.
+                             *
+                             * 关键修复: src 必须是 sub_data 起点 (含 4 字节头),
+                             * sub_4E98D 内部会从 src[0..3] 读 w,h (1:1 复刻游戏汇编).
+                             * src_size 设为 res_size-sub_offset, 因为游戏汇编不检查 src 越界,
+                             * 直接读连续 res_data 内存. */
+                            memset(g_decode_buffer, 0, sizeof(g_decode_buffer));
+                            int ret = fd2_rle_sub_4E98D(sub_data, (int)(res_size - sub_offset),
                                                         g_decode_buffer, w, h, -1);
                             fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_4E98D ret=%d\n", g_sub_index, ret);
                             if (ret == 0) {

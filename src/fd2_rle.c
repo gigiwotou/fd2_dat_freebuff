@@ -497,27 +497,40 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
     int w = src[0] | (src[1] << 8);
     int h = src[2] | (src[3] << 8);
     (void)w; (void)h;
+
+    /* 1:1 复刻游戏 sub_4E98D 汇编:
+     *
+     * 游戏里 dst 是 back buffer (320x200=64000字节), col/col_dst 用 back buffer 索引.
+     * dst 起点 = a5 = back buffer + a4 + a6*0 (前 0 行), 实际传入 0,0.
+     * dst 终点 = back buffer 末尾 (索引 63999).
+     * 整个 sub_4E98D 按 h 行解码, 每行解码 w 像素, 跨行继续, col 可能越界
+     * w*h 写到 back buffer 之外 (但不影响实际显示).
+     *
+     * 因此接收方应该用 back buffer (320x200) 作为 dst,
+     * 然后只显示 [0,0, w,h] 范围的图像.
+     *
+     * count (bx) 是 16 位有符号, count -= count_1 可能下溢为负数, while(count) 继续.
+     * src 越界读取 (游戏不检查, 只是读到 res_data 后续字节).
+     *
+     * 4 模式: bit7+bit6=FILL/ALT/COPY/SKIP, 见 IDA Pro MCP 反汇编 0x4E98D
+     */
     int src_idx = 4;
     byte* row = dst;
-    int dst_size = width * height;
+    int dst_size = 320 * 200;  /* back buffer 大小, 1:1 复刻游戏 */
+    int pitch = 320;  /* a6=320 back buffer 行宽 */
 
-    /* 1:1 模拟游戏汇编:
-     *  bx (count) 是 16 位有符号, count -= count_1 可能下溢为负数
-     *  while (count) 在负数时继续 (直到 count 回到 0)
-     *  src 越界读取 (游戏不检查, 只是读到 res_data 后续字节)
-     *
-     *  alt 模式特殊: 写 col+1, col+3, col+5 (count次, 每次 dst+=2)
-     */
     for (int y = 0; y < height; y++) {
         byte* col = row;
-        int count = width & 0xFFFF;  /* 16位有符号 bx */
+        int count = width & 0xFFFF;
         if (count > 0x7FFF) count -= 0x10000;
         int cur_iter = 0;
         while (count != 0) {
             cur_iter++;
-            if (cur_iter > 65536) return -1;  /* 真死循环保护 */
+            if (cur_iter > 0x7FFFFFFF) {
+                /* 防止真死循环, 1:1 复刻游戏汇编 (游戏本身无此限制) */
+                return -1;
+            }
 
-            /* src 越界读取时返回 0 (实际游戏是越界读到 res_data 后面, 用 0 模拟) */
             byte ctrl = (src_idx < src_size) ? src[src_idx] : 0;
             src_idx++;
             byte top2 = ctrl & 0xC0;
@@ -525,22 +538,20 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
             byte pixel;
 
             if (top2 == 0x00) {
-                /* FILL */
                 byte v = (src_idx < src_size) ? src[src_idx] : 0;
                 src_idx++;
                 if (value_1 == -1) pixel = v;
                 else if (value_1 > 0xFF) pixel = (value_1 + (((value_1 >> 8) + v) & 7)) & 0xFF;
                 else pixel = value_1 & 0xFF;
-                /* col += count; count -= count */
                 for (int k = 0; k < count_1; k++) {
-                    if ((col - dst) + k < dst_size) col[k] = pixel;
+                    int pos = (col - dst) + k;
+                    if (0 <= pos && pos < dst_size) dst[pos] = pixel;
                 }
                 col += count_1;
                 count = count - count_1;
                 count = count & 0xFFFF;
                 if (count > 0x7FFF) count -= 0x10000;
             } else if (top2 == 0x40) {
-                /* ALT: 读1字节, 写count次 col+1, col+3, col+5 ... */
                 byte v = (src_idx < src_size) ? src[src_idx] : 0;
                 src_idx++;
                 if (value_1 == -1) pixel = v;
@@ -555,7 +566,6 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
                 count = count & 0xFFFF;
                 if (count > 0x7FFF) count -= 0x10000;
             } else if (top2 == 0x80) {
-                /* COPY (逐像素处理) */
                 for (int k = 0; k < count_1; k++) {
                     byte v = (src_idx < src_size) ? src[src_idx] : 0;
                     src_idx++;
@@ -570,15 +580,13 @@ int fd2_rle_sub_4E98D(const byte* src, int src_size, byte* dst, int width, int h
                 count = count & 0xFFFF;
                 if (count > 0x7FFF) count -= 0x10000;
             } else {
-                /* SKIP */
                 col += count_1;
                 count = count - count_1;
                 count = count & 0xFFFF;
                 if (count > 0x7FFF) count -= 0x10000;
             }
         }
-        row += width;
-        (void)dst_size;
+        row += pitch;  /* 行宽 = 320, 不是 width! */
     }
     return 0;
 }
