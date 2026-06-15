@@ -399,7 +399,7 @@ static void sync_max_sub_items(void) {
             break;
         }
         case FDOTHER_RES_TYPE_NESTED_DAT: {
-            /* NESTED_DAT: 用 sub_16886 公式 (dat_ptr + 4*i + 6) 计算有效子项数 */
+            /* NESTED_DAT: 偏移表从 res_data+6 开始 (游戏 sub_16886 公式) */
             int valid_count = 0;
             for (int i = 0; i < 64; i++) {
                 if ((dword)(6 + i * 4) + 4 > res_size) break;
@@ -563,31 +563,27 @@ static void refresh_display(void) {
         
         case FDOTHER_RES_TYPE_NESTED_DAT: {
             /* NESTED_DAT 子资源处理
-             * 
-             * 关键: 偏移表从 res_data+6 开始(包含 declared_count 字段).
-             * 1:1 复刻 fd2_opening_animation.c 中的 sub_16886 公式:
+             *
+             * 1:1 复刻游戏 sub_16886 公式 (汇编实测 a7 + 4*a8 + 6):
              *   u32 sub_offset = *(uint32_t*)(res_data + 4*sub_index + 6);
              *   res_data[sub_offset + 0..3] = [w:2][h:2] (4字节头)
-             *   res_data[sub_offset + 4..]   = RLE 数据 (4E 范围 RLE, value=-1)
-             * 
-             * 实测 (sub_index=0, 资源7):
-             *   +6 处 4 字节 = 0x00000026 (declared_count=38)
-             *   sub_offset = 0x26 = 38
-             *   res_data[38..41] = 40 01 c8 00 -> w=320, h=200 (背景图)
-             *   RLE 数据从 res_data[42] 开始
-             * 
-             * 资源7实际有 7 个子资源 (sub_index 0~6):
-             *   0: 320x200 开始界面背景 (dat_ptr+38)
-             *   1: 61x7   菜单项1 未选中 (Off[0]=0x53c4)
-             *   2: 61x7   菜单项1 选中   (Off[1]=0x54aa)
-             *   3: 62x7   菜单项2 未选中 (Off[2]=0x55e7)
-             *   4: 62x7   菜单项2 选中   (Off[3]=0x56ba)
-             *   5: 62x8   菜单项3 未选中 (Off[4]=0x57e9)
-             *   6: 62x8   菜单项3 选中   (Off[5]=0x5975)
-             *   sub_index=7 读 Off[6]=0x5b51=res_size (哨兵, 跳过)
-             * 
-             * 资源数判定: 沿 sub_index 递增, 当 *(uint32_t*)(res_data+4*i+6) >= res_size 时停止.
-             * 等同 fd2_opening_animation.c 中 nested_resource_count 的算法.
+             *   res_data[sub_offset + 4..]   = RLE 数据 (sub_4E98D, value=-1)
+             *
+             * 资源 7 (开始菜单) / 资源 12 都是此格式:
+             *   [0..5]  = "LLLLLL" (魔数)
+             *   [6..]   = 偏移表 (u32 LE)
+             *
+             * 资源12实际有 28 个有效子项 (按 sub_16886 算法扫描):
+             *   0: 320x200 全屏背景 (res+0x7a, [6..9] 的值刚好等于子项0偏移 122)
+             *   1: 63x15  菜单项(竖向文字)
+             *   2: 6x99   菜单分隔
+             *   3..10: 24x20 菜单图标 (8个)
+             *   11..15: 8x9, 6x8 小图标
+             *   16: 310x86 大段文字 (汉字)
+             *   17..22: 8-13x6-9 小字符
+             *   23..27: 25x17 中文字符块
+             *
+             * 资源数判定: 沿 sub_index 递增, 当偏移 >= res_size 时停止.
              */
             int valid_count = 0;
             for (int i = 0; i < 64; i++) {  /* 最多64个防爆 */
@@ -600,7 +596,7 @@ static void refresh_display(void) {
                 valid_count++;
             }
             g_max_sub_items = valid_count;
-            
+
             /* 显示指定子资源 - 按 sub_16886 公式 */
             if (g_sub_index >= 0 && g_sub_index < valid_count) {
                 dword sub_offset = res_data[6 + g_sub_index * 4] |
@@ -610,22 +606,28 @@ static void refresh_display(void) {
                 if (sub_offset < res_size) {
                     const byte* sub_data = res_data + sub_offset;
                     dword sub_size = res_size - sub_offset;
-                    
+
                     if (sub_size >= 4) {
                         /* 4 字节头 [w:2][h:2] + RLE 数据, 用 fd2_rle_decompress 解码
                          * (与 fd2_opening_animation.c sub_16886 完全一致) */
                         int w = sub_data[0] | (sub_data[1] << 8);
                         int h = sub_data[2] | (sub_data[3] << 8);
+                        fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d sub_off=0x%x w=%d h=%d sub_size=%u buf_size=%zu\n",
+                                g_sub_index, sub_offset, w, h, sub_size, sizeof(g_decode_buffer));
                         if (w > 0 && h > 0 && (long)w * h <= (long)sizeof(g_decode_buffer)) {
                             memset(g_decode_buffer, 0, (size_t)w * h);
                             int ret = fd2_rle_decompress(
                                 sub_data + 4, sub_size - 4,
                                 g_decode_buffer, 0, 0, w, w, h, -1);
+                            fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d ret=%d\n", g_sub_index, ret);
                             if (ret == 0) {
                                 g_decode_width  = (dword)w;
                                 g_decode_height = (dword)h;
                                 draw_pixels(g_decode_buffer, w, h, palette_rgb24, -1);
                             }
+                        } else {
+                            fprintf(stderr, "[DEBUG] NESTED_DAT sub=%d 跳过: w*h=%ld > buf_size=%zu\n",
+                                    g_sub_index, (long)w * h, sizeof(g_decode_buffer));
                         }
                     }
                 }
@@ -766,7 +768,7 @@ static void print_resource_info(void) {
         }
             
         case FDOTHER_RES_TYPE_NESTED_DAT: {
-            /* 嵌套DAT: 按 sub_16886 公式 (dat_ptr + 4*i + 6) 计算有效子项数 */
+            /* 嵌套DAT: 偏移表从 res_data+6 开始 (游戏 sub_16886 公式) */
             int valid_count = 0;
             for (int i = 0; i < 64; i++) {
                 if ((dword)(6 + i * 4) + 4 > res_size) break;
@@ -1055,14 +1057,15 @@ int main(int argc, char* argv[]) {
         }
 
         /* 额外保存 decoder 原始输出 (仅TILE/NESTED_DAT等) */
+        fprintf(stderr, "[DEBUG] g_decode_width=%u g_decode_height=%u\n", g_decode_width, g_decode_height);
         if (g_decode_width > 0 && g_decode_height > 0) {
             char decoder_path[256];
             snprintf(decoder_path, sizeof(decoder_path), "%s.decoder.ppm", out_path);
             fp = fopen(decoder_path, "wb");
             if (fp) {
-                fprintf(fp, "P6\n%d %d\n255\n", g_decode_width, g_decode_height);
+                fprintf(fp, "P6\n%u %u\n255\n", g_decode_width, g_decode_height);
                 /* 用主调色板重新映射 (模拟 viewer draw_pixels 的逻辑) */
-                for (int i = 0; i < g_decode_width * g_decode_height; i++) {
+                for (dword i = 0; i < g_decode_width * g_decode_height; i++) {
                     byte p = g_decode_buffer[i];
                     int pal_idx = p;  /* viewer 用 palette_window=-1, 不应用偏移 */
                     Uint32 color;
@@ -1081,7 +1084,7 @@ int main(int argc, char* argv[]) {
                     fputc(b_, fp);
                 }
                 fclose(fp);
-                printf("[SCREENSHOT] Decoder输出: %s (%dx%d)\n", decoder_path, g_decode_width, g_decode_height);
+                fprintf(stderr, "[SCREENSHOT] Decoder输出: %s (%ux%u)\n", decoder_path, g_decode_width, g_decode_height);
             }
         }
         goto cleanup;

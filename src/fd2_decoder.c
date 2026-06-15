@@ -154,48 +154,55 @@ int fd2_rle_decompress(const u8* src, u32 src_size,
 
     u8* dst_ptr = dst + stride * dst_y + dst_x;
     int row_skip = stride - width;
-    
-    /* 添加目标缓冲区边界检查 */
-    u8* dst_end = dst + stride * (dst_y + height);
-    
+
+    /* 1:1 复刻游戏 sub_4E98D 的 bx (16-bit) 行为:
+     *   - 每次 ctrl 操作后 count -= count_1 (或 count -= 2*count_1 for ALT)
+     *   - bx == 0 时退出当前行的内层循环 (jz LABEL_17)
+     *   - bx != 0 (含负数 wrap 到 0xFFxx) 时继续读 ctrl
+     *   - 没有 dst 越界检查, 由调用方保证 dst buffer 足够大
+     * 这里用 int16_t 模拟 16-bit wrap-around, count==0 退出, count!=0 继续.
+     */
+    int16_t count;
+    u8* dst_end = dst + stride * (dst_y + height);  /* 保留供 palette_offset != -1 分支使用 */
+
     if (palette_offset == -1) {
         const u8* src_end = src + src_size;
         for (int row = 0; row < height; row++) {
-            int count = width;
+            count = (int16_t)width;
 
-            while (count > 0 && src < src_end) {
+            while (count != 0 && src < src_end) {
                 u8 ctrl = *src++;
                 int count_1 = (ctrl & 0x3F) + 1;
                 int bit7 = (ctrl >> 7) & 1;
                 int bit6 = (ctrl >> 6) & 1;
 
                 if (bit7 && bit6) {
-                    if (dst_ptr + count_1 > dst_end) return -1;
+                    /* SKIP */
                     dst_ptr += count_1;
-                    count -= count_1;
+                    count = (int16_t)(count - count_1);
                 } else if (bit7 && !bit6) {
+                    /* COPY */
                     if (src + count_1 > src_end) return -1;
-                    if (dst_ptr + count_1 > dst_end) return -1;
-                    count -= count_1;
                     memcpy(dst_ptr, src, count_1);
                     src += count_1;
                     dst_ptr += count_1;
+                    count = (int16_t)(count - count_1);
                 } else if (!bit7 && bit6) {
+                    /* ALT: 间隔写 count_1 像素, count -= 2*count_1 */
                     if (src >= src_end) return -1;
-                    if (dst_ptr + count_1 * 2 > dst_end) return -1;
-                    count = count - count_1 - count_1;
                     u8 fill = *src++;
                     for (int i = 0; i < count_1; i++) {
                         dst_ptr[1] = fill;
                         dst_ptr += 2;
                     }
+                    count = (int16_t)(count - count_1 - count_1);
                 } else {
+                    /* FILL */
                     if (src >= src_end) return -1;
-                    if (dst_ptr + count_1 > dst_end) return -1;
-                    count -= count_1;
                     u8 fill = *src++;
                     memset(dst_ptr, fill, count_1);
                     dst_ptr += count_1;
+                    count = (int16_t)(count - count_1);
                 }
             }
             dst_ptr += row_skip;
