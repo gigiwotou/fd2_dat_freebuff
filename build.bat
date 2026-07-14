@@ -2,6 +2,9 @@
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
+:: 切换到脚本所在目录，确保相对路径正确
+cd /d "%~dp0"
+
 :: FD2 Build Script for Windows (MSYS2)
 :: Supports both UCRT64 and MINGW64 environments
 :: Usage: build.bat [all|game|test|intro|menu_debug|sub_111ba_test|ui_test|clean|release] [mingw64]
@@ -14,14 +17,17 @@ if /I "%~1"=="mingw64" (
     set TARGET=all
 )
 
+:: 添加 MSYS2 的 bin 目录到 PATH，确保 GCC 能找到依赖 DLL
+set PATH=%MSYS2_PREFIX%\bin;C:\msys64\usr\bin;!PATH!
+
 set GCC=%MSYS2_PREFIX%\bin\gcc.exe
-set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -DFD2_DEBUG -mconsole -static-libgcc
-set LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
+set CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I%MSYS2_PREFIX%\include -O2 -DFD2_DEBUG -mconsole -static-libgcc
+set LDFLAGS=-L%MSYS2_PREFIX%\lib -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
 set SDL_LDFLAGS=-lmingw32 -lSDL2main -lSDL2 -lm
 
 :: Release flags (no console window, no debug output)
-set RELEASE_CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I"%MSYS2_PREFIX%\include" -O2 -DNDEBUG -mwindows -static-libgcc
-set RELEASE_LDFLAGS=-L"%MSYS2_PREFIX%\lib" -lSDL2 -lm -static-libgcc
+set RELEASE_CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -I%MSYS2_PREFIX%\include -O2 -DNDEBUG -mwindows -static-libgcc
+set RELEASE_LDFLAGS=-L%MSYS2_PREFIX%\lib -lSDL2 -lm -static-libgcc
 
 set SRC_DIR=src
 set OBJ_DIR=obj
@@ -59,7 +65,10 @@ if /I "%~1"=="ui_test" set TARGET=ui_test
 if /I "%~1"=="fdother_test" set TARGET=fdother_test
 if /I "%~1"=="analyzer" set TARGET=analyzer
 if /I "%~1"=="viewer" set TARGET=viewer
-if /I "%~1"=="mingw64" set MSYS2_PREFIX=C:\msys64\mingw64
+if /I "%~1"=="mingw64" (
+    set MSYS2_PREFIX=C:\msys64\mingw64
+    set PATH=!MSYS2_PREFIX!\bin;C:\msys64\usr\bin;!PATH!
+)
 shift
 goto :arg_loop
 :arg_done
@@ -70,71 +79,86 @@ if "%RELEASE%"=="1" (
 )
 
 :: Clean
-if "%TARGET%"=="clean" (
-    echo Cleaning build artifacts...
-    if exist %OBJ_DIR% rmdir /S /Q %OBJ_DIR%
-    if exist %OBJ_RELEASE_DIR% rmdir /S /Q %OBJ_RELEASE_DIR%
-    if exist %BIN_DIR% (
-        for %%F in (%BIN_DIR%\*.exe) do (
-            del /F /Q "%%F" 2>nul
-        )
-    )
-    echo Clean complete.
-    goto :end
-)
+if "%TARGET%"=="clean" goto :do_clean
 
 :: Create directories
 if not exist %OBJ_DIR% mkdir %OBJ_DIR%
 if not exist %OBJ_RELEASE_DIR% mkdir %OBJ_RELEASE_DIR%
 if not exist %BIN_DIR% mkdir %BIN_DIR%
 
-:: Compile all source files
-if "%TARGET%"=="all" (
-    call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_input.c %OBJ_DIR%\fd2_input.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_render.c %OBJ_DIR%\fd2_render.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_audio.c %OBJ_DIR%\fd2_audio.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_resources.c %OBJ_DIR%\fd2_resources.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_afm.c %OBJ_DIR%\fd2_afm.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_map_loader.c %OBJ_DIR%\fd2_map_loader.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_icon_b24.c %OBJ_DIR%\fd2_icon_b24.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_sprite.c %OBJ_DIR%\fd2_sprite.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_save_load.c %OBJ_DIR%\fd2_save_load.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_state_machine.c %OBJ_DIR%\fd2_state_machine.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_scenes.c %OBJ_DIR%\fd2_scenes.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_globals.c %OBJ_DIR%\fd2_globals.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_data_loader.c %OBJ_DIR%\fd2_data_loader.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_scene_interact.c %OBJ_DIR%\fd2_scene_interact.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_input_scan.c %OBJ_DIR%\fd2_input_scan.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_render_pipeline.c %OBJ_DIR%\fd2_render_pipeline.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_opening_animation.c %OBJ_DIR%\fd2_opening_animation.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_scene_manager.c %OBJ_DIR%\fd2_scene_manager.o
-    if errorlevel 1 goto :error
-    call :compile %SRC_DIR%\fd2_opening_intro.c %OBJ_DIR%\fd2_opening_intro.o
+:: Dispatch to target
+if "%TARGET%"=="all" goto :build_all
+if "%TARGET%"=="game" goto :build_game
+if "%TARGET%"=="release" goto :build_release
+if "%TARGET%"=="ui_test" goto :build_ui_test
+if "%TARGET%"=="fdother_test" goto :build_fdother_test
+if "%TARGET%"=="analyzer" goto :build_analyzer
+if "%TARGET%"=="viewer" goto :build_viewer
+
+echo Unknown target: %TARGET%
+echo Usage: build.bat [all^|game^|clean^|release] [mingw64]
+goto :end
+
+:: ===== CLEAN =====
+:do_clean
+echo Cleaning build artifacts...
+if exist %OBJ_DIR% rmdir /S /Q %OBJ_DIR%
+if exist %OBJ_RELEASE_DIR% rmdir /S /Q %OBJ_RELEASE_DIR%
+if exist %BIN_DIR% (
+    for %%F in (%BIN_DIR%\*.exe) do (
+        del /F /Q "%%F" 2>nul
+    )
+)
+echo Clean complete.
+goto :end
+
+:: ===== BUILD ALL =====
+:build_all
+call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_input.c %OBJ_DIR%\fd2_input.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_render.c %OBJ_DIR%\fd2_render.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_audio.c %OBJ_DIR%\fd2_audio.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_resources.c %OBJ_DIR%\fd2_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_afm.c %OBJ_DIR%\fd2_afm.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_map_loader.c %OBJ_DIR%\fd2_map_loader.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_icon_b24.c %OBJ_DIR%\fd2_icon_b24.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_sprite.c %OBJ_DIR%\fd2_sprite.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\main.c %OBJ_DIR%\main.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_save_load.c %OBJ_DIR%\fd2_save_load.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_state_machine.c %OBJ_DIR%\fd2_state_machine.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_scenes.c %OBJ_DIR%\fd2_scenes.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_globals.c %OBJ_DIR%\fd2_globals.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_data_loader.c %OBJ_DIR%\fd2_data_loader.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_scene_interact.c %OBJ_DIR%\fd2_scene_interact.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_input_scan.c %OBJ_DIR%\fd2_input_scan.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_render_pipeline.c %OBJ_DIR%\fd2_render_pipeline.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_opening_animation.c %OBJ_DIR%\fd2_opening_animation.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_scene_manager.c %OBJ_DIR%\fd2_scene_manager.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_opening_intro.c %OBJ_DIR%\fd2_opening_intro.o
 if errorlevel 1 goto :error
 call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
 if errorlevel 1 goto :error
@@ -143,122 +167,33 @@ if errorlevel 1 goto :error
 
 echo Linking %TARGET_GAME% ...
 %GCC% %CFLAGS% -o %TARGET_GAME% %GAME_OBJS% %DECODER_OBJ% %LDFLAGS%
-    if errorlevel 1 goto :error
-    echo [OK] %TARGET_GAME%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_GAME%
 
-    echo.
-    echo Copying required DLLs...
-)
-
-:: Individual targets
-if "%TARGET%"=="game" goto :build_game
-if "%TARGET%"=="release" goto :build_release
-if "%TARGET%"=="ui_test" goto :build_ui_test
-if "%TARGET%"=="fdother_test" goto :build_fdother_test
-if "%TARGET%"=="analyzer" goto :build_analyzer
-if "%TARGET%"=="viewer" goto :build_viewer
-
-if "%TARGET%"=="all" (
-    echo.
-    echo Copying required DLLs...
-    copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
-    echo Copying game data files...
-    if exist game\ (
-        for %%F in (game\*) do (
-            set "ext=%%~xF"
-            if /I not "!ext!"==".exe" (
-                if /I not "!ext!"==".i64" (
-                    if /I not "!ext!"==".ini" (
-                        if /I not "!ext!"==".MDI" (
-                            if /I not "!ext!"==".DIG" (
-                                copy /Y "%%F" "%BIN_DIR%\" >nul 2>&1
-                            )
+echo.
+echo Copying required DLLs...
+copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+echo Copying game data files...
+if exist game\ (
+    for %%F in (game\*) do (
+        set "ext=%%~xF"
+        if /I not "!ext!"==".exe" (
+            if /I not "!ext!"==".i64" (
+                if /I not "!ext!"==".ini" (
+                    if /I not "!ext!"==".MDI" (
+                        if /I not "!ext!"==".DIG" (
+                            copy /Y "%%F" "%BIN_DIR%\" >nul 2>&1
                         )
                     )
                 )
             )
         )
     )
-    echo Build complete! All targets generated in %BIN_DIR%\.
-    goto :end
 )
-
-:build_ui_test
-call :compile %SRC_DIR%\fd2_ui_test.c %OBJ_DIR%\fd2_ui_test.o
-if errorlevel 1 goto :error
-
-echo Linking %TARGET_UI_TEST%
-%GCC% %CFLAGS% -o %TARGET_UI_TEST% %OBJ_DIR%\fd2_ui_test.o %LDFLAGS%
-if errorlevel 1 goto :error
-echo [OK] %TARGET_UI_TEST%
-
-echo.
-echo Copying required DLLs...
-copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+echo Build complete! All targets generated in %BIN_DIR%\.
 goto :end
 
-:build_analyzer
-call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_resource_analyzer.c %OBJ_DIR%\fd2_resource_analyzer.o
-if errorlevel 1 goto :error
-
-if not exist output mkdir output
-
-echo Linking %TARGET_ANALYZER%
-%GCC% %CFLAGS% -o %TARGET_ANALYZER% %OBJ_DIR%\fd2_resource_analyzer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
-if errorlevel 1 goto :error
-echo [OK] %TARGET_ANALYZER%
-goto :end
-
-:build_viewer
-call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_sfx.c %OBJ_DIR%\fd2_sfx.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_fdother_viewer.c %OBJ_DIR%\fd2_fdother_viewer.o
-if errorlevel 1 goto :error
-
-echo Linking %TARGET_VIEWER%
-%GCC% %CFLAGS% -o %TARGET_VIEWER% %OBJ_DIR%\fd2_fdother_viewer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o %OBJ_DIR%\fd2_sfx.o %DECODER_OBJ% %LDFLAGS%
-if errorlevel 1 goto :error
-echo [OK] %TARGET_VIEWER%
-
-echo.
-echo Copying required DLLs...
-copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
-goto :end
-
-:build_fdother_test
-call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
-if errorlevel 1 goto :error
-call :compile %SRC_DIR%\fd2_fdother_test.c %OBJ_DIR%\fd2_fdother_test.o
-if errorlevel 1 goto :error
-
-echo Linking %TARGET_FDOTHER_TEST%
-%GCC% %CFLAGS% -o %TARGET_FDOTHER_TEST% %OBJ_DIR%\fd2_fdother_test.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o %LDFLAGS%
-if errorlevel 1 goto :error
-echo [OK] %TARGET_FDOTHER_TEST%
-
-echo.
-echo Copying required DLLs...
-copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
-goto :end
-
+:: ===== BUILD GAME =====
 :build_game
 call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
 if errorlevel 1 goto :error
@@ -317,6 +252,7 @@ if errorlevel 1 goto :error
 echo [OK] %TARGET_GAME%
 goto :end
 
+:: ===== BUILD RELEASE =====
 :build_release
 call :compile_release %SRC_DIR%\fd2_decoder.c %DECODER_RELEASE_OBJ%
 if errorlevel 1 goto :error
@@ -375,10 +311,87 @@ if errorlevel 1 goto :error
 echo [OK] %TARGET_GAME_RELEASE%
 goto :end
 
-echo Unknown target: %TARGET%
-echo Usage: build.bat [all^|game^|clean^|release] [mingw64]
+:: ===== BUILD UI TEST =====
+:build_ui_test
+call :compile %SRC_DIR%\fd2_ui_test.c %OBJ_DIR%\fd2_ui_test.o
+if errorlevel 1 goto :error
+
+echo Linking %TARGET_UI_TEST%
+%GCC% %CFLAGS% -o %TARGET_UI_TEST% %OBJ_DIR%\fd2_ui_test.o %LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_UI_TEST%
+
+echo.
+echo Copying required DLLs...
+copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
 goto :end
 
+:: ===== BUILD ANALYZER =====
+:build_analyzer
+call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_resource_analyzer.c %OBJ_DIR%\fd2_resource_analyzer.o
+if errorlevel 1 goto :error
+
+if not exist output mkdir output
+
+echo Linking %TARGET_ANALYZER%
+%GCC% %CFLAGS% -o %TARGET_ANALYZER% %OBJ_DIR%\fd2_resource_analyzer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o -lmingw32 -lSDL2main -lSDL2 -lm -static-libgcc
+if errorlevel 1 goto :error
+echo [OK] %TARGET_ANALYZER%
+goto :end
+
+:: ===== BUILD VIEWER =====
+:build_viewer
+call :compile %SRC_DIR%\fd2_decoder.c %DECODER_OBJ%
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_sfx.c %OBJ_DIR%\fd2_sfx.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_fdother_viewer.c %OBJ_DIR%\fd2_fdother_viewer.o
+if errorlevel 1 goto :error
+
+echo Linking %TARGET_VIEWER%
+%GCC% %CFLAGS% -o %TARGET_VIEWER% %OBJ_DIR%\fd2_fdother_viewer.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o %OBJ_DIR%\fd2_sfx.o %DECODER_OBJ% %LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_VIEWER%
+
+echo.
+echo Copying required DLLs...
+copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+goto :end
+
+:: ===== BUILD FDOTHER TEST =====
+:build_fdother_test
+call :compile %SRC_DIR%\fd2_fdother_resources.c %OBJ_DIR%\fd2_fdother_resources.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_dat.c %OBJ_DIR%\fd2_dat.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_rle.c %OBJ_DIR%\fd2_rle.o
+if errorlevel 1 goto :error
+call :compile %SRC_DIR%\fd2_fdother_test.c %OBJ_DIR%\fd2_fdother_test.o
+if errorlevel 1 goto :error
+
+echo Linking %TARGET_FDOTHER_TEST%
+%GCC% %CFLAGS% -o %TARGET_FDOTHER_TEST% %OBJ_DIR%\fd2_fdother_test.o %OBJ_DIR%\fd2_fdother_resources.o %OBJ_DIR%\fd2_dat.o %OBJ_DIR%\fd2_rle.o %LDFLAGS%
+if errorlevel 1 goto :error
+echo [OK] %TARGET_FDOTHER_TEST%
+
+echo.
+echo Copying required DLLs...
+copy /Y "%MSYS2_PREFIX%\bin\SDL2.dll" "%BIN_DIR%\" >nul 2>&1
+goto :end
+
+:: ===== COMPILE SUBROUTINES =====
 :compile
 echo Compiling %~1
 %GCC% %CFLAGS% -c %~1 -o %~2
@@ -386,7 +399,7 @@ if errorlevel 1 (
     echo ERROR: Failed to compile %~1
     exit /b 1
 )
-exit /b 0
+goto :eof
 
 :compile_release
 echo Compiling %~1 (release)
@@ -395,8 +408,9 @@ if errorlevel 1 (
     echo ERROR: Failed to compile %~1
     exit /b 1
 )
-exit /b 0
+goto :eof
 
+:: ===== ERROR & END =====
 :error
 echo.
 echo BUILD FAILED!
