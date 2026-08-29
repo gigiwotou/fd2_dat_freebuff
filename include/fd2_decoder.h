@@ -159,6 +159,10 @@ typedef enum {
     FD2_RES_NESTED_DAT,    /* Starts with LLLLLL and has valid inner table */
     FD2_RES_TEXT,          /* High ratio of printable ASCII */
     FD2_RES_RAW,           /* Everything else */
+    /* Appended last so the numeric values above stay stable. */
+    FD2_RES_AFM,           /* ANI.DAT: "AFM " magic, bytecode VM (not RLE) */
+    FD2_RES_LMI1,          /* FDOTHER: "LMI1" magic bank (see fd2_lmi1.h) */
+    FD2_RES_FIGANI,        /* FIGANI.DAT: battle animation (see fd2_figani.h) */
 } fd2_resource_type_t;
 
 typedef struct {

@@ -12,6 +12,8 @@
  */
 
 #include "fd2_decoder.h"
+#include "fd2_lmi1.h"
+#include "fd2_figani.h"
 #include "../include/fd2_rle.h"
 #include "../include/fd2_dat_loader.h"
 #include <stdio.h>
@@ -47,8 +49,50 @@ int fd2_dat_load(fd2_dat_t* dat, const char* path) {
         return -1;
     }
 
-    u32 resource_count;
-    memcpy(&resource_count, data + 6, 4);
+    /* ------------------------------------------------------------------
+     * DAT container layout (verified against all 11 original .DAT files):
+     *
+     *   +0..5    magic "LLLLLL"
+     *   +6       uint32 table_end -- where the offset table ENDS, which is
+     *            also the start offset of resource 0
+     *   +6       offset table, N = (table_end - 6) / 4 entries
+     *   +6+4N    resource 0 data ...
+     *   last table entry == file size (EOF sentinel), so resources = N - 1
+     *
+     * !!! HISTORICAL CONVENTION - DO NOT "FIX" THIS BLINDLY !!!
+     *
+     * This function has always read the offset table from +10 instead of +6.
+     * As a result, resource index i in this codebase == real resource i+1,
+     * and real resource 0 is invisible here. Every resource number in the
+     * whole project is calibrated against that off-by-one: e.g. load_palette
+     * asks for palette_res=7 and actually lands on real resource 8, which is
+     * the 768-byte 6-bit VGA palette at offset 206436 in FDOTHER.DAT.
+     *
+     * If you ever change the table base below to +6, you MUST also subtract 1
+     * from every resource index at every call site. Otherwise load_palette
+     * would silently read real resource 7 (23377 bytes, NOT a palette).
+     * Until that migration is done deliberately, keep the +10 below.
+     * ------------------------------------------------------------------ */
+    u32 table_end;
+    memcpy(&table_end, data + 6, 4);
+
+    /* count = (table_end - 6) / 4, matching fd2_re ArchiveDataResourceCount.
+     * Valid indices are 0 .. count-1; the final entry resolves to the EOF
+     * sentinel so it has length 0, exactly as in fd2_re's ArchiveEntry.
+     *
+     * NOTE: this codebase used to read the table from +10, which shifted every
+     * index by one (code index i == real resource i+1) and made real resource 0
+     * unreachable. All call sites have been migrated to the +6 convention
+     * (every literal index +1), so behaviour is byte-for-byte identical:
+     * verified over all 102 FDOTHER entries that (+10, i) == (+6, i+1). */
+    u32 entries = (table_end >= 10) ? (table_end - 6) / 4 : 0;
+    u32 resource_count = (entries >= 1) ? entries : 0;
+
+    if (resource_count == 0) {
+        fprintf(stderr, "fd2_dat_load: bogus offset table (table_end=%u)\n", table_end);
+        free(data);
+        return -1;
+    }
 
     fd2_resource_t* resources = (fd2_resource_t*)calloc(resource_count, sizeof(fd2_resource_t));
     if (!resources) {
@@ -59,7 +103,8 @@ int fd2_dat_load(fd2_dat_t* dat, const char* path) {
     /* Pass 1: read all offsets */
     for (u32 i = 0; i < resource_count; i++) {
         u32 offset;
-        memcpy(&offset, data + 10 + i * 4, 4);
+        /* +6, matching fd2_re ArchiveEntry */
+        memcpy(&offset, data + 6 + i * 4, 4);
         resources[i].start = offset;
     }
 
@@ -178,13 +223,15 @@ int fd2_is_dat_magic(const u8* data, u32 size) {
 int fd2_dat_validate_offsets(const u8* data, u32 file_size, u32 resource_count) {
     if (!data || file_size < 10) return 0;
 
-    u32 min_size = 10 + resource_count * 4;
+    u32 min_size = 6 + resource_count * 4;
     if (file_size < min_size) return 0;
 
     for (u32 i = 0; i < resource_count; i++) {
         u32 offset;
-        memcpy(&offset, data + 10 + i * 4, 4);
-        if (offset >= file_size) return 0;
+        memcpy(&offset, data + 6 + i * 4, 4);
+        /* `>` not `>=`: the last entry is the EOF sentinel and legitimately
+         * equals file_size. Rejecting it would fail every valid archive. */
+        if (offset > file_size) return 0;
     }
     return 1;
 }
@@ -209,12 +256,38 @@ void fd2_resource_classify(const u8* data, u32 size, fd2_resource_info_t* info) 
     }
 
     if (fd2_is_dat_magic(data, size)) {
-        u32 inner_count;
-        memcpy(&inner_count, data + 6, 4);
-        u32 min_size = 10 + inner_count * 4;
-        if (size >= min_size && fd2_dat_validate_offsets(data, size, inner_count)) {
-            info->type = FD2_RES_NESTED_DAT;
-            info->inner_resource_count = (int)inner_count;
+        /* fd2_re ArchiveDataResourceCount: the u32 at +6 is table_end, NOT a
+         * count. Entries live at (6 + 4*i), so count = (table_end - 6) / 4.
+         *
+         * Reading table_end as the count made validate_offsets() walk hundreds
+         * of bogus offsets into the payload and reject the archive, so *every*
+         * nested container was misclassified as non-DAT. Verified: all 29
+         * nested FDOTHER resources (incl. #7, which is TITLE.DAT verbatim)
+         * were being missed. */
+        u32 table_end = 0;
+        if (size >= 10) memcpy(&table_end, data + 6, 4);
+        if (table_end >= 10 && table_end <= size && (table_end - 6) % 4 == 0) {
+            u32 inner_count = (table_end - 6) / 4;
+            if (fd2_dat_validate_offsets(data, size, inner_count)) {
+                info->type = FD2_RES_NESTED_DAT;
+                info->inner_resource_count = (int)inner_count;
+                return;
+            }
+        }
+    }
+
+    /* FIGANI: battle animations. There is NO magic, and it must be tested
+     * BEFORE the width/height heuristic below - otherwise the frame count in
+     * byte 0 gets misread as a width and the animation is classified as a
+     * plain RLE_IMAGE. fd2_figani_open validates the entire directory
+     * (monotonic offsets, 13-byte frame headers, geometry within 1..1024),
+     * so a coincidental match is unlikely. */
+    {
+        fd2_figani_t anim;
+        if (fd2_figani_open(data, size, &anim) == 0) {
+            info->type = FD2_RES_FIGANI;
+            info->inner_resource_count = anim.count;
+            fd2_figani_close(&anim);
             return;
         }
     }
@@ -225,6 +298,27 @@ void fd2_resource_classify(const u8* data, u32 size, fd2_resource_info_t* info) 
         info->width = w;
         info->height = h;
         return;
+    }
+
+    /* AFM: ANI.DAT's bytecode-VM clips. The 0x51..0xA1 title region is
+     * printable ASCII, so without this check every ANI resource was
+     * misclassified as FD2_RES_TEXT. */
+    if (size >= 8 && memcmp(data, "AFM ", 4) == 0) {
+        info->type = FD2_RES_AFM;
+        return;
+    }
+
+    /* LMI1: FDOTHER's third container form (#3 #5 #6 #9 #13 #14 #29).
+     * Validate through fd2_lmi1_open so a coincidental "LMI1" prefix does
+     * not get promoted to a bank. */
+    if (fd2_lmi1_is_magic(data, size)) {
+        fd2_lmi1_t bank;
+        if (fd2_lmi1_open(data, size, &bank) == 0) {
+            info->type = FD2_RES_LMI1;
+            info->inner_resource_count = bank.count;
+            fd2_lmi1_close(&bank);
+            return;
+        }
     }
 
     int printable = 0;

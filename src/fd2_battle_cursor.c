@@ -102,7 +102,13 @@ int load_cursor_image(fd2_game_t* game, state_battle_data_t* data) {
         return -1;
     }
 
-    u32 resource_count = *(const u32*)(fdother_raw + 6);
+    /* (fd2_re ArchiveDataResourceCount) The u32 at +6 is table_end, not a
+     * count. Entries live at 6 + 4*i, so count = (table_end - 6) / 4.
+     * Note res1/res2 below read +10 / +14, which is 6+4*1 and 6+4*2 - i.e.
+     * they already index the +6 convention correctly. */
+    u32 table_end = *(const u32*)(fdother_raw + 6);
+    u32 resource_count = (table_end >= 10 && table_end <= fdother_size)
+                       ? (table_end - 6) / 4 : 0;
     printf("load_cursor_image: FDOTHER resource count=%u\n", resource_count);
 
     if (resource_count < 2) {

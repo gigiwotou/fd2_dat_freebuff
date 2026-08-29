@@ -8,6 +8,7 @@
 #define _GNU_SOURCE
 #include "fd2_game.h"
 #include "fd2_menu.h"
+#include "fd2_save_load.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,7 @@ static void menu_draw(fd2_game_t* game, int selection, int num_items) {
     static const int item_y[3] = { 164, 173, 182 };
 
     u32 dat_size;
-    const u8* dat = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 6, &dat_size);
+    const u8* dat = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &dat_size);
     if (!dat || dat_size < 14) {
         printf("menu_draw: FDOTHER #6 not available (%u bytes)\n", dat_size);
         return;
@@ -135,14 +136,24 @@ void state_menu_enter(fd2_game_t* game) {
     state_menu_data_t* data = (state_menu_data_t*)calloc(1, sizeof(state_menu_data_t));
     game->state_data = data;
     data->menu_selection = 0;
-    data->num_items = 3;
+    /* Item count is DYNAMIC (sub_1F894), not fixed at 3:
+     *   1 -> Start only                (no usable FD2.SAV)
+     *   2 -> Start + Load              (camp save, checksum valid)
+     *   3 -> Start + Load + Continue   (battle save too, scene idx != 255)
+     */
+    int save_state = fd2_save_detect_state(fd2_game_data_path(game, "FD2.SAV"));
+    data->num_items = save_state;
+    printf("state_menu: save state=%d -> %d item(s) (%s)\n", save_state,
+           data->num_items,
+           save_state == FD2_SAVE_STATE_BATTLE ? "Start/Load/Continue" :
+           save_state == FD2_SAVE_STATE_CAMP   ? "Start/Load" : "Start only");
     data->blink_timer = 0;
     data->blink_count = 0;
     data->selected = false;
     data->blink_visible = true;
 
     u32 pal_size;
-    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 7, &pal_size);
+    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 8, &pal_size);
     if (pal_res && pal_size == FD2_PALETTE_BYTES) {
         fd2_render_set_palette_6bit(&game->render, pal_res);
     }
@@ -176,16 +187,22 @@ fd2_state_t state_menu_update(fd2_game_t* game) {
         if (data->blink_count >= 8) {
             switch (data->menu_selection) {
                 case 0:
+                    /* Start (new game), sub_25EBB v8==0:
+                     *   n17 = 0; load FDOTHER#0; call sub_3231B (opening story)
+                     * NOT a fixed map index - old code jumped to Map 32. */
                     game->game_mode = 0;
-                    game->map_index = 32;
-                    printf("[MENU] Starting 1P story mode - Map 32\n");
+                    game->map_index = 0;
+                    game->from_save = 0;
+                    printf("[MENU] Start -> new game, opening story scene 0\n");
                     return FD2_STATE_BATTLE;
                 case 1:
-                    game->game_mode = 1;
-                    game->map_index = 0;
-                    return FD2_STATE_BATTLE;
+                    /* Load: camp save (n100 >= 2). The camp/town scene is not
+                     * ported yet, so fall through to the save loader. */
+                    printf("[MENU] Load -> camp save (camp scene not ported yet)\n");
+                    return FD2_STATE_CONTINUE;
                 case 2:
-                    printf("[MENU] Continue - loading battle save\n");
+                    /* Continue: battle save (n100 >= 3). */
+                    printf("[MENU] Continue -> battle save\n");
                     return FD2_STATE_CONTINUE;
                 default:
                     game->game_mode = 0;

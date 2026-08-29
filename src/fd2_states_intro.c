@@ -221,7 +221,7 @@ static void intro_build_scroll_buffer(fd2_game_t* game, state_intro_data_t* data
 
     for (int i = 0; i < num_frames; i++) {
         u32 fsize;
-        const u8* fres = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 68 + i, &fsize);
+        const u8* fres = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 69 + i, &fsize);
         if (fres) {
             int fw, fh;
             u8* fpixels = NULL;
@@ -262,13 +262,13 @@ void state_intro_enter(fd2_game_t* game) {
     fd2_audio_play_music(&game->audio, 11, -1);
 
     u32 pal_size;
-    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 75, &pal_size);
+    const u8* pal_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 76, &pal_size);
     if (pal_res && pal_size == FD2_PALETTE_BYTES) {
         fd2_render_set_palette_6bit(&game->render, pal_res);
     }
 
     u32 title_size;
-    const u8* title_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 73, &title_size);
+    const u8* title_res = fd2_resources_get(&game->resources, FD2_DAT_FDOTHER, 74, &title_size);
     fd2_render_fill_screen(&game->render, 0);
     if (title_res) {
         fd2_render_blit_rle(&game->render, title_res, title_size, 0, 0);
@@ -312,7 +312,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
             if (data->phase_frame == 0) {
                 u32 pal_size;
                 const u8* pal_res = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 98, &pal_size);
+                    &game->resources, FD2_DAT_FDOTHER, 99, &pal_size);
                 if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, pal_res);
                 }
@@ -350,7 +350,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
 
                 u32 pal_size;
                 const u8* pal_res = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 99, &pal_size);
+                    &game->resources, FD2_DAT_FDOTHER, 100, &pal_size);
                 if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, pal_res);
                 }
@@ -440,7 +440,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
 
                         u32 pal_size;
                         const u8* pal_res = fd2_resources_get(
-                            &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                            &game->resources, FD2_DAT_FDOTHER, 102, &pal_size);
                         if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                             fd2_render_set_palette_6bit(&game->render, pal_res);
                         }
@@ -482,7 +482,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
                 if (pos == next_trigger) {
                     u32 pal_size;
                     const u8* dark_pal = fd2_resources_get(
-                        &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                        &game->resources, FD2_DAT_FDOTHER, 102, &pal_size);
                     if (dark_pal && pal_size == FD2_PALETTE_BYTES) {
                         fd2_render_set_palette_6bit(&game->render, dark_pal);
                         printf("intro: >>> palette flash TRIGGER at pos %d (trigger %d/%d) <<<\n",
@@ -500,7 +500,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
             if (data->palette_flash_active && data->palette_flash_frame_count >= 11) {
                 u32 pal_size;
                 const u8* normal_pal = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 100, &pal_size);
+                    &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
                 if (normal_pal && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, normal_pal);
                     printf("intro: palette flash RESTORE after %d frames\n", data->palette_flash_frame_count);
@@ -584,7 +584,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
 
                         u32 pal_size;
                         const u8* pal_res = fd2_resources_get(
-                            &game->resources, FD2_DAT_FDOTHER, 101, &pal_size);
+                            &game->resources, FD2_DAT_FDOTHER, 102, &pal_size);
                         if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                             fd2_render_set_palette_6bit(&game->render, pal_res);
                         }
@@ -631,14 +631,14 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
 
             if (pos == 450) {
                 printf("intro: TRIGGERING OVERLAY at pos 450 (image=%d, palette=%d)\n", 99, 98);
-                data->overlay_image_res = 99;
-                data->overlay_palette_res = 98;
+                data->overlay_image_res = 100;
+                data->overlay_palette_res = 99;
                 data->overlay_step = 1;
                 break;
             }
             if (pos == 10) {
-                data->overlay_image_res = 74;
-                data->overlay_palette_res = 75;
+                data->overlay_image_res = 75;
+                data->overlay_palette_res = 76;
                 data->overlay_step = 1;
                 break;
             }
@@ -646,36 +646,36 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
             if ((pos == 330 || pos == 210 || pos == 110 || pos == 25)
                 && data->scroll_ani_step == 0) {
                 if (pos == 330) {
-                    data->scroll_ani_queue[0] = 4;
-                    data->scroll_ani_queue[1] = 5;
+                    data->scroll_ani_queue[0] = 5;
+                    data->scroll_ani_queue[1] = 6;
                     data->scroll_ani_queue_len = 2;
-                    data->scroll_ani_palette[0] = 99;
-                    data->scroll_ani_palette[1] = 0;
+                    data->scroll_ani_palette[0] = 100;
+                    data->scroll_ani_palette[1] = 1;
                     data->scroll_ani_delay[0] = 90;
                     data->scroll_ani_delay[1] = 50;
                     data->scroll_ani_needs_fadeout = true;
                     data->scroll_ani_after_end = false;
                 } else if (pos == 210) {
-                    data->scroll_ani_queue[0] = 6;
-                    data->scroll_ani_queue[1] = 7;
+                    data->scroll_ani_queue[0] = 7;
+                    data->scroll_ani_queue[1] = 8;
                     data->scroll_ani_queue_len = 2;
-                    data->scroll_ani_palette[0] = 99;
-                    data->scroll_ani_palette[1] = 0;
+                    data->scroll_ani_palette[0] = 100;
+                    data->scroll_ani_palette[1] = 1;
                     data->scroll_ani_delay[0] = 90;
                     data->scroll_ani_delay[1] = 50;
                     data->scroll_ani_needs_fadeout = true;
                     data->scroll_ani_after_end = false;
                 } else if (pos == 110) {
-                    data->scroll_ani_queue[0] = 8;
+                    data->scroll_ani_queue[0] = 9;
                     data->scroll_ani_queue_len = 1;
-                    data->scroll_ani_palette[0] = 99;
+                    data->scroll_ani_palette[0] = 100;
                     data->scroll_ani_delay[0] = 90;
                     data->scroll_ani_needs_fadeout = true;
                     data->scroll_ani_after_end = false;
                 } else {
-                    data->scroll_ani_queue[0] = 0;
+                    data->scroll_ani_queue[0] = 1;
                     data->scroll_ani_queue_len = 1;
-                    data->scroll_ani_palette[0] = 0;
+                    data->scroll_ani_palette[0] = 1;
                     data->scroll_ani_delay[0] = 15;
                     data->scroll_ani_needs_fadeout = false;
                     data->scroll_ani_after_end = true;
@@ -729,7 +729,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
             if (data->phase_frame == 0) {
                 u32 pal_size;
                 const u8* pal_res = fd2_resources_get(
-                    &game->resources, FD2_DAT_FDOTHER, 8, &pal_size);
+                    &game->resources, FD2_DAT_FDOTHER, 9, &pal_size);
                 if (pal_res && pal_size == FD2_PALETTE_BYTES) {
                     fd2_render_set_palette_6bit(&game->render, pal_res);
                 }
@@ -761,7 +761,7 @@ fd2_state_t state_intro_update(fd2_game_t* game) {
         {
             u32 pal5_size;
             const u8* pal5_res = fd2_resources_get(
-                &game->resources, FD2_DAT_FDOTHER, 8, &pal5_size);
+                &game->resources, FD2_DAT_FDOTHER, 9, &pal5_size);
             if (pal5_res && pal5_size == FD2_PALETTE_BYTES) {
                 fd2_render_set_palette_6bit(&game->render, pal5_res);
             }

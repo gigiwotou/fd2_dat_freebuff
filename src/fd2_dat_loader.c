@@ -195,9 +195,37 @@ int fd2_dat_loader_get_resource_count(const u8* data, u32 data_size) {
         return -1;
     }
 
-    u32 count;
-    memcpy(&count, data + 6, 4);
-    return (int)count;
+    /* The u32 at +6 is NOT a resource count. It is the byte offset where the
+     * offset table ends -- equivalently, the start offset of resource 0.
+     *
+     * Layout (verified against every .DAT in the original distribution):
+     *   +0..5   magic "LLLLLL"
+     *   +6      offset table, N entries of u32
+     *   +6+4N   resource 0  (== table_end)
+     *   ...
+     * The last table entry is an end-of-file sentinel equal to the file size,
+     * not a real resource.
+     *
+     *   N          = (table_end - 6) / 4
+     *   resources  = N - 1
+     *
+     * e.g. FDOTHER.DAT: table_end=422 -> N=104 -> 103 resources
+     *      (the old code returned 422, over-reporting by ~4x, which silently
+     *      disabled every "index >= resource_count" bound check).
+     */
+    u32 table_end;
+    memcpy(&table_end, data + 6, 4);
+
+    if (table_end < 10 || table_end > data_size) {
+        return -1;
+    }
+
+    u32 entries = (table_end - 6) / 4;
+    if (entries < 1) {
+        return -1;
+    }
+
+    return (int)(entries - 1);
 }
 
 int fd2_dat_loader_parse_entries(const u8* data, u32 data_size,

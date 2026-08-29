@@ -65,25 +65,23 @@ int load_battle_save(const char* save_path, battle_save_data_t* save) {
 
     decrypt_battle_save(buffer, BATTLE_SAVE_SIZE);
 
-    fprintf(stderr, "DEBUG: first 20 bytes AFTER decrypt:\n");
-    for (int i = 0; i < 20; i++) {
-        fprintf(stderr, "  [%d] = 0x%02X (%d)\n", i, buffer[i], buffer[i]);
-    }
-    fprintf(stderr, "DEBUG: checksum bytes [22983..22986] AFTER decrypt:\n");
-    fprintf(stderr, "  [22983] = 0x%02X, [22984] = 0x%02X, [22985] = 0x%02X, [22986] = 0x%02X\n",
-            buffer[22983], buffer[22984], buffer[22985], buffer[22986]);
-    fprintf(stderr, "DEBUG: skipping checksum verification for now\n");
+    /* Verify the byte-sum checksum (sub_4DF09) against the u32 trailer.
+     * This used to be skipped, so a corrupt/wrongly-decrypted save was
+     * accepted and produced garbage scene + character state.
+     * Verified against the real FD2.SAV: computed == stored == 0x412A13. */
+    uint32_t computed = (uint32_t)calculate_battle_save_checksum(buffer, BATTLE_SAVE_SIZE);
+    uint32_t stored   = (uint32_t)buffer[BATTLE_SAVE_CHECKSUM_OFFSET]
+                      | ((uint32_t)buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 1] << 8)
+                      | ((uint32_t)buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 2] << 16)
+                      | ((uint32_t)buffer[BATTLE_SAVE_CHECKSUM_OFFSET + 3] << 24);
 
-    fprintf(stderr, "DEBUG: decrypted offsets:\n");
-    fprintf(stderr, "  [22983-22986] checksum: %02X %02X %02X %02X\n",
-            buffer[22983], buffer[22984], buffer[22985], buffer[22986]);
-    fprintf(stderr, "  [12483] n999: %d (0x%02X)\n", buffer[12483], buffer[12483]);
-    fprintf(stderr, "  [12484] n6_0 (char count): %d (0x%02X)\n", buffer[12484], buffer[12484]);
-    fprintf(stderr, "  [12485] n17 (scene idx): %d (0x%02X)\n", buffer[12485], buffer[12485]);
-    fprintf(stderr, "  [12486] qword_53AA9 low: %d (0x%02X)\n", buffer[12486], buffer[12486]);
-    fprintf(stderr, "  [12487] qword_53AA9 high: %d (0x%02X)\n", buffer[12487], buffer[12487]);
-    fprintf(stderr, "  [0] first byte: %d (0x%02X)\n", buffer[0], buffer[0]);
-    fprintf(stderr, "  [1] second byte: %d (0x%02X)\n", buffer[1], buffer[1]);
+    if (computed != stored) {
+        fprintf(stderr, "load_battle_save: checksum mismatch "
+                        "(computed=0x%08X stored=0x%08X) - refusing corrupt save\n",
+                computed, stored);
+        free(buffer);
+        return -1;
+    }
 
     memcpy(save->map_data, buffer + BATTLE_SAVE_MAP_DATA_OFFSET, BATTLE_SAVE_MAP_DATA_SIZE);
     memcpy(save->temp_map_data, buffer + BATTLE_SAVE_TEMP_MAP_OFFSET, BATTLE_SAVE_TEMP_MAP_SIZE);
@@ -121,4 +119,41 @@ int load_battle_save(const char* save_path, battle_save_data_t* save) {
            save->n17, save->n6_0);
 
     return 0;
+}
+
+int fd2_save_detect_state(const char* save_path) {
+    if (!save_path) return FD2_SAVE_STATE_NONE;
+
+    FILE* f = fopen(save_path, "rb");
+    if (!f) return FD2_SAVE_STATE_NONE;
+
+    uint8_t* buf = (uint8_t*)malloc(BATTLE_SAVE_SIZE);
+    if (!buf) { fclose(f); return FD2_SAVE_STATE_NONE; }
+
+    size_t got = fread(buf, 1, BATTLE_SAVE_SIZE, f);
+    fclose(f);
+
+    if (got != BATTLE_SAVE_SIZE) {
+        free(buf);
+        return FD2_SAVE_STATE_NONE;
+    }
+
+    decrypt_battle_save(buf, BATTLE_SAVE_SIZE);
+
+    uint32_t computed = (uint32_t)calculate_battle_save_checksum(buf, BATTLE_SAVE_SIZE);
+    uint32_t stored   = (uint32_t)buf[BATTLE_SAVE_CHECKSUM_OFFSET]
+                      | ((uint32_t)buf[BATTLE_SAVE_CHECKSUM_OFFSET + 1] << 8)
+                      | ((uint32_t)buf[BATTLE_SAVE_CHECKSUM_OFFSET + 2] << 16)
+                      | ((uint32_t)buf[BATTLE_SAVE_CHECKSUM_OFFSET + 3] << 24);
+
+    int state = FD2_SAVE_STATE_NONE;
+    if (computed == stored) {
+        state = FD2_SAVE_STATE_CAMP;
+        if (buf[BATTLE_SAVE_STATE_OFFSET + 34] != 255) {
+            state = FD2_SAVE_STATE_BATTLE;
+        }
+    }
+
+    free(buf);
+    return state;
 }

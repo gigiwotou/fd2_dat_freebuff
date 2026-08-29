@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
 
     /* Check resource #7 (palette or resource set?) */
     u32 res7_size;
-    const u8* res7 = fd2_resources_get(&res, FD2_DAT_FDOTHER, 7, &res7_size);
+    const u8* res7 = fd2_resources_get(&res, FD2_DAT_FDOTHER, 8, &res7_size);
     printf("Resource #7: size=%u bytes\n", res7_size);
     if (res7 && res7_size >= 4) {
         printf("  First 4 bytes: %02x %02x %02x %02x\n", res7[0], res7[1], res7[2], res7[3]);
@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
     printf("\nResources #1-6 (Menu Items):\n");
     for (int i = 1; i <= 6; i++) {
         u32 item_size;
-        const u8* item = fd2_resources_get(&res, FD2_DAT_FDOTHER, i, &item_size);
+        const u8* item = fd2_resources_get(&res, FD2_DAT_FDOTHER, i + 1, &item_size);
         printf("  Resource #%d: size=%u\n", i, item_size);
         if (item && item_size >= 4) {
             printf("    First 4 bytes: %02x %02x %02x %02x\n", item[0], item[1], item[2], item[3]);
@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
 
     /* Check resource #101 (menu background?) */
     u32 bg_size;
-    const u8* bg = fd2_resources_get(&res, FD2_DAT_FDOTHER, 101, &bg_size);
+    const u8* bg = fd2_resources_get(&res, FD2_DAT_FDOTHER, 102, &bg_size);
     printf("\nResource #101: size=%u\n", bg_size);
     if (bg && bg_size >= 4) {
         printf("  First 4 bytes: %02x %02x %02x %02x\n", bg[0], bg[1], bg[2], bg[3]);
@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
     printf("\nTitle screen resources:\n");
     for (int i = 73; i <= 74; i++) {
         u32 size;
-        const u8* data = fd2_resources_get(&res, FD2_DAT_FDOTHER, i, &size);
+        const u8* data = fd2_resources_get(&res, FD2_DAT_FDOTHER, i + 1, &size);
         printf("  Resource #%d: size=%u\n", i, size);
         if (data && size >= 4) {
             printf("    Header: %02x %02x %02x %02x\n", data[0], data[1], data[2], data[3]);
@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
     /* Test decompression of resource #1 */
     printf("\n=== Testing RLE Decompression ===\n");
     u32 test_size;
-    const u8* test_res = fd2_resources_get(&res, FD2_DAT_FDOTHER, 1, &test_size);
+    const u8* test_res = fd2_resources_get(&res, FD2_DAT_FDOTHER, 2, &test_size);
     if (test_res) {
         u8* pixels = NULL;
         int w, h;
