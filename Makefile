@@ -25,7 +25,17 @@ ifeq ($(OS),Windows_NT)
   PLATFORM_RELEASE_CFLAGS = -I$(MSYS2_PREFIX)/include
   PLATFORM_RELEASE_LDFLAGS = -L$(MSYS2_PREFIX)/lib
   COPY_DLLS = $(COPY_CMD) $(MSYS2_PREFIX)/bin/SDL2.dll $(BIN_DIR)/ 2>/dev/null
-  CLEAN_EXTRAS = $(RM) -f $(BIN_DIR)/*.exe $(BIN_DIR)/*.i64 2>/dev/null
+  # Copy ONLY data files. NEVER use `game/*`: on case-insensitive Windows
+  # filesystems game/FD2.EXE lands as bin/FD2.EXE and *is* bin/fd2.exe, so it
+  # silently overwrites the freshly linked $(TARGET_GAME) -- `make all` then
+  # reported success while producing no executable at all.
+  COPY_DATA = $(COPY_CMD) game/*.DAT game/*.B24 game/*.MDI game/*.DIG game/*.INI \
+                          game/*.LST game/*.SAV game/*.TMP game/*.AD game/*.OPL \
+                          game/*.BNK game/*.BAT $(BIN_DIR)/ 2>/dev/null || true
+  # Deliberately a no-op: since we no longer copy the original DOS executables
+  # into $(BIN_DIR), there is nothing to clean, and any `rm -f bin/*EXE*`
+  # would risk deleting our own build output on case-insensitive filesystems.
+  CLEAN_EXTRAS = @true
 else
   ifeq ($(UNAME_S),Linux)
     PLATFORM := LINUX
@@ -40,6 +50,9 @@ else
     PLATFORM_RELEASE_CFLAGS =
     PLATFORM_RELEASE_LDFLAGS =
     COPY_DLLS = @true
+    COPY_DATA = $(COPY_CMD) game/*.DAT game/*.B24 game/*.MDI game/*.DIG game/*.INI \
+                            game/*.LST game/*.SAV game/*.TMP game/*.AD game/*.OPL \
+                            game/*.BNK game/*.BAT $(BIN_DIR)/ 2>/dev/null || true
     CLEAN_EXTRAS = @true
   else ifeq ($(UNAME_S),Darwin)
     PLATFORM := MACOS
@@ -54,6 +67,9 @@ else
     PLATFORM_RELEASE_CFLAGS =
     PLATFORM_RELEASE_LDFLAGS =
     COPY_DLLS = @true
+    COPY_DATA = $(COPY_CMD) game/*.DAT game/*.B24 game/*.MDI game/*.DIG game/*.INI \
+                            game/*.LST game/*.SAV game/*.TMP game/*.AD game/*.OPL \
+                            game/*.BNK game/*.BAT $(BIN_DIR)/ 2>/dev/null || true
     CLEAN_EXTRAS = @true
   else
     $(error Unsupported platform: $(UNAME_S))
@@ -100,7 +116,7 @@ all: $(TARGET_GAME)
 	@echo Copying required DLLs...
 	-$(COPY_DLLS)
 	@echo Copying game data files...
-	-$(COPY_CMD) game/* $(BIN_DIR)/ 2>/dev/null || true
+	-$(COPY_DATA)
 	-$(CLEAN_EXTRAS)
 	@echo Build complete!
 
